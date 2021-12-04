@@ -1,0 +1,1 @@
+~/run_gpu_task.beta.1 -w compute1 -g gpu:rtx2080:1 -c 1 -j rmlog -o rmlog.txt -i "compute1:5000/comrl:v7" -v "/home/gaisibo/Continual-Offline/CCQL:/app" "cd /app; export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/root/.mujoco/mujoco210/bin; /root/miniconda3/bin/python3.7 rmlog.py"
