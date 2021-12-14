@@ -1,0 +1,8 @@
+*.pyc
+__pycache__
+*.swp
+offline
+d3rlpy_logs
+datasets
+out_*.txt
+MUJOCO_LOG.TXT
