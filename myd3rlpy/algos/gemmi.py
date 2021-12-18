@@ -23,7 +23,7 @@ from d3rlpy.gpu import Device
 from d3rlpy.models.optimizers import AdamFactory, OptimizerFactory
 from d3rlpy.models.q_functions import QFunctionFactory
 from d3rlpy.algos.base import AlgoBase
-from d3rlpy.algos.td3_plus_bc import TD3PlusBC
+from d3rlpy.algos.td3_plus_bc import TD3
 from d3rlpy.constants import (
     CONTINUOUS_ACTION_SPACE_MISMATCH_ERROR,
     DISCRETE_ACTION_SPACE_MISMATCH_ERROR,
@@ -36,9 +36,9 @@ from d3rlpy.iterators.random_iterator import RandomIterator
 from d3rlpy.iterators.round_iterator import RoundIterator
 from d3rlpy.logger import LOG, D3RLPyLogger
 
-from myd3rlpy.algos.torch.co_impl import COImpl
+from myd3rlpy.algos.torch.gemmi_impl import GEMMIImpl
 
-class CO(TD3PlusBC):
+class CEMMI(TD3):
     r"""Twin Delayed Deep Deterministic Policy Gradients algorithm.
     TD3 is an improved DDPG-based algorithm.
     Major differences from DDPG are as follows.
@@ -100,21 +100,14 @@ class CO(TD3PlusBC):
 
     _actor_learning_rate: float
     _critic_learning_rate: float
-    _phi_learning_rate: float
-    _psi_learning_rate: float
     _actor_optim_factory: OptimizerFactory
     _critic_optim_factory: OptimizerFactory
-    _phi_optim_factory: OptimizerFactory
-    _psi_optim_factory: OptimizerFactory
     _actor_encoder_factory: EncoderFactory
     _critic_encoder_factory: EncoderFactory
-    # phi和psi与actor和critic共用encoder，不需要另外训练。
     # actor必须被重放，没用选择。
     _replay_actor_alpha: float
     _replay_critic_alpha: float
     _replay_critic: bool
-    _replay_phi: bool
-    _replay_psi: bool
     _q_func_factory: QFunctionFactory
     _tau: float
     _n_critics: int
@@ -123,27 +116,21 @@ class CO(TD3PlusBC):
     _target_smoothing_clip: float
     _update_actor_interval: int
     _use_gpu: Optional[Device]
-    _impl: Optional[COImpl]
+    _impl: Optional[GEMMIImpl]
 
     def __init__(
         self,
         *,
         actor_learning_rate: float = 1e-3,
         critic_learning_rate: float = 1e-3,
-        phi_learning_rate: float = 1e-3,
-        psi_learning_rate: float = 1e-3,
         actor_optim_factory: OptimizerFactory = AdamFactory(),
         critic_optim_factory: OptimizerFactory = AdamFactory(),
-        phi_optim_factory: OptimizerFactory = AdamFactory(),
-        psi_optim_factory: OptimizerFactory = AdamFactory(),
         actor_encoder_factory: EncoderArg = "defaultmi",
         critic_encoder_factory: EncoderArg = "defaultmi",
         q_func_factory: QFuncArg = "meanid",
         replay_actor_alpha = 2.5,  # from A Minimalist Approach to Offline Reinforcement Learning
         replay_critic_alpha = 1,
         replay_critic: bool = True,
-        replay_phi: bool = False,
-        replay_psi: bool = False,
         batch_size: int = 256,
         n_frames: int = 1,
         n_steps: int = 1,
@@ -160,7 +147,7 @@ class CO(TD3PlusBC):
         scaler: ScalerArg = None,
         action_scaler: ActionScalerArg = None,
         reward_scaler: RewardScalerArg = None,
-        impl: Optional[COImpl] = None,
+        impl: Optional[GEMMIImpl] = None,
         **kwargs: Any
     ):
         super().__init__(
@@ -188,13 +175,7 @@ class CO(TD3PlusBC):
             impl = impl,
             kwargs = kwargs,
         )
-        self._phi_learning_rate = phi_learning_rate
-        self._psi_learning_rate = psi_learning_rate
-        self._phi_optim_factory = phi_optim_factory
-        self._psi_optim_factory = psi_optim_factory
         self._replay_critic = replay_critic
-        self._replay_phi = replay_phi
-        self._replay_psi = replay_psi
         self._n_sample_actions = n_sample_actions
         self._task_id_size = task_id_size
         self._replay_actor_alpha = replay_actor_alpha
@@ -203,25 +184,19 @@ class CO(TD3PlusBC):
     def _create_impl(
         self, observation_shape: Sequence[int], action_size: int
     ) -> None:
-        self._impl = COImpl(
+        self._impl = GEMMIImpl(
             observation_shape=observation_shape,
             action_size=action_size,
             actor_learning_rate=self._actor_learning_rate,
             critic_learning_rate=self._critic_learning_rate,
-            phi_learning_rate=self._phi_learning_rate,
-            psi_learning_rate=self._psi_learning_rate,
             actor_optim_factory=self._actor_optim_factory,
             critic_optim_factory=self._critic_optim_factory,
-            phi_optim_factory=self._phi_optim_factory,
-            psi_optim_factory=self._psi_optim_factory,
             actor_encoder_factory=self._actor_encoder_factory,
             critic_encoder_factory=self._critic_encoder_factory,
             q_func_factory=self._q_func_factory,
             replay_critic_alpha=self._replay_critic_alpha,
             replay_actor_alpha=self._replay_actor_alpha,
             replay_critic=self._replay_critic,
-            replay_phi=self._replay_phi,
-            replay_psi=self._replay_psi,
             gamma=self._gamma,
             tau=self._tau,
             n_critics=self._n_critics,
@@ -237,50 +212,29 @@ class CO(TD3PlusBC):
         )
         self._impl.build()
 
-    def update(self, batch: TransitionMiniBatch, task_id: int, replay_batches: Optional[Dict[int, List[Tensor]]], all_data: MDPDataset) -> Dict[str, float]:
+    def update(self, batch: TransitionMiniBatch, task_id: int, replay_batches: Optional[Dict[int, List[Tensor]]]) -> Dict[str, float]:
         """Update parameters with mini-batch of data.
         Args:
             batch: mini-batch data.
         Returns:
             dictionary of metrics.
         """
-        loss = self._update(batch, task_id, replay_batches, all_data)
+        loss = self._update(batch, task_id, replay_batches)
         self._grad_step += 1
         return loss
 
     # 注意欧氏距离最近邻被塞到actions后面了。
-    def _update(self, batch: TransitionMiniBatch, task_id: int, replay_batches: Optional[Dict[int, List[Tensor]]], all_data: MDPDataset) -> Dict[str, float]:
+    def _update(self, batch: TransitionMiniBatch, task_id: int, replay_batches: Optional[Dict[int, List[Tensor]]]) -> Dict[str, float]:
         assert self._impl is not None, IMPL_NOT_INITIALIZED_ERROR
 
         metrics = {}
 
-        # 更新phi和psi。
-        half_batch_len = len(batch) // 2
-        batch1 = TransitionMiniBatch(batch[: half_batch_len])
-        batch2 = TransitionMiniBatch(batch[half_batch_len :])
-
-        phi_loss = self._impl.update_phi(batch1, batch2, task_id=task_id)
-        metrics.update({"phi_loss": phi_loss})
-        if self._replay_phi and replay_batches is not None:
-            for i, replay_batch in replay_batches.items():
-                replay_phi_loss = self._impl.replay_update_phi(replay_batch)
-                metrics.update({"replay_phi_loss {key}": replay_phi_loss})
-                phi_loss += replay_phi_loss
-
-        psi_loss = self._impl.update_psi(batch1, batch2, task_id=task_id)
-        metrics.update({"psi_loss": psi_loss})
-        if self._replay_psi and replay_batches is not None:
-            for i, replay_batch in replay_batches.items():
-                replay_psi_loss = self._impl.replay_update_psi(replay_batch)
-                metrics.update({"replay_psi_loss {key}": replay_psi_loss})
-                psi_loss += replay_psi_loss
-
-        critic_loss = self._impl.update_critic(batch, task_id=task_id, replay_batches=replay_batches, all_data=all_data) * self._critic_alpha()
+        critic_loss = self._impl.update_critic(batch, task_id=task_id, replay_batches=replay_batches) * self._critic_alpha()
         metrics.update({"critic_loss": critic_loss})
 
         # delayed policy update
         if self._grad_step % self._update_actor_interval == 0:
-            actor_loss = self._impl.update_actor(batch, task_id=task_id, replay_batches=replay_batches, all_data=all_data) * self._actor_alpha()
+            actor_loss = self._impl.update_actor(batch, task_id=task_id, replay_batches=replay_batches) * self.actor_alpha()
             metrics.update({"actor_loss": actor_loss})
             self._impl.update_critic_target()
             self._impl.update_actor_target()
@@ -298,7 +252,6 @@ class CO(TD3PlusBC):
         dataset: Union[List[Episode], MDPDataset],
         replay_datasets: Optional[Dict[int, List[TensorDataset]]],
         task_id: int,
-        all_data: MDPDataset,
         n_epochs: Optional[int] = None,
         n_steps: Optional[int] = None,
         n_steps_per_epoch: int = 10000,
@@ -320,7 +273,6 @@ class CO(TD3PlusBC):
         ] = None,
         shuffle: bool = True,
         callback: Optional[Callable[[LearnableBase, int, int], None]] = None,
-        real_action_size: Optional[int] = None,
     ) -> List[Tuple[int, Dict[str, float]]]:
         """Trains with the given dataset.
         .. code-block:: python
@@ -358,7 +310,6 @@ class CO(TD3PlusBC):
                 dataset,
                 replay_datasets,
                 task_id,
-                all_data,
                 n_epochs,
                 n_steps,
                 n_steps_per_epoch,
@@ -376,7 +327,6 @@ class CO(TD3PlusBC):
                 replay_scorers,
                 shuffle,
                 callback,
-                real_action_size,
             )
         )
         return results
@@ -386,7 +336,6 @@ class CO(TD3PlusBC):
         dataset: Union[List[Episode], MDPDataset],
         replay_datasets: Optional[Dict[int, List[TensorDataset]]],
         task_id: int,
-        all_data: MDPDataset,
         n_epochs: Optional[int] = None,
         n_steps: Optional[int] = None,
         n_steps_per_epoch: int = 10000,
@@ -408,7 +357,6 @@ class CO(TD3PlusBC):
         ] = None,
         shuffle: bool = True,
         callback: Optional[Callable[["LearnableBase", int, int], None]] = None,
-        real_action_size: Optional[int] = None,
     ) -> Generator[Tuple[int, Dict[str, float]], None, None]:
         """Iterate over epochs steps to train with the given dataset. At each
              iteration algo methods and properties can be changed or queried.
@@ -558,7 +506,7 @@ class CO(TD3PlusBC):
         if self._impl is None:
             LOG.debug("Building models...")
             transition = iterator.transitions[0]
-            action_size = real_action_size
+            action_size = transition.get_action_size()
             observation_shape = tuple(transition.get_observation_shape())
             self.create_impl(
                 self._process_observation_shape(observation_shape), action_size
@@ -693,7 +641,7 @@ class CO(TD3PlusBC):
                     for replay_num, replay_eval_episodes in replay_eval_episodess.items():
                         # 重命名
                         replay_scorers_tmp = {k + str(replay_num): v for k, v in replay_scorers.items()}
-                        self._replay_evaluate(replay_eval_episodes, partial(replay_scorers, replay_num=replay_num, task_id_size=self._task_id_size), logger)
+                        self._replay_evaluate(replay_eval_episodes, partial(replay_scorers, replay_num=replay_num), logger)
 
             # save metrics
             metrics = logger.commit(epoch, total_step)

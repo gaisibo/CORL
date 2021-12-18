@@ -3,7 +3,7 @@ from typing import List, Optional, Union, cast
 import torch
 from torch import nn
 
-from d3rlpy.model.torch.q_functions.ensembel_q_function import _reduce_ensemble, _gather_quantiles_by_indices, _reduce_quantile_ensemble, EnsembleQFunction, EnsembleDiscreteQFunction, EnsembleContinuousQFunction
+from d3rlpy.models.torch.q_functions.ensemble_q_function import _reduce_ensemble, _gather_quantiles_by_indices, _reduce_quantile_ensemble, EnsembleQFunction, EnsembleDiscreteQFunction, EnsembleContinuousQFunction
 
 
 class EnsembleQFunctionWithTaskID(EnsembleQFunction):  # type: ignore
@@ -11,7 +11,7 @@ class EnsembleQFunctionWithTaskID(EnsembleQFunction):  # type: ignore
 
     def __init__(
         self,
-        q_funcs: Union[List[DiscreteQFunction], List[ContinuousQFunction]],
+        q_funcs,
         bootstrap: bool = False,
     ):
         super().__init__(
@@ -125,7 +125,7 @@ class EnsembleContinuousQFunctionWithTaskID(EnsembleQFunctionWithTaskID):
     ) -> torch.Tensor:
         values = []
         for q_func in self._q_funcs:
-            values.append(q_func(x, task_id, action).view(1, x.shape[0], 1))
+            values.append(q_func(x, action, task_id).view(1, x.shape[0], 1))
         return _reduce_ensemble(torch.cat(values, dim=0), reduction)
 
     def __call__(

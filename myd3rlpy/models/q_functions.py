@@ -1,25 +1,19 @@
 from typing import Any, ClassVar, Dict, Type
 
 from d3rlpy.decorators import pretty_repr
-from d3rlpy.models.q_functions import QFunctionFactory as QFunctionFactoryO, MeanQFunctionFactory as MeanQFunctionFactoryO, QRQFunctionFactory as QRQFunctionFactoryO, IQNQFunctionFactory as IQNQFunctionFactoryO, FQFQFunctionFactory as FQFQFunctionFactoryO, register_q_func_factory
-from myd3rlpy.models.torch import (
-    ContinuousFQFQFunctionWithTaskID,
-    ContinuousIQNQFunctionWithTaskID,
-    ContinuousMeanQFunctionWithTaskID,
-    ContinuousQFunctionWithTaskID,
-    ContinuousQRQFunctionWithTaskID,
-    DiscreteFQFQFunctionWithTaskID,
-    DiscreteIQNQFunctionWithTaskID,
-    DiscreteMeanQFunctionWithTaskID,
-    DiscreteQFunctionWithTaskID,
-    DiscreteQRQFunctionWithTaskID,
-)
+from d3rlpy.models.q_functions import QFunctionFactory, MeanQFunctionFactory, QRQFunctionFactory, IQNQFunctionFactory, FQFQFunctionFactory, register_q_func_factory
+from myd3rlpy.models.torch.q_functions.ensemble_q_function import EnsembleContinuousQFunctionWithTaskID, EnsembleDiscreteQFunctionWithTaskID
+from myd3rlpy.models.torch.q_functions.qr_q_function import ContinuousQRQFunctionWithTaskID, DiscreteQRQFunctionWithTaskID
+from myd3rlpy.models.torch.q_functions.fqf_q_function import ContinuousFQFQFunctionWithTaskID, DiscreteFQFQFunctionWithTaskID
+from myd3rlpy.models.torch.q_functions.fqf_q_function import ContinuousFQFQFunctionWithTaskID, DiscreteFQFQFunctionWithTaskID
+from myd3rlpy.models.torch.q_functions.mean_q_function import ContinuousMeanQFunctionWithTaskID, DiscreteMeanQFunctionWithTaskID
+from myd3rlpy.models.torch.q_functions.iqn_q_function import ContinuousIQNQFunctionWithTaskID, DiscreteIQNQFunctionWithTaskID
 from myd3rlpy.models.torch.encoders import EncoderWithTaskID, EncoderWithActionWithTaskID
 
 
 @pretty_repr
-class QFunctionFactory(QFunctionFactoryO):
-    TYPE: ClassVar[str] = "none"
+class QFunctionFactoryWithTaskID(QFunctionFactory):
+    TYPE: ClassVar[str] = "noneid"
 
     _bootstrap: bool
     _share_encoder: bool
@@ -30,7 +24,7 @@ class QFunctionFactory(QFunctionFactoryO):
 
     def create_discrete_with_task_id(
         self, encoder: EncoderWithTaskID, action_size: int, task_id_size: int
-    ) -> DiscreteQFunctionWithTaskID:
+    ):
         """Returns PyTorch's Q function module.
         Args:
             encoder: an encoder module that processes the observation to
@@ -43,7 +37,7 @@ class QFunctionFactory(QFunctionFactoryO):
 
     def create_continuous_with_task_id(
         self, encoder: EncoderWithActionWithTaskID
-    ) -> ContinuousQFunctionWithTaskID:
+    ):
         """Returns PyTorch's Q function module.
         Args:
             encoder: an encoder module that processes the observation and
@@ -54,7 +48,7 @@ class QFunctionFactory(QFunctionFactoryO):
         raise NotImplementedError
 
 
-class MeanQFunctionFactory(MeanQFunctionFactoryO):
+class MeanQFunctionFactoryWithTaskID(MeanQFunctionFactory):
     """Standard Q function factory class.
     This is the standard Q function factory class.
     References:
@@ -66,9 +60,10 @@ class MeanQFunctionFactory(MeanQFunctionFactoryO):
         bootstrap (bool): flag to bootstrap Q functions.
         share_encoder (bool): flag to share encoder over multiple Q functions.
     """
+    TYPE: ClassVar[str] = "meanid"
     def create_discrete_with_task_id(
         self,
-        encoder: Encoder,
+        encoder: EncoderWithTaskID,
         action_size: int,
         task_id_size: int,
     ) -> DiscreteMeanQFunctionWithTaskID:
@@ -81,7 +76,7 @@ class MeanQFunctionFactory(MeanQFunctionFactoryO):
         return ContinuousMeanQFunctionWithTaskID(encoder)
 
 
-class QRQFunctionFactory(QRQFunctionFactoryO):
+class QRQFunctionFactoryWithTaskID(QRQFunctionFactory):
     """Quantile Regression Q function factory class.
     References:
         * `Dabney et al., Distributional reinforcement learning with quantile
@@ -91,8 +86,9 @@ class QRQFunctionFactory(QRQFunctionFactoryO):
         share_encoder (bool): flag to share encoder over multiple Q functions.
         n_quantiles: the number of quantiles.
     """
+    TYPE: ClassVar[str] = "qrqid"
     def create_discrete_with_task_id(
-            self, encoder: Encoder, action_size: int, task_id_size: int,
+            self, encoder: EncoderWithTaskID, action_size: int, task_id_size: int,
     ) -> DiscreteQRQFunctionWithTaskID:
         return DiscreteQRQFunctionWithTaskID(encoder, action_size, task_id_size, self._n_quantiles)
 
@@ -103,7 +99,7 @@ class QRQFunctionFactory(QRQFunctionFactoryO):
         return ContinuousQRQFunctionWithTaskID(encoder, self._n_quantiles)
 
 
-class IQNQFunctionFactory(IQNQFunctionFactoryO):
+class IQNQFunctionFactoryWithTaskID(IQNQFunctionFactory):
     """Implicit Quantile Network Q function factory class.
     References:
         * `Dabney et al., Implicit quantile networks for distributional
@@ -115,9 +111,10 @@ class IQNQFunctionFactory(IQNQFunctionFactoryO):
         n_greedy_quantiles: the number of quantiles for inference.
         embed_size: the embedding size.
     """
+    TYPE: ClassVar[str] = "iqnid"
     def create_discrete_with_task_id(
         self,
-        encoder: Encoder,
+        encoder: EncoderWithTaskID,
         action_size: int,
         task_size: int,
     ) -> DiscreteIQNQFunctionWithTaskID:
@@ -132,7 +129,7 @@ class IQNQFunctionFactory(IQNQFunctionFactoryO):
 
     def create_continuous_with_task_id(
         self,
-        encoder: EncoderWithAction,
+        encoder: EncoderWithActionWithTaskID,
     ) -> ContinuousIQNQFunctionWithTaskID:
         return ContinuousIQNQFunctionWithTaskID(
             encoder=encoder,
@@ -142,7 +139,7 @@ class IQNQFunctionFactory(IQNQFunctionFactoryO):
         )
 
 
-class FQFQFunctionFactory(FQFQFunctionFactoryO):
+class FQFQFunctionFactoryWithTaskID(FQFQFunctionFactory):
     """Fully parameterized Quantile Function Q function factory.
     References:
         * `Yang et al., Fully parameterized quantile function for
@@ -155,9 +152,10 @@ class FQFQFunctionFactory(FQFQFunctionFactoryO):
         embed_size: the embedding size.
         entropy_coeff: the coefficiency of entropy penalty term.
     """
+    TYPE: ClassVar[str] = "fqfid"
     def create_discrete_with_task_id(
         self,
-        encoder: Encoder,
+        encoder: EncoderWithTaskID,
         action_size: int,
         task_size: int,
     ) -> DiscreteFQFQFunctionWithTaskID:
@@ -182,8 +180,7 @@ class FQFQFunctionFactory(FQFQFunctionFactoryO):
         )
 
 
-Q_FUNC_LIST: Dict[str, Type[QFunctionFactory]] = {}
-register_q_func_factory(MeanQFunctionFactory)
-register_q_func_factory(QRQFunctionFactory)
-register_q_func_factory(IQNQFunctionFactory)
-register_q_func_factory(FQFQFunctionFactory)
+register_q_func_factory(MeanQFunctionFactoryWithTaskID)
+register_q_func_factory(QRQFunctionFactoryWithTaskID)
+register_q_func_factory(IQNQFunctionFactoryWithTaskID)
+register_q_func_factory(FQFQFunctionFactoryWithTaskID)

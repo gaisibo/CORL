@@ -4,22 +4,22 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from d3rlpy.models.torch.base import ContinuousQFunction, DiscreteQFunction
-from d3rlpy.models.torch.iqn_q_function import compute_iqn_feature
-from d3rlpy.models.torch.utility import (
+from d3rlpy.models.torch.q_functions.base import ContinuousQFunction, DiscreteQFunction
+from d3rlpy.models.torch.q_functions.iqn_q_function import compute_iqn_feature
+from d3rlpy.models.torch.q_functions.utility import (
     compute_quantile_loss,
     compute_reduce,
     pick_quantile_value_by_action,
 )
 
-from myd3rlpy.models.torch.q_functions.mean_q_function import DiscreteMeanQFunction, ContinuousMeanQFunction
+from d3rlpy.models.torch.q_functions.mean_q_function import DiscreteMeanQFunction, ContinuousMeanQFunction
 from myd3rlpy.models.encoders import EncoderWithTaskID, EncoderWithActionWithTaskID
 
 
 class DiscreteMeanQFunctionWithTaskID(DiscreteMeanQFunction, nn.Module):  # type: ignore
     _task_id_size: int
 
-    def __init__(self, encoder: Encoder, action_size: int, task_id_size: torch.Tensor):
+    def __init__(self, encoder: EncoderWithTaskID, action_size: int, task_id_size: torch.Tensor):
         super().__init__(encoder=encoder, action_size=action_size)
         self._task_id_size = task_id_size
 
@@ -58,12 +58,16 @@ class DiscreteMeanQFunctionWithTaskID(DiscreteMeanQFunction, nn.Module):  # type
 class ContinuousMeanQFunctionWithTaskID(ContinuousMeanQFunction, nn.Module):  # type: ignore
     _task_id_size: int
 
-    def __init__(self, encoder: EncoderWithAction):
+    def __init__(self, encoder: EncoderWithActionWithTaskID):
         super().__init__(encoder=encoder)
         self._task_id_size = encoder.task_id_size
 
     def forward(self, x: torch.Tensor, action: torch.Tensor, task_id: torch.Tensor) -> torch.Tensor:
+        print(self._encoder)
         return cast(torch.Tensor, self._fc(self._encoder(x, action, task_id)))
+
+    def __call__(self, x: torch.Tensor, action: torch.Tensor, task_id: torch.Tensor) -> torch.Tensor:
+        return self.forward(x, action, task_id)
 
     def compute_error(
         self,

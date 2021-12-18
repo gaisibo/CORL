@@ -3,9 +3,9 @@ from typing import Optional, Tuple, cast
 import torch
 from torch import nn
 
-from d3rlpy.models.torch.base import ContinuousQFunction, DiscreteQFunction
-from d3rlpy.models.torch.iqn_q_function import compute_iqn_feature
-from d3rlpy.models.torch.utility import (
+from d3rlpy.models.torch.q_functions.base import ContinuousQFunction, DiscreteQFunction
+from d3rlpy.models.torch.q_functions.iqn_q_function import compute_iqn_feature
+from d3rlpy.models.torch.q_functions.utility import (
     compute_quantile_loss,
     compute_reduce,
     pick_quantile_value_by_action,
@@ -105,7 +105,7 @@ class DiscreteFQFQFunctionWithTaskID(DiscreteFQFQFunction, nn.Module):  # type: 
         return self._task_id_size
 
 
-class ContinuousFQFQFunctionWithTaskID(ContinuousFQFQFunctionWithTaskID, nn.Module):  # type: ignore
+class ContinuousFQFQFunctionWithTaskID(ContinuousFQFQFunction, nn.Module):  # type: ignore
 
     def __init__(
         self,

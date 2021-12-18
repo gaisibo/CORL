@@ -5,7 +5,7 @@ from torch import nn
 
 from d3rlpy.decorators import pretty_repr
 from d3rlpy.torch_utility import Swish
-from myd3rlpy.models.torch import (
+from myd3rlpy.models.torch.encoders import (
     EncoderWithTaskID,
     EncoderWithActionWithTaskID,
     PixelEncoderWithTaskID,
@@ -13,10 +13,10 @@ from myd3rlpy.models.torch import (
     VectorEncoderWithTaskID,
     VectorEncoderWithActionWithTaskID,
 )
-from d3rlpy.models.encoders import _create_activation, EncoderFactory, PixelEncoderFactory as PixelEncoderFactoryO, VectorEncoderFactory as VectorEncoderFactoryO, DefaultEncoderFactory as DefaultEncoderFactoryO, DenseEncoderFactory as DenseEncoderFactoryO, register_encoder_factory, create_encoder_factory
+from d3rlpy.models.encoders import _create_activation, EncoderFactory, PixelEncoderFactory, VectorEncoderFactory, DefaultEncoderFactory, DenseEncoderFactory, register_encoder_factory, create_encoder_factory
 
 
-class PixelEncoderFactory(PixelEncoderFactoryO):
+class PixelEncoderFactoryWithTaskID(PixelEncoderFactory):
     """Pixel encoder factory class.
     This is the default encoder factory for image observation.
     Args:
@@ -28,6 +28,7 @@ class PixelEncoderFactory(PixelEncoderFactoryO):
         use_batch_norm (bool): flag to insert batch normalization layers.
         dropout_rate (float): dropout probability.
     """
+    TYPE: ClassVar[str] = "pixelmi"
     def create_with_task_id(self, observation_shape: Sequence[int], task_id_size: int, discrete_task_id: bool = False) -> PixelEncoderWithTaskID:
         assert len(observation_shape) == 3
         return PixelEncoderWithTaskID(
@@ -64,7 +65,7 @@ class PixelEncoderFactory(PixelEncoderFactoryO):
         )
 
 
-class VectorEncoderFactory(VectorEncoderFactoryO):
+class VectorEncoderFactoryWithTaskID(VectorEncoderFactory):
     """Vector encoder factory class.
     This is the default encoder factory for vector observation.
     Args:
@@ -75,6 +76,7 @@ class VectorEncoderFactory(VectorEncoderFactoryO):
         use_dense (bool): flag to use DenseNet architecture.
         dropout_rate (float): dropout probability.
     """
+    TYPE: ClassVar[str] = "vectormi"
     def create_with_task_id(self, observation_shape: Sequence[int], task_id_size: int, discrete_task_id: bool = False) -> VectorEncoderWithTaskID:
         assert len(observation_shape) == 1
         return VectorEncoderWithTaskID(
@@ -102,7 +104,6 @@ class VectorEncoderFactory(VectorEncoderFactoryO):
             action_size=action_size,
             task_id_size=task_id_size,
             hidden_units=self._hidden_units,
-            hidden_units=self._hidden_units,
             use_batch_norm=self._use_batch_norm,
             dropout_rate=self._dropout_rate,
             use_dense=self._use_dense,
@@ -112,7 +113,7 @@ class VectorEncoderFactory(VectorEncoderFactoryO):
         )
 
 
-class DefaultEncoderFactory(DefaultEncoderFactoryO):
+class DefaultEncoderFactoryWithTaskID(DefaultEncoderFactory):
     """Default encoder factory class.
     This encoder factory returns an encoder based on observation shape.
     Args:
@@ -120,21 +121,22 @@ class DefaultEncoderFactory(DefaultEncoderFactoryO):
         use_batch_norm (bool): flag to insert batch normalization layers.
         dropout_rate (float): dropout probability.
     """
+    TYPE: ClassVar[str] = "defaultmi"
     def create_with_task_id(self, observation_shape: Sequence[int], task_id_size: int, discrete_task_id: bool = False) -> EncoderWithTaskID:
         factory: Union[PixelEncoderFactory, VectorEncoderFactory]
         if len(observation_shape) == 3:
-            factory = PixelEncoderFactory(
+            factory = PixelEncoderFactoryWithTaskID(
                 activation=self._activation,
                 use_batch_norm=self._use_batch_norm,
                 dropout_rate=self._dropout_rate,
             )
         else:
-            factory = VectorEncoderFactory(
+            factory = VectorEncoderFactoryWithTaskID(
                 activation=self._activation,
                 use_batch_norm=self._use_batch_norm,
                 dropout_rate=self._dropout_rate,
             )
-        return factory.create(observation_shape, task_id_size, discrete_task_id)
+        return factory.create_with_task_id(observation_shape, task_id_size, discrete_task_id)
 
     def create_with_action_with_task_id(
         self,
@@ -143,16 +145,16 @@ class DefaultEncoderFactory(DefaultEncoderFactoryO):
         task_id_size: int,
         discrete_action: bool = False,
         discrete_task_id: bool = False,
-    ) -> EncoderWithAction:
+    ) -> EncoderWithActionWithTaskID:
         factory: Union[PixelEncoderFactory, VectorEncoderFactory]
         if len(observation_shape) == 3:
-            factory = PixelEncoderFactory(
+            factory = PixelEncoderFactoryWithTaskID(
                 activation=self._activation,
                 use_batch_norm=self._use_batch_norm,
                 dropout_rate=self._dropout_rate,
             )
         else:
-            factory = VectorEncoderFactory(
+            factory = VectorEncoderFactoryWithTaskID(
                 activation=self._activation,
                 use_batch_norm=self._use_batch_norm,
                 dropout_rate=self._dropout_rate,
@@ -162,7 +164,7 @@ class DefaultEncoderFactory(DefaultEncoderFactoryO):
         )
 
 
-class DenseEncoderFactory(DenseEncoderFactoryO):
+class DenseEncoderFactoryWithTaskID(DenseEncoderFactory):
     """DenseNet encoder factory class.
     This is an alias for DenseNet architecture proposed in D2RL.
     This class does exactly same as follows.
@@ -179,7 +181,8 @@ class DenseEncoderFactory(DenseEncoderFactoryO):
         use_batch_norm (bool): flag to insert batch normalization layers.
         dropout_rate (float): dropout probability.
     """
-    def create_with_task_id(self, observation_shape: Sequence[int], task_id_size: int, discrete_task_id: bool = False) -> VectorEncoder:
+    TYPE: ClassVar[str] = "densemi"
+    def create_with_task_id(self, observation_shape: Sequence[int], task_id_size: int, discrete_task_id: bool = False) -> VectorEncoderWithTaskID:
         if len(observation_shape) == 3:
             raise NotImplementedError("pixel observation is not supported.")
         factory = VectorEncoderFactory(
@@ -198,7 +201,7 @@ class DenseEncoderFactory(DenseEncoderFactoryO):
         task_id_size: int,
         discrete_action: bool = False,
         discrete_task_id: bool = False,
-    ) -> VectorEncoderWithAction:
+    ) -> VectorEncoderWithActionWithTaskID:
         if len(observation_shape) == 3:
             raise NotImplementedError("pixel observation is not supported.")
         factory = VectorEncoderFactory(
@@ -212,8 +215,7 @@ class DenseEncoderFactory(DenseEncoderFactoryO):
             observation_shape, action_size, task_id_size, discrete_action, discrete_task_id
         )
 
-ENCODER_LIST: Dict[str, Type[EncoderFactory]] = {}
-register_encoder_factory(VectorEncoderFactory)
-register_encoder_factory(PixelEncoderFactory)
-register_encoder_factory(DefaultEncoderFactory)
-register_encoder_factory(DenseEncoderFactory)
+register_encoder_factory(VectorEncoderFactoryWithTaskID)
+register_encoder_factory(PixelEncoderFactoryWithTaskID)
+register_encoder_factory(DefaultEncoderFactoryWithTaskID)
+register_encoder_factory(DenseEncoderFactoryWithTaskID)

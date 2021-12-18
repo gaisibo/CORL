@@ -4,28 +4,28 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from d3rlpy.models.torch.base import ContinuousQFunction, DiscreteQFunction
-from d3rlpy.models.torch.iqn_q_function import compute_iqn_feature
-from d3rlpy.models.torch.utility import (
+from d3rlpy.models.torch.q_functions.base import ContinuousQFunction, DiscreteQFunction
+from d3rlpy.models.torch.q_functions.iqn_q_function import compute_iqn_feature
+from d3rlpy.models.torch.q_functions.utility import (
     compute_quantile_loss,
     compute_reduce,
     pick_quantile_value_by_action,
 )
 
-from myd3rlpy.models.torch.q_functions.qr_q_function import _make_taus, DiscreteQRQFunction, ContinuousQRQFunction
+from d3rlpy.models.torch.q_functions.qr_q_function import _make_taus, DiscreteQRQFunction, ContinuousQRQFunction
 from myd3rlpy.models.encoders import EncoderWithTaskID, EncoderWithActionWithTaskID
 
 
 class DiscreteQRQFunctionWithTaskID(DiscreteQRQFunction, nn.Module):  # type: ignore
     _task_id_size: int
 
-    def __init__(self, encoder: Encoder, action_size: int, n_quantiles: int, task_id_size: int):
+    def __init__(self, encoder: EncoderWithTaskID, action_size: int, n_quantiles: int, task_id_size: int):
         super().__init__(
-            encoder = encoder
-            action_size = action_size
+            encoder = encoder,
+            action_size = action_size,
             n_quantiles = n_quantiles
         )
-        self.task_id_size = task_id_size
+        self._task_id_size = task_id_size
 
     def forward(self, x: torch.Tensor, task_id: torch.Tensor) -> torch.Tensor:
         h = self._encoder(x, task_id)
@@ -81,9 +81,9 @@ class DiscreteQRQFunctionWithTaskID(DiscreteQRQFunction, nn.Module):  # type: ig
 class ContinuousQRQFunctionWithTaskID(ContinuousQRQFunction, nn.Module):  # type: ignore
     _task_id_size: int
 
-    def __init__(self, encoder: EncoderWithAction, n_quantiles: int):
+    def __init__(self, encoder: EncoderWithActionWithTaskID, n_quantiles: int):
         super().__init__(
-            encoder = encoder
+            encoder = encoder,
             n_quantiles = n_quantiles
         )
         self._task_id_size = encoder.task_id_size

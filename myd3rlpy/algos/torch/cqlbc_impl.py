@@ -45,3 +45,26 @@ class CQLBCImpl(CQLImpl):
         dist_ = Normal(mean_, stddev_)
         dist = self._policy.dist(obs_)
         return kl_divergence(dist_, dist)
+    @eval_api
+    def predict_value(
+        self,
+        x: torch.Tensor,
+        action: torch.Tensor,
+        task_id: torch.Tensor,
+        with_std: bool,
+    ) -> Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
+        assert x.ndim > 1, "Input must have batch dimension."
+        assert x.shape[0] == action.shape[0]
+        assert self._q_func is not None
+
+        with torch.no_grad():
+            values = self._q_func(x, action, task_id).cpu().detach().numpy()
+            values = np.transpose(values, [1, 0, 2])
+
+        mean_values = values.mean(axis=1).reshape(-1)
+        stds = np.std(values, axis=1).reshape(-1)
+
+        if with_std:
+            return mean_values, stds
+
+        return mean_values

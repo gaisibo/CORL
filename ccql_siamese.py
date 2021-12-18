@@ -3,6 +3,8 @@ import json
 import random
 from collections import namedtuple
 import pickle
+import time
+from functools import partial
 from dataset.d4rl import cut_antmaze
 from envs import HalfCheetahDirEnv
 from utils.utils import ReplayBuffer
@@ -12,11 +14,11 @@ import torch
 import d3rlpy
 from d3rlpy.ope import FQE
 from d3rlpy.datasets import get_d4rl
-from d3rlpy.metrics import evaluate_on_environment, td_error_scorer
 from d3rlpy.metrics.scorer import initial_state_value_estimation_scorer
 from d3rlpy.metrics.scorer import soft_opc_scorer
 from d3rlpy.dataset import MDPDataset
 from myd3rlpy.algos.co import CO
+from myd3rlpy.metrics.scorer import td_error_scorer, bc_error_scorer
 # from myd3rlpy.datasets import get_d4rl
 from utils.siamese_similar import similar_euclid, similar_phi
 from utils.k_means import kmeans
@@ -68,18 +70,8 @@ def main(args, device):
 #         datasets.append(MDPDataset(buffer_._obs, buffer_._actions, buffer_._rewards, buffer_._terminals))
 #         break
     np.set_printoptions(precision=1, suppress=True)
-    dataset, env = get_d4rl('antmaze-large-play-v0')
-    obses = []
-    for episode in dataset.episodes:
-        if len(episode) != 1:
-            obses.append(torch.from_numpy(episode[-1].observation[:2]).cuda())
-            # if (obses[-1][0] < 32 or obses[-1][0] > 34) and (obses[-1][1] < 23 or obses[-1][1] > 25):
-            #     print(obses[-1])
-    obses = torch.stack(obses)
-    # end_points, _ = kmeans(obses, args.task_nums)
+    dataset, env = get_d4rl(args.dataset_name)
     end_points = [np.array([32.41604, 24.43354]), np.array([21.3771, 17.4113]), np.array([20.8545, 25.0958]), np.array([4.5582, 17.7067]), np.array([18.1493, 8.9290]), np.array([0.1346, 13.3144]), np.array([37.0817, 12.0133])]
-    print('start task split')
-    assert False
 
     task_datasets = {k: [] for k in range(args.task_nums)}
     if args.task_split_type == 'directed':
@@ -97,6 +89,7 @@ def main(args, device):
         for episode in all_episodes:
             if len(episode) != 1:
                 episodes.append(episode)
+        # episodes = all_episodes
         random.shuffle(episodes)
         task_length = len(episodes) // args.task_nums
         task_mod = len(episodes) - args.task_nums * task_length
@@ -108,58 +101,58 @@ def main(args, device):
             else:
                 task_datasets[task_num] = episodes[i: i + task_length]
                 i += task_length
-    print('finish task split')
-    assert False
+    task_datasets_ = {}
     for task_index, task_episodes in task_datasets.items():
-        for episode in task_episodes:
-            for time_index, observation in enumerate(episode.observations):
-                if np.linalg.norm(observation[:2] - end_points[task_index]) < 0.5:
-                    episode.rewards[time_index] = 1
-                else:
-                    episode.rewards[time_index] = 0
-        observations = [episode.observations for episode in task_episodes]
-        observations = np.concatenate(observations, axis=0)
-        actions = [episode.actions for episode in task_episodes]
-        actions = np.concatenate(actions, axis=0)
-        rewards = [episode.rewards for episode in task_episodes]
-        rewards = np.concatenate(rewards, axis=0)
-        terminals = [episode.terminal for episode in task_episodes]
-        terminals = np.array(terminals)
-        task_datasets[task_index] = MDPDataset(observations, actions, rewards, terminals)
-    print(f'finish task rereward')
-    assert False
+        observations = np.concatenate([episode.observations for episode in task_episodes], axis=0)
+        actions = np.concatenate([episode.actions for episode in task_episodes], axis=0)
+        obs = torch.from_numpy(observations).cuda()
+        end_point = torch.from_numpy(end_points[task_index]).unsqueeze(0).expand(obs.shape[0], -1).cuda()
+        rewards = torch.where(torch.linalg.vector_norm(obs[:, :2] - end_point, dim=1) < 0.5, 1, 0).cpu().numpy()
+        terminals = [np.zeros(task_episode.observations.shape[0]) for task_episode in task_episodes]
+        for terminal in terminals:
+            terminal[-1] = 1
+        terminals = np.concatenate(terminals, axis=0)
+        task_datasets_[task_index] = MDPDataset(observations, actions, rewards, terminals)
+    task_datasets = task_datasets_
+    action_size = dataset.actions.shape[1]
 
     original = torch.zeros([2]).to(device)
     destination = [torch.from_numpy(end_point).to(device) for end_point in end_points]
 
 # prepare algorithm
-    print('start co')
     co = CO(use_gpu=True)
 
     replay_datasets = None
+    changed_task_datasets = dict()
     for dataset_num, dataset in task_datasets.items():
-        print(f'start dataset {dataset_num}')
-        indexes_euclid = similar_euclid(torch.from_numpy(dataset.observations).cpu())
-        assert False
+        print('start euclid')
+        indexes_euclid = similar_euclid(torch.from_numpy(dataset.observations).cuda(), args.dataset_name, dataset_num)
+        real_action_size = dataset.actions.shape[1]
         # 用action保存一下indexes_euclid
-        dataset.actions = np.hstack(dataset.actions, indexes_euclid)
+        changed_task_datasets[dataset_num] = MDPDataset(dataset.observations, np.concatenate([dataset.actions, indexes_euclid.cpu().numpy()], axis=1), dataset.rewards, dataset.terminals, dataset.episode_terminals)
+        dataset = changed_task_datasets[dataset_num]
+        episodes = dataset.episodes
         # train
         co.fit(
             dataset,
             replay_datasets,
             dataset_num,
             dataset,
+            real_action_size = real_action_size,
             eval_episodes=dataset,
             replay_eval_episodess = replay_datasets,
             n_epochs=1,
             scorers={
                 # 'environment': evaluate_on_environment(env),
-                'td_error': td_error_scorer
+                'td_error': partial(td_error_scorer, action_size=action_size)
             },
             replay_scorers={
-                'bc_error': bc_error_scorer
+                'bc_error': partial(bc_error_scorer, action_size=action_size)
             }
         )
+        assert co._impl is not None
+        assert co._impl._q_func is not None
+        assert co._impl_policy is not None
 
         # 关键算法
         start_indexes = [original]
@@ -180,31 +173,34 @@ def main(args, device):
             near_indexes = torch.cat(near_indexes, dim=1).numpy()
             near_indexes = np.unique(near_indexes)
             start_indexes = np.setdiff1d(near_indexes, replay_indexes)
-            start_observations = torch.from_numpy(dataset._observation[start_indexes])
+            start_rewards = torch.from_numpy(dataset._reward[start_indexes])
+            start_unfinished_indexes = start_indexes[start_rewards == 1]
+            start_observations = torch.from_numpy(dataset._observation[start_unfinished_indexes])
             start_actionss, start_action_log_probss = co._impl._policy.sample_n_with_log_prob(start_observations, dataset_num, args.sample_times)
 
             start_means = co._impl.dist(start_observations).mean.numpy()
             start_stddevs = co._impl.dist(start_observations).stddev.numpy()
             start_qss = []
             for sample_time in range(args.sample_times):
-                start_qs = co._impl._q_func.sample_q_function(start_observations, start_actions, dataset_num).numpy()
+                start_qs = co._impl._q_func.sample_q_function(start_observations, start_actionss[:, sample_time, :], dataset_num).numpy()
                 start_qss.append(start_qs)
             start_qss = torch.stack(start_qss).permute(1, 0)
-            replay_indexes.extend(start_indexes)
+            replay_indexes.extend(start_unfinished_indexes)
             replay_observations.extend(start_observations.numpy())
             replay_actionss.extend(start_actionss)
             replay_means.extend(start_means)
             replay_stddevs.extend(start_stddevs)
             replay_qss.extend(start_qss)
-            start_terminals = dataset.terminal[start_indexes]
+            start_terminals = dataset.terminal[start_unfinished_indexes]
             start_indexes = torch.from_numpy(start_indexes[start_terminals == False])
         replay_dataset = torch.utils.data.TensorDataset([torch.from_numpy(replay_observations), torch.from_numpy(replay_actionss), torch.from_numpy(replay_means), torch.from_numpy(replay_stddevs), torch.from_numpy(replay_qss)])
         if replay_datasets is None:
             replay_datasets = [replay_dataset]
         else:
             replay_datasets.append(replay_dataset)
+    task_datasets = changed_task_datasets
 
-    for dataset in datasets:
+    for dataset_num, dataset in changed_task_datasets.items():
         # off-policy evaluation algorithm
         fqe = FQE(algo=co)
 
@@ -230,8 +226,11 @@ if __name__ == '__main__':
     parser.add_argument('--sample_times', default=20, type=int)
     parser.add_argument('--task_split_type', default='undirected', type=str)
     parser.add_argument('--task_nums', default=7, type=int)
+    parser.add_argument('--dataset_name', default='antmaze-large-play-v0', type=str)
     args = parser.parse_args()
     global DATASET_PATH
     DATASET_PATH = './.d4rl/datasets/'
     device = torch.device('cuda:0')
+    random.seed(12345)
+    np.random.seed(12345)
     main(args, device)

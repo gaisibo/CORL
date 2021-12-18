@@ -3,23 +3,23 @@ from typing import Optional, Tuple, cast
 import torch
 from torch import nn
 
-from d3rlpy.models.torch.base import ContinuousQFunction, DiscreteQFunction
-from d3rlpy.models.torch.utility import (
+from d3rlpy.models.torch.q_functions.base import ContinuousQFunction, DiscreteQFunction
+from d3rlpy.models.torch.q_functions.utility import (
     compute_quantile_loss,
     compute_reduce,
     pick_quantile_value_by_action,
 )
-from d3rlpy.models.torch.iqn_q_function import _make_taus, compute_iqn_feature, DiscreteIQNQFunction, ContinuousIQNQFunction
+from d3rlpy.models.torch.q_functions.iqn_q_function import _make_taus, compute_iqn_feature, DiscreteIQNQFunction, ContinuousIQNQFunction
 
 from myd3rlpy.models.encoders import EncoderWithTaskID, EncoderWithActionWithTaskID
 
 
 class DiscreteIQNQFunctionWithTaskID(DiscreteIQNQFunction, nn.Module):  # type: ignore
-    _task_id_size: int,
+    _task_id_size: int
 
     def __init__(
         self,
-        encoder: Encoder,
+        encoder: EncoderWithTaskID,
         action_size: int,
         n_quantiles: int,
         n_greedy_quantiles: int,
@@ -84,13 +84,17 @@ class DiscreteIQNQFunctionWithTaskID(DiscreteIQNQFunction, nn.Module):  # type: 
     def task_id_size(self) -> int:
         return self._task_id_size
 
+    @property
+    def encoder(self) -> EncoderWithTaskID:
+        return self._encoder
+
 
 class ContinuousIQNQFunctionWithTaskID(ContinuousIQNQFunction, nn.Module):  # type: ignore
-    _task_size: int,
+    _task_size: int
 
     def __init__(
         self,
-        encoder: EncoderWithAction,
+        encoder: EncoderWithActionWithTaskID,
         n_quantiles: int,
         n_greedy_quantiles: int,
         embed_size: int,
@@ -149,5 +153,5 @@ class ContinuousIQNQFunctionWithTaskID(ContinuousIQNQFunction, nn.Module):  # ty
         return self._task_id_size
 
     @property
-    def encoder(self) -> EncoderWithAction:
+    def encoder(self) -> EncoderWithActionWithTaskID:
         return self._encoder
