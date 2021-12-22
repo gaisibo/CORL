@@ -36,8 +36,6 @@ from d3rlpy.iterators.random_iterator import RandomIterator
 from d3rlpy.iterators.round_iterator import RoundIterator
 from d3rlpy.logger import LOG, D3RLPyLogger
 
-from myd3rlpy.algos.torch.co_impl import COImpl
-
 class CO(TD3PlusBC):
     r"""Twin Delayed Deep Deterministic Policy Gradients algorithm.
     TD3 is an improved DDPG-based algorithm.
@@ -123,7 +121,6 @@ class CO(TD3PlusBC):
     _target_smoothing_clip: float
     _update_actor_interval: int
     _use_gpu: Optional[Device]
-    _impl: Optional[COImpl]
 
     def __init__(
         self,
@@ -136,9 +133,9 @@ class CO(TD3PlusBC):
         critic_optim_factory: OptimizerFactory = AdamFactory(),
         phi_optim_factory: OptimizerFactory = AdamFactory(),
         psi_optim_factory: OptimizerFactory = AdamFactory(),
-        actor_encoder_factory: EncoderArg = "defaultmi",
-        critic_encoder_factory: EncoderArg = "defaultmi",
-        q_func_factory: QFuncArg = "meanid",
+        actor_encoder_factory: EncoderArg = "default",
+        critic_encoder_factory: EncoderArg = "default",
+        q_func_factory: QFuncArg = "mean",
         replay_actor_alpha = 2.5,  # from A Minimalist Approach to Offline Reinforcement Learning
         replay_critic_alpha = 1,
         replay_critic: bool = True,
@@ -154,13 +151,13 @@ class CO(TD3PlusBC):
         target_smoothing_sigma: float = 0.2,
         target_smoothing_clip: float = 0.5,
         n_sample_actions: int = 10,
-        task_id_size: int = 5,
         update_actor_interval: int = 2,
         use_gpu: UseGPUArg = False,
         scaler: ScalerArg = None,
         action_scaler: ActionScalerArg = None,
         reward_scaler: RewardScalerArg = None,
-        impl: Optional[COImpl] = None,
+        impl = None,
+        impl_name = 'co',
         **kwargs: Any
     ):
         super().__init__(
@@ -196,13 +193,21 @@ class CO(TD3PlusBC):
         self._replay_phi = replay_phi
         self._replay_psi = replay_psi
         self._n_sample_actions = n_sample_actions
-        self._task_id_size = task_id_size
         self._replay_actor_alpha = replay_actor_alpha
         self._replay_critic_alpha = replay_critic_alpha
+
+        self._impl_name = impl_name
 
     def _create_impl(
         self, observation_shape: Sequence[int], action_size: int
     ) -> None:
+        assert self._impl_name in ['co', 'gemco', 'agemco']
+        if self._impl_name == 'co':
+            from myd3rlpy.algos.torch.co_impl import COImpl as COImpl
+        elif self._impl_name == 'gemco':
+            from myd3rlpy.algos.torch.gemco_impl import GEMCOImpl as COImpl
+        elif self._impl_name == 'agemco':
+            from myd3rlpy.algos.torch.agemco_impl import AGEMCOImpl as COImpl
         self._impl = COImpl(
             observation_shape=observation_shape,
             action_size=action_size,
@@ -229,7 +234,6 @@ class CO(TD3PlusBC):
             target_smoothing_sigma=self._target_smoothing_sigma,
             target_smoothing_clip=self._target_smoothing_clip,
             n_sample_actions = self._n_sample_actions,
-            task_id_size = self._task_id_size,
             use_gpu=self._use_gpu,
             scaler=self._scaler,
             action_scaler=self._action_scaler,
@@ -237,19 +241,19 @@ class CO(TD3PlusBC):
         )
         self._impl.build()
 
-    def update(self, batch: TransitionMiniBatch, task_id: int, replay_batches: Optional[Dict[int, List[Tensor]]], all_data: MDPDataset) -> Dict[str, float]:
+    def update(self, batch: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[Tensor]]], all_data: MDPDataset) -> Dict[int, float]:
         """Update parameters with mini-batch of data.
         Args:
             batch: mini-batch data.
         Returns:
             dictionary of metrics.
         """
-        loss = self._update(batch, task_id, replay_batches, all_data)
+        loss = self._update(batch, replay_batches, all_data)
         self._grad_step += 1
         return loss
 
     # 注意欧氏距离最近邻被塞到actions后面了。
-    def _update(self, batch: TransitionMiniBatch, task_id: int, replay_batches: Optional[Dict[int, List[Tensor]]], all_data: MDPDataset) -> Dict[str, float]:
+    def _update(self, batch: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[Tensor]]], all_data: MDPDataset) -> Dict[int, float]:
         assert self._impl is not None, IMPL_NOT_INITIALIZED_ERROR
 
         metrics = {}
@@ -259,28 +263,28 @@ class CO(TD3PlusBC):
         batch1 = TransitionMiniBatch(batch[: half_batch_len])
         batch2 = TransitionMiniBatch(batch[half_batch_len :])
 
-        phi_loss = self._impl.update_phi(batch1, batch2, task_id=task_id)
+        phi_loss = self._impl.update_phi(batch1, batch2)
         metrics.update({"phi_loss": phi_loss})
-        if self._replay_phi and replay_batches is not None:
-            for i, replay_batch in replay_batches.items():
-                replay_phi_loss = self._impl.replay_update_phi(replay_batch)
-                metrics.update({"replay_phi_loss {key}": replay_phi_loss})
-                phi_loss += replay_phi_loss
+        # if self._replay_phi and replay_batches is not None:
+        #     for i, replay_batch in replay_batches.items():
+        #         replay_phi_loss = self._impl.replay_update_phi(replay_batch)
+        #         metrics.update({"replay_phi_loss {key}": replay_phi_loss})
+        #         phi_loss += replay_phi_loss
 
-        psi_loss = self._impl.update_psi(batch1, batch2, task_id=task_id)
+        psi_loss = self._impl.update_psi(batch1, batch2)
         metrics.update({"psi_loss": psi_loss})
-        if self._replay_psi and replay_batches is not None:
-            for i, replay_batch in replay_batches.items():
-                replay_psi_loss = self._impl.replay_update_psi(replay_batch)
-                metrics.update({"replay_psi_loss {key}": replay_psi_loss})
-                psi_loss += replay_psi_loss
+        # if self._replay_psi and replay_batches is not None:
+        #     for i, replay_batch in replay_batches.items():
+        #         replay_psi_loss = self._impl.replay_update_psi(replay_batch)
+        #         metrics.update({"replay_psi_loss {key}": replay_psi_loss})
+        #         psi_loss += replay_psi_loss
 
-        critic_loss = self._impl.update_critic(batch, task_id=task_id, replay_batches=replay_batches, all_data=all_data) * self._critic_alpha()
+        critic_loss = self._impl.update_critic(batch, replay_batches=replay_batches, all_data=all_data) * self._critic_alpha()
         metrics.update({"critic_loss": critic_loss})
 
         # delayed policy update
         if self._grad_step % self._update_actor_interval == 0:
-            actor_loss = self._impl.update_actor(batch, task_id=task_id, replay_batches=replay_batches, all_data=all_data) * self._actor_alpha()
+            actor_loss = self._impl.update_actor(batch, replay_batches=replay_batches, all_data=all_data) * self._actor_alpha()
             metrics.update({"actor_loss": actor_loss})
             self._impl.update_critic_target()
             self._impl.update_actor_target()
@@ -297,7 +301,6 @@ class CO(TD3PlusBC):
         self,
         dataset: Union[List[Episode], MDPDataset],
         replay_datasets: Optional[Dict[int, List[TensorDataset]]],
-        task_id: int,
         all_data: MDPDataset,
         n_epochs: Optional[int] = None,
         n_steps: Optional[int] = None,
@@ -313,15 +316,16 @@ class CO(TD3PlusBC):
         replay_eval_episodess: Optional[Dict[int, Iterator]] = None,
         save_interval: int = 1,
         scorers: Optional[
-            Dict[str, Callable[[Any, List[Episode]], float]]
+            Dict[int, Callable[[Any, List[Episode]], float]]
         ] = None,
         replay_scorers: Optional[
-            Dict[str, Callable[[Any, Iterator, int], float]]
+            Dict[int, Callable[[Any, Iterator, int], float]]
         ] = None,
         shuffle: bool = True,
         callback: Optional[Callable[[LearnableBase, int, int], None]] = None,
         real_action_size: Optional[int] = None,
-    ) -> List[Tuple[int, Dict[str, float]]]:
+        real_observation_size: Optional[int] = None,
+    ) -> List[Tuple[int, Dict[int, float]]]:
         """Trains with the given dataset.
         .. code-block:: python
             algo.fit(episodes, n_steps=1000000)
@@ -357,7 +361,6 @@ class CO(TD3PlusBC):
             self.fitter(
                 dataset,
                 replay_datasets,
-                task_id,
                 all_data,
                 n_epochs,
                 n_steps,
@@ -377,6 +380,7 @@ class CO(TD3PlusBC):
                 shuffle,
                 callback,
                 real_action_size,
+                real_observation_size,
             )
         )
         return results
@@ -385,7 +389,6 @@ class CO(TD3PlusBC):
         self,
         dataset: Union[List[Episode], MDPDataset],
         replay_datasets: Optional[Dict[int, List[TensorDataset]]],
-        task_id: int,
         all_data: MDPDataset,
         n_epochs: Optional[int] = None,
         n_steps: Optional[int] = None,
@@ -401,15 +404,16 @@ class CO(TD3PlusBC):
         replay_eval_episodess: Optional[Dict[int, Iterator]] = None,
         save_interval: int = 1,
         scorers: Optional[
-            Dict[str, Callable[[Any, List[Episode]], float]]
+            Dict[int, Callable[[Any, List[Episode]], float]]
         ] = None,
         replay_scorers: Optional[
-            Dict[str, Callable[[Any, Iterator, int], float]]
+            Dict[int, Callable[[Any, Iterator], float]]
         ] = None,
         shuffle: bool = True,
         callback: Optional[Callable[["LearnableBase", int, int], None]] = None,
         real_action_size: Optional[int] = None,
-    ) -> Generator[Tuple[int, Dict[str, float]], None, None]:
+        real_observation_size: Optional[int] = None,
+    ) -> Generator[Tuple[int, Dict[int, float]], None, None]:
         """Iterate over epochs steps to train with the given dataset. At each
              iteration algo methods and properties can be changed or queried.
         .. code-block:: python
@@ -477,13 +481,6 @@ class CO(TD3PlusBC):
                 real_ratio=self._real_ratio,
                 generated_maxlen=self._generated_maxlen,
             )
-            if replay_datasets is not None:
-                replay_dataloaders = dict()
-                for replay_num, replay_dataset in replay_datasets.items():
-                    dataloader = DataLoader(replay_dataset, batch_size=self._batch_size, shuffle=True)
-                    replay_dataloaders[replay_num] = dataloader
-            else:
-                replay_dataloaders = None
             LOG.debug("RandomIterator is selected.")
         elif n_epochs is not None and n_steps is None:
             iterator = RoundIterator(
@@ -496,16 +493,16 @@ class CO(TD3PlusBC):
                 generated_maxlen=self._generated_maxlen,
                 shuffle=shuffle,
             )
-            if replay_datasets is not None:
-                replay_dataloaders = dict()
-                for replay_num, replay_dataset in replay_datasets.items():
-                    dataloader = DataLoader(replay_dataset, batch_size=self._batch_size, shuffle=True)
-                    replay_dataloaders[replay_num] = dataloader
-            else:
-                replay_dataloaders = None
             LOG.debug("RoundIterator is selected.")
         else:
             raise ValueError("Either of n_epochs or n_steps must be given.")
+        if replay_datasets is not None:
+            replay_dataloaders = dict()
+            for replay_num, replay_dataset in replay_datasets.items():
+                dataloader = DataLoader(replay_dataset, batch_size=self._batch_size, shuffle=True)
+                replay_dataloaders[replay_num] = dataloader
+        else:
+            replay_dataloaders = None
 
         # setup logger
         logger = self._prepare_logger(
@@ -559,6 +556,7 @@ class CO(TD3PlusBC):
             LOG.debug("Building models...")
             transition = iterator.transitions[0]
             action_size = real_action_size
+            observation_shape = real_observation_size
             observation_shape = tuple(transition.get_observation_shape())
             self.create_impl(
                 self._process_observation_shape(observation_shape), action_size
@@ -641,18 +639,18 @@ class CO(TD3PlusBC):
                         if replay_iterators is not None:
                             assert replay_dataloaders is not None
                             replay_batches = dict()
-                            for replay_iterator_num, replay_iterator in replay_iterators.items():
+                            for replay_iterator_num in replay_iterators.keys():
                                 try:
-                                    replay_batches[str(replay_iterator_num)] = next(replay_iterator)
+                                    replay_batches[replay_iterator_num] = next(replay_iterators[replay_iterator_num])
                                 except StopIteration:
                                     replay_iterators[replay_iterator_num] = iter(replay_dataloaders[replay_iterator_num])
-                                    replay_batches[str(replay_iterator_num)] = next(replay_iterator)
+                                    replay_batches[replay_iterator_num] = next(replay_iterators[replay_iterator_num])
                         else:
                             replay_batches = None
 
                     # update parameters
                     with logger.measure_time("algorithm_update"):
-                        loss = self.update(batch, task_id, replay_batches, all_data)
+                        loss = self.update(batch, replay_batches, all_data)
 
                     # record metrics
                     for name, val in loss.items():
@@ -693,7 +691,7 @@ class CO(TD3PlusBC):
                     for replay_num, replay_eval_episodes in replay_eval_episodess.items():
                         # 重命名
                         replay_scorers_tmp = {k + str(replay_num): v for k, v in replay_scorers.items()}
-                        self._replay_evaluate(replay_eval_episodes, partial(replay_scorers, replay_num=replay_num, task_id_size=self._task_id_size), logger)
+                        self._evaluate(replay_eval_episodes, replay_scorers, logger)
 
             # save metrics
             metrics = logger.commit(epoch, total_step)
@@ -707,20 +705,3 @@ class CO(TD3PlusBC):
         # drop reference to active logger since out of fit there is no active
         # logger
         self._active_logger = None
-
-    def _replay_evaluate(
-        self,
-        episodes: Iterator,
-        scorers: Dict[str, Callable[[Any, Iterator], float]],
-        logger: D3RLPyLogger,
-    ) -> None:
-        for name, scorer in scorers.items():
-            # evaluation with test data
-            test_score = scorer(self, episodes)
-
-            # logging metrics
-            logger.add_metric(name, test_score)
-
-            # store metric locally
-            if test_score is not None:
-                self._eval_results[name].append(test_score)

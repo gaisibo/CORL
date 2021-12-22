@@ -14,7 +14,7 @@ def compute_vector_norm(tensor1, tensor2):
     ret = torch.linalg.vector_norm(tensor1 - tensor2, dim = 2)
     return ret.cpu()
 def similar_euclid(obs_all, dataset_name, dataset_num, input_indexes=None, eval_batch_size=10000, topk=256):
-    filename = 'near_indexes_' + dataset_name + '_' + str(dataset_num) + '.pt'
+    filename = 'near_indexes_' + dataset_name + '/near_indexes_' + dataset_name + '_' + str(dataset_num) + '.pt'
     if os.path.exists(filename):
         return torch.load(filename)
     results = []
@@ -60,41 +60,58 @@ def similar_euclid(obs_all, dataset_name, dataset_num, input_indexes=None, eval_
     return near_indexes
 
 # 如果不存在一个obs有很多act的情况，可以不用这一个函数。
-def similar_psi(obs_batch, obs_all, psi, input_indexes=None, eval_batch_size=2500, topk=64):
-    i = 0
-    all_siamese_distance = None
-    psi_batch = psi(obs_batch)
-    if i < obs_all.shape[0]:
-        if i + eval_batch_size < obs_all.shape[0]:
-            siamese_distance = torch.linalg.vector_norm(psi_batch.unsqueeze(dim=1).expand(-1, eval_batch_size, -1) - psi(obs_all[i: i + eval_batch_size]).unsqueeze(dim=0).expand(obs_batch.shape[0], -1, -1), dim=2)
-        else:
-            siamese_distance = torch.linalg.vector_norm(psi_batch.unsqueeze(dim=1).expand(-1, obs_all.shape[0] - i, -1) - psi(obs_all[i:]).unsqueeze(dim=0).expand(obs_batch.shape[0], -1, -1), dim=2)
-        if all_siamese_distance is not None:
-            all_siamese_distance = torch.cat([all_siamese_distance, siamese_distance], dim=1)
-        else:
-            all_siamese_distance = siamese_distance
-        i += i + eval_batch_size
-    _, near_indexes = torch.sort(all_siamese_distance)
+def similar_euclid_obs(obs_batch, obs_near, input_indexes=None, eval_batch_size=2500, topk=10):
+    siamese_distance = torch.linalg.vector_norm(obs_batch.unsqueeze(dim=1).expand(-1, obs_near.shape[0], -1) - obs_near.unsqueeze(dim=0).expand(obs_batch.shape[0], -1, -1), dim=1)
+    _, near_indexes = torch.sort(siamese_distance)
     near_indexes = near_indexes[:, :topk]
     if input_indexes is not None:
-        near_indexes = input_indexes[near_indexes]
+        for i in range(near_indexes.shape[0]):
+            near_indexes[i, :] = input_indexes[i, near_indexes[i, :]]
+    return near_indexes
+# 如果不存在一个obs有很多act的情况，可以不用这一个函数。
+def similar_psi(obs_batch, obs_near, psi, input_indexes=None, eval_batch_size=2500, topk=10):
+    psi_batch = psi(obs_batch)
+    psi_near = psi(obs_near)
+    siamese_distance = torch.linalg.vector_norm(psi_batch.unsqueeze(dim=1).expand(-1, psi_near.shape[0], -1) - psi_near.unsqueeze(dim=0).expand(psi_batch.shape[0], -1, -1), dim=1)
+    _, near_indexes = torch.sort(siamese_distance)
+    near_indexes = near_indexes[:, :topk]
+    if input_indexes is not None:
+        for i in range(near_indexes.shape[0]):
+            near_indexes[i, :] = input_indexes[i, near_indexes[i, :]]
     return near_indexes
 
-def similar_phi(obs_batch, act_batch, obs_near, act_near, phi, task_id, input_indexes=None, eval_batch_size=2500, distance_threshold=1):
-    print(f'obs_batch: {obs_batch.shape}')
-    print(f'act_batch: {act_batch.shape}')
-    print(f'task_id: {task_id.shape}')
-    phi_batch = phi(obs_batch, act_batch, task_id)
+def similar_euclid_act(obs_batch, act_batch, obs_near, act_near, input_indexes=None, topk=4):
     b, n, o = obs_near.shape
-    obs_near = obs_near.reshape(b * n, -1)
-    act_near = act_near.reshape(b * n, -1)
-    task_id = task_id.unsqueeze(dim=1).expand(-1, n, -1).reshape(b * n, -1)
-    near_batch = phi(obs_near, act_near, task_id)
-    near_batch = near_batch.reshape(b, n, -1)
-    siamese_distance = torch.linalg.vector_norm(phi_batch.unsqueeze(dim=1).expand(-1, near_batch.shape[1], -1) - near_batch, dim=2)
-    near_indexes = torch.nonzero(torch.where(siamese_distance < distance_threshold, 1, 0))
+    cat_batch = torch.cat([obs_batch, act_batch], dim=1).unsqueeze(dim=1).expand(-1, n, -1)
+    i = 0
+    siamese_distance = []
+    for i in range(b):
+        cat_near = torch.cat([torch.from_numpy(obs_near[i, :, :]).to(phi_batch.device), torch.from_numpy(act_near[i, :, :]).to(phi_batch.device)], dim=1)
+        siamese_distance.append(torch.linalg.vector_norm(phi_batch[i] - phi_near, dim=1))
+    siamese_distance = torch.stack(siamese_distance, dim=0)
+    _, near_indexes = torch.sort(siamese_distance)
+    near_indexes = near_indexes[:, :topk]
     smallest_distance, smallest_index = torch.min(siamese_distance, dim=1)
     if input_indexes is not None:
-        near_indexes = input_indexes[near_indexes]
-        smallest_index = input_indexes[smallest_index]
+        for i in range(near_indexes.shape[0]):
+            near_indexes[i, :] = input_indexes[i, near_indexes[i, :]]
+            smallest_index[i] = input_indexes[i, smallest_index[i]]
+    return near_indexes, smallest_index, smallest_distance
+
+def similar_phi(obs_batch, act_batch, obs_near, act_near, phi, input_indexes=None, topk=4):
+    b, n, o = obs_near.shape
+    phi_batch = phi(obs_batch, act_batch).unsqueeze(dim=1).expand(-1, n, -1)
+    i = 0
+    siamese_distance = []
+    for i in range(b):
+        phi_near = phi(torch.from_numpy(obs_near[i, :, :]).to(phi_batch.device), torch.from_numpy(act_near[i, :, :]).to(phi_batch.device))
+        siamese_distance.append(torch.linalg.vector_norm(phi_batch[i] - phi_near, dim=1))
+    siamese_distance = torch.stack(siamese_distance, dim=0)
+    _, near_indexes = torch.sort(siamese_distance)
+    near_indexes = near_indexes[:, :topk]
+    smallest_distance, smallest_index = torch.min(siamese_distance, dim=1)
+    if input_indexes is not None:
+        for i in range(near_indexes.shape[0]):
+            near_indexes[i, :] = input_indexes[i, near_indexes[i, :]]
+            smallest_index[i] = input_indexes[i, smallest_index[i]]
     return near_indexes, smallest_index, smallest_distance

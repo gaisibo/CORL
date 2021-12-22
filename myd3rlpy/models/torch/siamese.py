@@ -14,14 +14,14 @@ class Phi(nn.Module):
             nn.ReLU(),
         )
         self._head = nn.Linear(hidden_dim, output_dim)
-    def forward(self, x, action, task_id):
-        out = None
+    def forward(self, x, action):
+        out = 0
         for encoder in self._encoders:
             if out is None:
-                out = encoder(x, action, task_id)
+                out = encoder(x, action)
             else:
-                out += encoder(x, action, task_id)
-        out /= len(self._encoders)
+                out = out + encoder(x, action)
+        out = out / len(self._encoders)
         x = out
         x = self._backbone(x)
         x = self._head(x)
@@ -36,8 +36,8 @@ class Psi(nn.Module):
             nn.ReLU(),
         )
         self._head = nn.Linear(hidden_dim, output_dim)
-    def forward(self, x, task_id):
-        x = self._encoder(x, task_id)
+    def forward(self, x):
+        x = self._encoder(x)
         x = self._backbone(x)
         x = self._head(x)
         return x

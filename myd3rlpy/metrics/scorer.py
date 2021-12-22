@@ -1,3 +1,4 @@
+from typing import List, cast
 import gym
 import numpy as np
 from typing_extensions import Protocol
@@ -15,25 +16,31 @@ def get_task_id_tensor(observations: torch.Tensor, task_id_int: int, task_id_siz
     task_id_tensor = F.one_hot(torch.full([observations.shape[0]], task_id_int, dtype=torch.int64), num_classes=task_id_size).to(observations.dtype).to(observations.device)
     return task_id_tensor
 
-def bc_error_scorer(algo, replay_iterator, action_size: int, replay_num: int, task_id_size: int) -> float:
+def bc_error_scorer(algo, replay_iterator, real_action_size: int) -> float:
     total_errors = []
     for batch in replay_iterator:
         observations, actionss, means, stddevs, qss = batch
-        replay_num_tensor = get_task_id_tensor(observations, replay_num, task_id_size)
+        observations = observations.to(algo._impl.device)
+        actionss = actionss.to(algo._impl.device)
+        means = means.to(algo._impl.device)
+        stddevs = stddevs.to(algo._impl.device)
+        qss = qss.to(algo._impl.device)
         dist = torch.distributions.normal.Normal(means, stddevs)
-        rebuild_means = algo._impl.dist(observations).mean.numpy()
-        rebuild_stddevs = algo._impl.dist(observations).stddev.numpy()
+        rebuild_means = algo._impl._policy.dist(observations).mean
+        rebuild_stddevs = algo._impl._policy.dist(observations).stddev
         rebuild_dist = torch.distributions.normal.Normal(rebuild_means, rebuild_stddevs)
         rebuild_qss = []
         for sample_time in range(qss.shape[1]):
-            rebuild_qs = algo._impl._q_func.sample_q_function(observations, actionss[:, sample_time, :action_size], replay_num_tensor).numpy()
+            print(f'actionss: {actionss.shape}')
+            print(f'actionss choose: {actionss[:, sample_time, :real_action_size].shape}')
+            rebuild_qs = algo._impl._q_func.forward(observations, actionss[:, sample_time, :real_action_size])
             rebuild_qss.append(rebuild_qs)
         replay_qss = torch.stack(rebuild_qss).permute(1, 0)
         loss = F.mse_loss(replay_qss, qss) + torch.distributions.kl.kl_divergence(rebuild_dist, dist)
-        total_errors[replay_num].append(loss)
-    return float(torch.mean(total_errors[replay_num]).cpu().numpy())
+        total_errors.append(loss)
+    return float(torch.mean(total_errors).cpu().numpy())
 
-def td_error_scorer(algo, episodes, action_size, replay_num) -> float:
+def td_error_scorer(algo: AlgoProtocol, episodes: List[Episode], real_action_size: int) -> float:
     r"""Returns average TD error.
     This metics suggests how Q functions overfit to training sets.
     If the TD error is large, the Q functions are overfitting.
@@ -51,12 +58,12 @@ def td_error_scorer(algo, episodes, action_size, replay_num) -> float:
     for episode in episodes:
         for batch in _make_batches(episode, WINDOW_SIZE, algo.n_frames):
             # estimate values for current observations
-            values = algo._impl.predict_value(batch.observations, batch.actions[:, :action_size], replay_num)
+            values = algo.predict_value(batch.observations, batch.actions[:, :real_action_size])
 
             # estimate values for next observations
-            next_actions = algo._impl.policy.best_action(batch.next_observations, replay_num).cpu().numpy()
-            next_values = algo._impl.predict_value(
-                batch.next_observations, next_actions, replay_num
+            next_actions = algo.predict(batch.next_observations)
+            next_values = algo.predict_value(
+                batch.next_observations, next_actions
             )
 
             # calculate td errors

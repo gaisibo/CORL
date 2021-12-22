@@ -23,7 +23,7 @@ from d3rlpy.gpu import Device
 from d3rlpy.models.optimizers import AdamFactory, OptimizerFactory
 from d3rlpy.models.q_functions import QFunctionFactory
 from d3rlpy.algos.base import AlgoBase
-from d3rlpy.algos.td3_plus_bc import TD3
+from d3rlpy.algos.td3_plus_bc import TD3PlusBC
 from d3rlpy.constants import (
     CONTINUOUS_ACTION_SPACE_MISMATCH_ERROR,
     DISCRETE_ACTION_SPACE_MISMATCH_ERROR,
@@ -36,9 +36,7 @@ from d3rlpy.iterators.random_iterator import RandomIterator
 from d3rlpy.iterators.round_iterator import RoundIterator
 from d3rlpy.logger import LOG, D3RLPyLogger
 
-from myd3rlpy.algos.torch.gemmi_impl import GEMMIImpl
-
-class CEMMI(TD3):
+class MI(TD3PlusBC):
     r"""Twin Delayed Deep Deterministic Policy Gradients algorithm.
     TD3 is an improved DDPG-based algorithm.
     Major differences from DDPG are as follows.
@@ -104,6 +102,7 @@ class CEMMI(TD3):
     _critic_optim_factory: OptimizerFactory
     _actor_encoder_factory: EncoderFactory
     _critic_encoder_factory: EncoderFactory
+    # phi和psi与actor和critic共用encoder，不需要另外训练。
     # actor必须被重放，没用选择。
     _replay_actor_alpha: float
     _replay_critic_alpha: float
@@ -116,7 +115,6 @@ class CEMMI(TD3):
     _target_smoothing_clip: float
     _update_actor_interval: int
     _use_gpu: Optional[Device]
-    _impl: Optional[GEMMIImpl]
 
     def __init__(
         self,
@@ -125,9 +123,9 @@ class CEMMI(TD3):
         critic_learning_rate: float = 1e-3,
         actor_optim_factory: OptimizerFactory = AdamFactory(),
         critic_optim_factory: OptimizerFactory = AdamFactory(),
-        actor_encoder_factory: EncoderArg = "defaultmi",
-        critic_encoder_factory: EncoderArg = "defaultmi",
-        q_func_factory: QFuncArg = "meanid",
+        actor_encoder_factory: EncoderArg = "default",
+        critic_encoder_factory: EncoderArg = "default",
+        q_func_factory: QFuncArg = "mean",
         replay_actor_alpha = 2.5,  # from A Minimalist Approach to Offline Reinforcement Learning
         replay_critic_alpha = 1,
         replay_critic: bool = True,
@@ -141,13 +139,13 @@ class CEMMI(TD3):
         target_smoothing_sigma: float = 0.2,
         target_smoothing_clip: float = 0.5,
         n_sample_actions: int = 10,
-        task_id_size: int = 5,
         update_actor_interval: int = 2,
         use_gpu: UseGPUArg = False,
         scaler: ScalerArg = None,
         action_scaler: ActionScalerArg = None,
         reward_scaler: RewardScalerArg = None,
-        impl: Optional[GEMMIImpl] = None,
+        impl = None,
+        impl_name = 'mi',
         **kwargs: Any
     ):
         super().__init__(
@@ -177,14 +175,21 @@ class CEMMI(TD3):
         )
         self._replay_critic = replay_critic
         self._n_sample_actions = n_sample_actions
-        self._task_id_size = task_id_size
         self._replay_actor_alpha = replay_actor_alpha
         self._replay_critic_alpha = replay_critic_alpha
+        self._impl_name = impl_name
 
     def _create_impl(
         self, observation_shape: Sequence[int], action_size: int
     ) -> None:
-        self._impl = GEMMIImpl(
+        assert self._impl_name in ['mi', 'gemmi', 'agemmi']
+        if self._impl_name == 'mi':
+            from myd3rlpy.algos.torch.mi_impl import MIImpl
+        elif self._impl_name == 'gemmi':
+            from myd3rlpy.algos.torch.gemmi_impl import GEMMIImpl as MIImple
+        elif self._impl_name == 'agemmi':
+            from myd3rlpy.algos.torch.agemmi_impl import AGEMMIImpl as MIImple
+        self._impl = MIImpl(
             observation_shape=observation_shape,
             action_size=action_size,
             actor_learning_rate=self._actor_learning_rate,
@@ -204,7 +209,6 @@ class CEMMI(TD3):
             target_smoothing_sigma=self._target_smoothing_sigma,
             target_smoothing_clip=self._target_smoothing_clip,
             n_sample_actions = self._n_sample_actions,
-            task_id_size = self._task_id_size,
             use_gpu=self._use_gpu,
             scaler=self._scaler,
             action_scaler=self._action_scaler,
@@ -212,29 +216,50 @@ class CEMMI(TD3):
         )
         self._impl.build()
 
-    def update(self, batch: TransitionMiniBatch, task_id: int, replay_batches: Optional[Dict[int, List[Tensor]]]) -> Dict[str, float]:
+    def update(self, batch: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[Tensor]]]) -> Dict[str, float]:
         """Update parameters with mini-batch of data.
         Args:
             batch: mini-batch data.
         Returns:
             dictionary of metrics.
         """
-        loss = self._update(batch, task_id, replay_batches)
+        loss = self._update(batch, replay_batches)
         self._grad_step += 1
         return loss
 
     # 注意欧氏距离最近邻被塞到actions后面了。
-    def _update(self, batch: TransitionMiniBatch, task_id: int, replay_batches: Optional[Dict[int, List[Tensor]]]) -> Dict[str, float]:
+    def _update(self, batch: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[Tensor]]]) -> Dict[str, float]:
         assert self._impl is not None, IMPL_NOT_INITIALIZED_ERROR
 
         metrics = {}
 
-        critic_loss = self._impl.update_critic(batch, task_id=task_id, replay_batches=replay_batches) * self._critic_alpha()
+        # 更新phi和psi。
+        half_batch_len = len(batch) // 2
+        batch1 = TransitionMiniBatch(batch[: half_batch_len])
+        batch2 = TransitionMiniBatch(batch[half_batch_len :])
+
+        phi_loss = self._impl.update_phi(batch1, batch2)
+        metrics.update({"phi_loss": phi_loss})
+        # if self._replay_phi and replay_batches is not None:
+        #     for i, replay_batch in replay_batches.items():
+        #         replay_phi_loss = self._impl.replay_update_phi(replay_batch)
+        #         metrics.update({"replay_phi_loss {key}": replay_phi_loss})
+        #         phi_loss += replay_phi_loss
+
+        psi_loss = self._impl.update_psi(batch1, batch2)
+        metrics.update({"psi_loss": psi_loss})
+        # if self._replay_psi and replay_batches is not None:
+        #     for i, replay_batch in replay_batches.items():
+        #         replay_psi_loss = self._impl.replay_update_psi(replay_batch)
+        #         metrics.update({"replay_psi_loss {key}": replay_psi_loss})
+        #         psi_loss += replay_psi_loss
+
+        critic_loss = self._impl.update_critic(batch, replay_batches=replay_batches) * self._critic_alpha()
         metrics.update({"critic_loss": critic_loss})
 
         # delayed policy update
         if self._grad_step % self._update_actor_interval == 0:
-            actor_loss = self._impl.update_actor(batch, task_id=task_id, replay_batches=replay_batches) * self.actor_alpha()
+            actor_loss = self._impl.update_actor(batch, replay_batches=replay_batches) * self._actor_alpha()
             metrics.update({"actor_loss": actor_loss})
             self._impl.update_critic_target()
             self._impl.update_actor_target()
@@ -251,7 +276,6 @@ class CEMMI(TD3):
         self,
         dataset: Union[List[Episode], MDPDataset],
         replay_datasets: Optional[Dict[int, List[TensorDataset]]],
-        task_id: int,
         n_epochs: Optional[int] = None,
         n_steps: Optional[int] = None,
         n_steps_per_epoch: int = 10000,
@@ -273,6 +297,8 @@ class CEMMI(TD3):
         ] = None,
         shuffle: bool = True,
         callback: Optional[Callable[[LearnableBase, int, int], None]] = None,
+        real_action_size: Optional[int] = None,
+        real_observation_size: Optional[int] = None,
     ) -> List[Tuple[int, Dict[str, float]]]:
         """Trains with the given dataset.
         .. code-block:: python
@@ -309,7 +335,6 @@ class CEMMI(TD3):
             self.fitter(
                 dataset,
                 replay_datasets,
-                task_id,
                 n_epochs,
                 n_steps,
                 n_steps_per_epoch,
@@ -327,6 +352,8 @@ class CEMMI(TD3):
                 replay_scorers,
                 shuffle,
                 callback,
+                real_action_size,
+                real_observation_size,
             )
         )
         return results
@@ -335,7 +362,6 @@ class CEMMI(TD3):
         self,
         dataset: Union[List[Episode], MDPDataset],
         replay_datasets: Optional[Dict[int, List[TensorDataset]]],
-        task_id: int,
         n_epochs: Optional[int] = None,
         n_steps: Optional[int] = None,
         n_steps_per_epoch: int = 10000,
@@ -353,10 +379,12 @@ class CEMMI(TD3):
             Dict[str, Callable[[Any, List[Episode]], float]]
         ] = None,
         replay_scorers: Optional[
-            Dict[str, Callable[[Any, Iterator, int], float]]
+            Dict[str, Callable[[Any, Iterator], float]]
         ] = None,
         shuffle: bool = True,
         callback: Optional[Callable[["LearnableBase", int, int], None]] = None,
+        real_action_size: Optional[int] = None,
+        real_observation_size: Optional[int] = None,
     ) -> Generator[Tuple[int, Dict[str, float]], None, None]:
         """Iterate over epochs steps to train with the given dataset. At each
              iteration algo methods and properties can be changed or queried.
@@ -506,7 +534,8 @@ class CEMMI(TD3):
         if self._impl is None:
             LOG.debug("Building models...")
             transition = iterator.transitions[0]
-            action_size = transition.get_action_size()
+            action_size = real_action_size
+            observation_shape = real_observation_size
             observation_shape = tuple(transition.get_observation_shape())
             self.create_impl(
                 self._process_observation_shape(observation_shape), action_size
@@ -589,18 +618,18 @@ class CEMMI(TD3):
                         if replay_iterators is not None:
                             assert replay_dataloaders is not None
                             replay_batches = dict()
-                            for replay_iterator_num, replay_iterator in replay_iterators.items():
+                            for replay_iterator_num in replay_iterators.items():
                                 try:
-                                    replay_batches[str(replay_iterator_num)] = next(replay_iterator)
+                                    replay_batches[str(replay_iterator_num)] = next(replay_iterators[replay_iterator_num])
                                 except StopIteration:
                                     replay_iterators[replay_iterator_num] = iter(replay_dataloaders[replay_iterator_num])
-                                    replay_batches[str(replay_iterator_num)] = next(replay_iterator)
+                                    replay_batches[str(replay_iterator_num)] = next(replay_iterators[replay_iterator_num])
                         else:
                             replay_batches = None
 
                     # update parameters
                     with logger.measure_time("algorithm_update"):
-                        loss = self.update(batch, task_id, replay_batches, all_data)
+                        loss = self.update(batch, replay_batches)
 
                     # record metrics
                     for name, val in loss.items():
@@ -641,7 +670,7 @@ class CEMMI(TD3):
                     for replay_num, replay_eval_episodes in replay_eval_episodess.items():
                         # 重命名
                         replay_scorers_tmp = {k + str(replay_num): v for k, v in replay_scorers.items()}
-                        self._replay_evaluate(replay_eval_episodes, partial(replay_scorers, replay_num=replay_num), logger)
+                        self._replay_evaluate(replay_eval_episodes, replay_scorers, logger)
 
             # save metrics
             metrics = logger.commit(epoch, total_step)
@@ -655,20 +684,3 @@ class CEMMI(TD3):
         # drop reference to active logger since out of fit there is no active
         # logger
         self._active_logger = None
-
-    def _replay_evaluate(
-        self,
-        episodes: Iterator,
-        scorers: Dict[str, Callable[[Any, Iterator], float]],
-        logger: D3RLPyLogger,
-    ) -> None:
-        for name, scorer in scorers.items():
-            # evaluation with test data
-            test_score = scorer(self, episodes)
-
-            # logging metrics
-            logger.add_metric(name, test_score)
-
-            # store metric locally
-            if test_score is not None:
-                self._eval_results[name].append(test_score)
