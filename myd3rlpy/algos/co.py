@@ -313,7 +313,6 @@ class CO(TD3PlusBC):
         show_progress: bool = True,
         tensorboard_dir: Optional[str] = None,
         eval_episodes: Optional[List[Episode]] = None,
-        replay_eval_episodess: Optional[Dict[int, Iterator]] = None,
         save_interval: int = 1,
         scorers: Optional[
             Dict[int, Callable[[Any, List[Episode]], float]]
@@ -373,7 +372,6 @@ class CO(TD3PlusBC):
                 show_progress,
                 tensorboard_dir,
                 eval_episodes,
-                replay_eval_episodess,
                 save_interval,
                 scorers,
                 replay_scorers,
@@ -401,7 +399,6 @@ class CO(TD3PlusBC):
         show_progress: bool = True,
         tensorboard_dir: Optional[str] = None,
         eval_episodes: Optional[List[Episode]] = None,
-        replay_eval_episodess: Optional[Dict[int, Iterator]] = None,
         save_interval: int = 1,
         scorers: Optional[
             Dict[int, Callable[[Any, List[Episode]], float]]
@@ -686,12 +683,12 @@ class CO(TD3PlusBC):
             if scorers and eval_episodes:
                 self._evaluate(eval_episodes, scorers, logger)
 
-            if replay_scorers and replay_eval_episodess:
-                if replay_iterators is not None:
-                    for replay_num, replay_eval_episodes in replay_eval_episodess.items():
+            if replay_scorers:
+                if replay_dataloaders is not None:
+                    for replay_num, replay_dataloader in replay_dataloaders.items():
                         # 重命名
                         replay_scorers_tmp = {k + str(replay_num): v for k, v in replay_scorers.items()}
-                        self._evaluate(replay_eval_episodes, replay_scorers, logger)
+                        self._evaluate(replay_dataloader, replay_scorers, logger)
 
             # save metrics
             metrics = logger.commit(epoch, total_step)

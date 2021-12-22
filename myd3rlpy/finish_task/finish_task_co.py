@@ -8,7 +8,7 @@ def finish_task_co(dataset_num, dataset, original, network, indexes_euclid, real
     task_id_numpy = np.eye(args.task_nums)[dataset_num].squeeze()
     task_id_numpy = np.broadcast_to(task_id_numpy, (original.shape[0], args.task_nums))
     original = torch.cat([original, torch.from_numpy(task_id_numpy).to(torch.float32).to(device)], dim=1)
-    start_indexes = similar_psi(original.to(device), torch.from_numpy(dataset._observations).to(device), network._impl._psi)
+    start_indexes = similar_psi(original.to(device), torch.from_numpy(dataset._observations).to(device), network._impl._psi, topk=args.topk)
     start_indexes = start_indexes.reshape((start_indexes.shape[0] * start_indexes.shape[1]))
     start_indexes = torch.unique(start_indexes)
     start_observations = torch.from_numpy(dataset._observations[start_indexes.cpu().numpy()]).to(device)
@@ -23,7 +23,7 @@ def finish_task_co(dataset_num, dataset, original, network, indexes_euclid, real
         near_indexes_n = []
         for i_start_actionss in range(start_actionss.shape[1]):
             # this_observations = start_observations.unsqueeze(dim=1).expand(-1, indexes_euclid.shape[1], -1)
-            near_indexes, _, _ = similar_phi(start_observations, start_actionss[:, i_start_actionss, :], near_observations, near_actions, network._impl._phi, indexes_euclid[start_indexes])
+            near_indexes, _, _ = similar_phi(start_observations, start_actionss[:, i_start_actionss, :], near_observations, near_actions, network._impl._phi, indexes_euclid[start_indexes], topk=args.topk)
             near_indexes = near_indexes.reshape((near_indexes.shape[0] * near_indexes.shape[1]))
             near_indexes_n.append(near_indexes)
         near_indexes = torch.cat(near_indexes_n, dim=0)
@@ -31,13 +31,12 @@ def finish_task_co(dataset_num, dataset, original, network, indexes_euclid, real
         start_indexes = near_indexes
         for replay_index in replay_indexes:
             start_indexes = np.setdiff1d(start_indexes, replay_index)
-            if start_indexes.shape[0] == 0:
-                break
-        start_indexes = start_indexes
         start_rewards = dataset._rewards[start_indexes]
         start_indexes = start_indexes[start_rewards != 1]
         start_terminals = dataset.terminals[start_indexes]
         start_indexes = start_indexes[start_terminals == False]
+        if start_indexes.shape[0] == 0:
+            break
         start_observations = torch.from_numpy(dataset._observations[start_indexes]).to(device)
         start_indexes = torch.from_numpy(start_indexes)
         start_rewards = torch.from_numpy(start_rewards)

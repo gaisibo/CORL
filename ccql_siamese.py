@@ -13,8 +13,7 @@ import torch
 
 import d3rlpy
 from d3rlpy.ope import FQE
-from d3rlpy.metrics.scorer import initial_state_value_estimation_scorer
-from d3rlpy.metrics.scorer import soft_opc_scorer
+from d3rlpy.metrics.scorer import soft_opc_scorer, evaluate_on_environment, initial_state_value_estimation_scorer
 from d3rlpy.dataset import MDPDataset
 # from myd3rlpy.datasets import get_d4rl
 from utils.siamese_similar import similar_psi, similar_phi
@@ -38,7 +37,7 @@ def main(args, device):
 #         buffer_._obs = np.hstack((buffer_._obs, task_id_np))
 #         datasets.append(MDPDataset(buffer_._obs, buffer_._actions, buffer_._rewards, buffer_._terminals))
 #         break
-    origin_dataset, env, task_datasets, end_points, original, real_action_size, real_observation_size, indexes_euclids = split_navigate_antmaze_large_play_v0(args.task_split_type, device)
+    origin_dataset, task_datasets, taskid_task_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids = split_navigate_antmaze_large_play_v0(args.task_split_type, device)
     np.set_printoptions(precision=1, suppress=True)
 
     # prepare algorithm
@@ -60,8 +59,7 @@ def main(args, device):
             real_action_size = real_action_size,
             real_observation_size = real_observation_size,
             eval_episodes=dataset,
-            replay_eval_episodess = replay_datasets,
-            n_epochs=1,
+            n_epochs=20,
             scorers={
                 # 'environment': evaluate_on_environment(env),
                 'td_error': partial(td_error_scorer, real_action_size=real_action_size)
@@ -76,7 +74,7 @@ def main(args, device):
         if args.algos == 'co':
             replay_datasets[dataset_num] = finish_task_co(dataset_num, dataset, original, co, indexes_euclids[dataset_num], real_action_size, args, device)
 
-    for dataset_num, dataset in task_datasets.items():
+    for dataset_num, dataset in taskid_task_datasets.items():
         # off-policy evaluation algorithm
         fqe = FQE(algo=co)
 
@@ -88,7 +86,8 @@ def main(args, device):
                 n_epochs=1,
                 scorers={
                    'init_value': initial_state_value_estimation_scorer,
-                   'soft_opc': soft_opc_scorer(return_threshold=600)
+                   'soft_opc': soft_opc_scorer(return_threshold=600),
+                   'evaluate_on_environment': evaluate_on_environment(envs[dataset_num])
                 })
 
 if __name__ == '__main__':
@@ -100,7 +99,8 @@ if __name__ == '__main__':
     parser.add_argument('--siamese_threshold', default=1, type=float)
     parser.add_argument('--eval_batch_size', default=256, type=int)
     parser.add_argument('--batch_size', default=256, type=int)
-    parser.add_argument('--sample_times', default=4, type=int)
+    parser.add_argument('--sample_times', default=1, type=int)
+    parser.add_argument('--topk', default=1, type=int)
     parser.add_argument('--task_split_type', default='undirected', type=str)
     parser.add_argument('--task_nums', default=7, type=int)
     parser.add_argument('--dataset_name', default='antmaze-large-play-v0', type=str)

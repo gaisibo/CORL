@@ -3,6 +3,7 @@ import gym
 import numpy as np
 from typing_extensions import Protocol
 import torch
+import torch.nn.functional as F
 
 from d3rlpy.dataset import Episode, TransitionMiniBatch
 from d3rlpy.preprocessing.reward_scalers import RewardScaler
@@ -31,14 +32,16 @@ def bc_error_scorer(algo, replay_iterator, real_action_size: int) -> float:
         rebuild_dist = torch.distributions.normal.Normal(rebuild_means, rebuild_stddevs)
         rebuild_qss = []
         for sample_time in range(qss.shape[1]):
+            print(f'observations: {observations.shape}')
             print(f'actionss: {actionss.shape}')
             print(f'actionss choose: {actionss[:, sample_time, :real_action_size].shape}')
             rebuild_qs = algo._impl._q_func.forward(observations, actionss[:, sample_time, :real_action_size])
             rebuild_qss.append(rebuild_qs)
-        replay_qss = torch.stack(rebuild_qss).permute(1, 0)
+        replay_qss = torch.stack(rebuild_qss, dim=1)
         loss = F.mse_loss(replay_qss, qss) + torch.distributions.kl.kl_divergence(rebuild_dist, dist)
         total_errors.append(loss)
-    return float(torch.mean(total_errors).cpu().numpy())
+    total_errors = torch.cat(total_errors, dim=0)
+    return float(torch.mean(total_errors).detach().cpu().numpy())
 
 def td_error_scorer(algo: AlgoProtocol, episodes: List[Episode], real_action_size: int) -> float:
     r"""Returns average TD error.
