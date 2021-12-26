@@ -233,34 +233,17 @@ class MI(TD3PlusBC):
 
         metrics = {}
 
-        # 更新phi和psi。
-        half_batch_len = len(batch) // 2
-        batch1 = TransitionMiniBatch(batch[: half_batch_len])
-        batch2 = TransitionMiniBatch(batch[half_batch_len :])
-
-        phi_loss = self._impl.update_phi(batch1, batch2)
-        metrics.update({"phi_loss": phi_loss})
-        # if self._replay_phi and replay_batches is not None:
-        #     for i, replay_batch in replay_batches.items():
-        #         replay_phi_loss = self._impl.replay_update_phi(replay_batch)
-        #         metrics.update({"replay_phi_loss {key}": replay_phi_loss})
-        #         phi_loss += replay_phi_loss
-
-        psi_loss = self._impl.update_psi(batch1, batch2)
-        metrics.update({"psi_loss": psi_loss})
-        # if self._replay_psi and replay_batches is not None:
-        #     for i, replay_batch in replay_batches.items():
-        #         replay_psi_loss = self._impl.replay_update_psi(replay_batch)
-        #         metrics.update({"replay_psi_loss {key}": replay_psi_loss})
-        #         psi_loss += replay_psi_loss
-
-        critic_loss = self._impl.update_critic(batch, replay_batches=replay_batches) * self._critic_alpha()
+        critic_loss, critic_q_func_loss, critic_replay_loss = self._impl.update_critic(batch, replay_batches=replay_batches) * self._critic_alpha()
         metrics.update({"critic_loss": critic_loss})
+        metrics.update({"critic_q_func_loss": critic_q_func_loss})
+        metrics.update({"critic_replay_loss": critic_replay_loss})
 
         # delayed policy update
         if self._grad_step % self._update_actor_interval == 0:
-            actor_loss = self._impl.update_actor(batch, replay_batches=replay_batches) * self._actor_alpha()
+            actor_loss, actor_policy_loss, actor_replay_loss = self._impl.update_actor(batch, replay_batches=replay_batches) * self._actor_alpha()
             metrics.update({"actor_loss": actor_loss})
+            metrics.update({"actor_policy_loss": actor_policy_loss})
+            metrics.update({"actor_replay_loss": actor_replay_loss})
             self._impl.update_critic_target()
             self._impl.update_actor_target()
 

@@ -77,4 +77,4 @@ def split_navigate_antmaze_large_play_v0(task_split_type, device):
         indexes_euclids[dataset_num] = indexes_euclid
 
     original = torch.zeros([1, real_observation_size], dtype=torch.float32).to(device)
-    return origin_dataset, changed_task_datasets, taskid_task_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids
+    return origin_dataset, changed_task_datasets, taskid_task_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums

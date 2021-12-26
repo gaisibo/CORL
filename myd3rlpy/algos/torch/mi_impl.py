@@ -16,11 +16,11 @@ from d3rlpy.torch_utility import TorchMiniBatch, soft_sync, train_api, eval_api,
 from d3rlpy.dataset import MDPDataset, TransitionMiniBatch
 from d3rlpy.algos.base import AlgoBase
 from d3rlpy.algos.torch.base import TorchImplBase
-from d3rlpy.algos.torch.td3_plus_bc_impl import TD3Impl
+from d3rlpy.algos.torch.td3_impl import TD3Impl
 
 from d3rlpy.models.builders import create_squashed_normal_policy, create_continuous_q_function
 
-class COImpl(TD3Impl):
+class MIImpl(TD3Impl):
     _n_sample_actions: int
     def __init__(
         self,
@@ -107,7 +107,6 @@ class COImpl(TD3Impl):
 
     @train_api
     def update_critic(self, batch: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[torch.Tensor]]]=None) -> np.ndarray:
-        assert all_data is not None
         batch = TorchMiniBatch(
             batch,
             self.device,
@@ -123,18 +122,27 @@ class COImpl(TD3Impl):
 
         q_tpn, action = self.compute_target(batch)
 
-        loss = self.compute_critic_loss(batch, q_tpn, all_data, action)
+        loss = self.compute_critic_loss(batch, q_tpn, action)
+        policy_loss = loss.cpu().detach().numpy()
+        replay_loss = 0
         if replay_batches is not None:
             for i, replay_batch in replay_batches.items():
-                replay_observations, replay_actionss, replay_means, replay_stddevs, replay_qss = replay_batch
+                with torch.no_grad():
+                    replay_observations, replay_actionss, _, _, replay_qss = replay_batch
+                    replay_observations = replay_observations.to(self.device)
+                    replay_actionss = replay_actionss.to(self.device)
+                    replay_qss = replay_qss.to(self.device)
                 for action_sample_num in range(replay_actionss.shape[1]):
                     q = self._q_func(replay_observations, replay_actionss[:, action_sample_num, :])
-                    loss += self._replay_critic_alpha * F.mse_loss(replay_qss[:, action_sample_num], q) / len(replay_batches)
+                    replay_loss += self._replay_critic_alpha * F.mse_loss(replay_qss[:, action_sample_num], q) / len(replay_batches)
+            loss += replay_loss
+            replay_loss = replay_loss.cpu().detach().numpy()
 
         loss.backward()
         self._critic_optim.step()
+        loss = loss.cpu().detach().numpy()
 
-        return loss.cpu().detach().numpy()
+        return loss, policy_loss, replay_loss
 
     def compute_critic_loss(self, batch: TransitionMiniBatch, q_tpn: torch.Tensor, action: torch.Tensor) -> torch.Tensor:
         assert self._q_func is not None
@@ -180,17 +188,26 @@ class COImpl(TD3Impl):
         self._actor_optim.zero_grad()
 
         loss = self.compute_actor_loss(batch)
+        policy_loss = loss.cpu().detach().numpy()
+        replay_loss = 0
         if replay_batches is not None:
             for i, replay_batch in replay_batches.items():
-                replay_observations, replay_actionss, replay_means, replay_stddevs, replay_qss = replay_batch
+                with torch.no_grad():
+                    replay_observations, _, replay_means, replay_stddevs, _ = replay_batch
+                    replay_observations = replay_observations.to(self.device)
+                    replay_means = replay_means.to(self.device)
+                    replay_stddevs = replay_stddevs.to(self.device)
+                    dist_ = torch.distributions.normal.Normal(replay_means, replay_stddevs)
                 dist = self._policy.dist(replay_observations)
-                dist_ = torch.distributions.normal.Normal(replay_means, replay_stddevs)
-                loss += self._replay_actor_alpha * torch.distributions.kl.kl_divergence(dist_, dist) / len(replay_batches)
+                replay_loss += self._replay_actor_alpha * torch.distributions.kl.kl_divergence(dist_, dist).mean() / len(replay_batches)
+            loss += replay_loss
+            replay_loss = replay_loss.cpu().detach().numpy()
 
         loss.backward()
         self._actor_optim.step()
+        loss = loss.cpu().detach().numpy()
 
-        return loss.cpu().detach().numpy()
+        return loss, policy_loss, replay_loss
 
     def compute_actor_loss(self, batch: TorchMiniBatch) -> torch.Tensor:
         assert self._policy is not None

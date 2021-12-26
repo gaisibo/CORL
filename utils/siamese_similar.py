@@ -86,8 +86,8 @@ def similar_euclid_act(obs_batch, act_batch, obs_near, act_near, input_indexes=N
     i = 0
     siamese_distance = []
     for i in range(b):
-        cat_near = torch.cat([torch.from_numpy(obs_near[i, :, :]).to(phi_batch.device), torch.from_numpy(act_near[i, :, :]).to(phi_batch.device)], dim=1)
-        siamese_distance.append(torch.linalg.vector_norm(phi_batch[i] - phi_near, dim=1))
+        cat_near = torch.cat([torch.from_numpy(obs_near[i, :, :]).to(cat_batch.device), torch.from_numpy(act_near[i, :, :]).to(cat_batch.device)], dim=1)
+        siamese_distance.append(torch.linalg.vector_norm(cat_batch[i] - cat_near, dim=1))
     siamese_distance = torch.stack(siamese_distance, dim=0)
     _, near_indexes = torch.sort(siamese_distance)
     near_indexes = near_indexes[:, :topk]

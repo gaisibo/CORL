@@ -1,3 +1,4 @@
+import math
 from typing import Any, Dict, Optional, Sequence, List, Union, Callable, Tuple, Generator, Iterator
 from collections import defaultdict
 from tqdm.auto import tqdm
@@ -138,9 +139,14 @@ class CO(TD3PlusBC):
         q_func_factory: QFuncArg = "mean",
         replay_actor_alpha = 2.5,  # from A Minimalist Approach to Offline Reinforcement Learning
         replay_critic_alpha = 1,
+        siamese_actor_alpha = 10,
+        siamese_critic_alpha = 10,
+        replay_phi_alpha = 1,
+        replay_psi_alpha=2.5,
         replay_critic: bool = True,
-        replay_phi: bool = False,
-        replay_psi: bool = False,
+        use_phi_update: bool = True,
+        use_same_encoder: bool = True,
+        train_phi: bool = True,
         batch_size: int = 256,
         n_frames: int = 1,
         n_steps: int = 1,
@@ -190,24 +196,33 @@ class CO(TD3PlusBC):
         self._phi_optim_factory = phi_optim_factory
         self._psi_optim_factory = psi_optim_factory
         self._replay_critic = replay_critic
-        self._replay_phi = replay_phi
-        self._replay_psi = replay_psi
+        self._use_phi_update = use_phi_update
+        self._use_same_encoder = use_same_encoder
+        self._train_phi = train_phi
         self._n_sample_actions = n_sample_actions
         self._replay_actor_alpha = replay_actor_alpha
         self._replay_critic_alpha = replay_critic_alpha
+        self._siamese_actor_alpha = siamese_actor_alpha
+        self._siamese_critic_alpha = siamese_critic_alpha
+        self._replay_phi_alpha = replay_phi_alpha
+        self._replay_psi_alpha = replay_psi_alpha
 
         self._impl_name = impl_name
+
+        self._pretrain_grad_step = 0
 
     def _create_impl(
         self, observation_shape: Sequence[int], action_size: int
     ) -> None:
         assert self._impl_name in ['co', 'gemco', 'agemco']
+        COImpl = None
         if self._impl_name == 'co':
             from myd3rlpy.algos.torch.co_impl import COImpl as COImpl
         elif self._impl_name == 'gemco':
             from myd3rlpy.algos.torch.gemco_impl import GEMCOImpl as COImpl
         elif self._impl_name == 'agemco':
             from myd3rlpy.algos.torch.agemco_impl import AGEMCOImpl as COImpl
+        assert COImpl is not None
         self._impl = COImpl(
             observation_shape=observation_shape,
             action_size=action_size,
@@ -224,9 +239,13 @@ class CO(TD3PlusBC):
             q_func_factory=self._q_func_factory,
             replay_critic_alpha=self._replay_critic_alpha,
             replay_actor_alpha=self._replay_actor_alpha,
+            siamese_critic_alpha=self._siamese_critic_alpha,
+            siamese_actor_alpha=self._siamese_actor_alpha,
+            replay_phi_alpha=self._replay_phi_alpha,
+            replay_psi_alpha=self._replay_psi_alpha,
             replay_critic=self._replay_critic,
-            replay_phi=self._replay_phi,
-            replay_psi=self._replay_psi,
+            use_phi_update=self._use_phi_update,
+            use_same_encoder=self._use_same_encoder,
             gamma=self._gamma,
             tau=self._tau,
             n_critics=self._n_critics,
@@ -240,6 +259,42 @@ class CO(TD3PlusBC):
             reward_scaler=self._reward_scaler,
         )
         self._impl.build()
+
+    def pretrain_update(self, batch: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[Tensor]]], all_data: MDPDataset) -> Dict[int, float]:
+        """Update parameters with mini-batch of data.
+        Args:
+            batch: mini-batch data.
+        Returns:
+            dictionary of metrics.
+        """
+        loss = self._pretrain_update(batch, replay_batches, all_data)
+        self._pretrain_grad_step += 1
+        return loss
+
+    # 注意欧氏距离最近邻被塞到actions后面了。
+    def _pretrain_update(self, batch: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[Tensor]]], all_data: MDPDataset) -> Dict[int, float]:
+        assert self._impl is not None, IMPL_NOT_INITIALIZED_ERROR
+
+        metrics = {}
+
+        # 更新phi和psi。
+        assert self._train_phi
+        if self._grad_step % self._update_actor_interval == 0:
+            half_batch_len = len(batch) // 2
+            batch1 = TransitionMiniBatch(batch[: half_batch_len])
+            batch2 = TransitionMiniBatch(batch[half_batch_len :])
+
+            phi_loss, phi_policy_loss, phi_replay_loss = self._impl.update_phi(batch1, batch2, replay_batches=replay_batches)
+            metrics.update({"phi_pretrain_loss": phi_loss})
+            metrics.update({"phi_pretrain_policy_loss": phi_policy_loss})
+            metrics.update({"phi_pretrain_replay_loss": phi_replay_loss})
+
+            psi_loss, psi_policy_loss, psi_replay_loss = self._impl.update_psi(batch1, batch2, replay_batches=replay_batches, pretrain=True)
+            metrics.update({"psi_pretrain_loss": psi_loss})
+            metrics.update({"psi_pretrain_policy_loss": psi_policy_loss})
+            metrics.update({"psi_pretrain_replay_loss": psi_replay_loss})
+
+        return metrics
 
     def update(self, batch: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[Tensor]]], all_data: MDPDataset) -> Dict[int, float]:
         """Update parameters with mini-batch of data.
@@ -258,36 +313,42 @@ class CO(TD3PlusBC):
 
         metrics = {}
 
-        # 更新phi和psi。
-        half_batch_len = len(batch) // 2
-        batch1 = TransitionMiniBatch(batch[: half_batch_len])
-        batch2 = TransitionMiniBatch(batch[half_batch_len :])
-
-        phi_loss = self._impl.update_phi(batch1, batch2)
-        metrics.update({"phi_loss": phi_loss})
-        # if self._replay_phi and replay_batches is not None:
-        #     for i, replay_batch in replay_batches.items():
-        #         replay_phi_loss = self._impl.replay_update_phi(replay_batch)
-        #         metrics.update({"replay_phi_loss {key}": replay_phi_loss})
-        #         phi_loss += replay_phi_loss
-
-        psi_loss = self._impl.update_psi(batch1, batch2)
-        metrics.update({"psi_loss": psi_loss})
-        # if self._replay_psi and replay_batches is not None:
-        #     for i, replay_batch in replay_batches.items():
-        #         replay_psi_loss = self._impl.replay_update_psi(replay_batch)
-        #         metrics.update({"replay_psi_loss {key}": replay_psi_loss})
-        #         psi_loss += replay_psi_loss
-
-        critic_loss = self._impl.update_critic(batch, replay_batches=replay_batches, all_data=all_data) * self._critic_alpha()
+        critic_loss, critic_q_func_loss, critic_siamese_loss, critic_replay_loss, critic_smallest_distance = self._impl.update_critic(batch, replay_batches=replay_batches, all_data=all_data) * self._critic_alpha()
         metrics.update({"critic_loss": critic_loss})
+        metrics.update({"critic_q_func_loss": critic_q_func_loss})
+        metrics.update({"critic_siamese_loss": critic_siamese_loss})
+        metrics.update({"critic_replay_loss": critic_replay_loss})
+        metrics.update({"critic_siamese_alpha": self._impl._temp_siamese_critic_alpha})
+        metrics.update({'critic_smallest_distance': critic_smallest_distance})
 
         # delayed policy update
         if self._grad_step % self._update_actor_interval == 0:
-            actor_loss = self._impl.update_actor(batch, replay_batches=replay_batches, all_data=all_data) * self._actor_alpha()
+            actor_loss, actor_policy_loss, actor_siamese_loss, actor_replay_loss, actor_smallest_distance = self._impl.update_actor(batch, replay_batches=replay_batches, all_data=all_data) * self._actor_alpha()
             metrics.update({"actor_loss": actor_loss})
+            metrics.update({"actor_policy_loss": actor_policy_loss})
+            metrics.update({"actor_siamese_loss": actor_siamese_loss})
+            metrics.update({"actor_replay_loss": actor_replay_loss})
+            metrics.update({"actor_siamese_alpha": self._impl._temp_siamese_actor_alpha})
+            metrics.update({'actor_smallest_distance': actor_smallest_distance})
             self._impl.update_critic_target()
             self._impl.update_actor_target()
+
+        # 更新phi和psi。
+        if self._train_phi:
+            if self._grad_step % self._update_actor_interval == 0:
+                half_batch_len = len(batch) // 2
+                batch1 = TransitionMiniBatch(batch[: half_batch_len])
+                batch2 = TransitionMiniBatch(batch[half_batch_len :])
+
+                phi_loss, phi_policy_loss, phi_replay_loss = self._impl.update_phi(batch1, batch2, replay_batches=replay_batches)
+                metrics.update({"phi_loss": phi_loss})
+                metrics.update({"phi_policy_loss": phi_policy_loss})
+                metrics.update({"phi_replay_loss": phi_replay_loss})
+
+                psi_loss, psi_policy_loss, psi_replay_loss = self._impl.update_psi(batch1, batch2, replay_batches=replay_batches)
+                metrics.update({"psi_loss": psi_loss})
+                metrics.update({"psi_policy_loss": psi_policy_loss})
+                metrics.update({"psi_replay_loss": psi_replay_loss})
 
         return metrics
 
@@ -305,6 +366,7 @@ class CO(TD3PlusBC):
         n_epochs: Optional[int] = None,
         n_steps: Optional[int] = None,
         n_steps_per_epoch: int = 10000,
+        pretrain_phi_epoch: int = 0,
         save_metrics: bool = True,
         experiment_name: Optional[str] = None,
         with_timestamp: bool = True,
@@ -312,13 +374,13 @@ class CO(TD3PlusBC):
         verbose: bool = True,
         show_progress: bool = True,
         tensorboard_dir: Optional[str] = None,
-        eval_episodes: Optional[List[Episode]] = None,
+        eval_episodess: Optional[Dict[int, List[Episode]]] = None,
         save_interval: int = 1,
         scorers: Optional[
-            Dict[int, Callable[[Any, List[Episode]], float]]
+            Dict[int, Callable[[Any, List[Episode]], Dict[int, float]]]
         ] = None,
         replay_scorers: Optional[
-            Dict[int, Callable[[Any, Iterator, int], float]]
+            Dict[int, Callable[[Any, Iterator], float]]
         ] = None,
         shuffle: bool = True,
         callback: Optional[Callable[[LearnableBase, int, int], None]] = None,
@@ -364,6 +426,7 @@ class CO(TD3PlusBC):
                 n_epochs,
                 n_steps,
                 n_steps_per_epoch,
+                pretrain_phi_epoch,
                 save_metrics,
                 experiment_name,
                 with_timestamp,
@@ -371,7 +434,7 @@ class CO(TD3PlusBC):
                 verbose,
                 show_progress,
                 tensorboard_dir,
-                eval_episodes,
+                eval_episodess,
                 save_interval,
                 scorers,
                 replay_scorers,
@@ -391,6 +454,7 @@ class CO(TD3PlusBC):
         n_epochs: Optional[int] = None,
         n_steps: Optional[int] = None,
         n_steps_per_epoch: int = 10000,
+        pretrain_phi_epoch: int = 0,
         save_metrics: bool = True,
         experiment_name: Optional[str] = None,
         with_timestamp: bool = True,
@@ -398,10 +462,10 @@ class CO(TD3PlusBC):
         verbose: bool = True,
         show_progress: bool = True,
         tensorboard_dir: Optional[str] = None,
-        eval_episodes: Optional[List[Episode]] = None,
+        eval_episodess: Optional[Dict[int, List[Episode]]] = None,
         save_interval: int = 1,
         scorers: Optional[
-            Dict[int, Callable[[Any, List[Episode]], float]]
+            Dict[int, Callable[[Any, List[Episode]], Dict[int, float]]]
         ] = None,
         replay_scorers: Optional[
             Dict[int, Callable[[Any, Iterator], float]]
@@ -498,8 +562,12 @@ class CO(TD3PlusBC):
             for replay_num, replay_dataset in replay_datasets.items():
                 dataloader = DataLoader(replay_dataset, batch_size=self._batch_size, shuffle=True)
                 replay_dataloaders[replay_num] = dataloader
+            replay_iterators = dict()
+            for replay_num, replay_dataloader in replay_dataloaders.items():
+                replay_iterators[replay_num] = iter(replay_dataloader)
         else:
             replay_dataloaders = None
+            replay_iterators = None
 
         # setup logger
         logger = self._prepare_logger(
@@ -514,39 +582,39 @@ class CO(TD3PlusBC):
         # add reference to active logger to algo class during fit
         self._active_logger = logger
 
-        # TODO: 这些还没写，别用！
-        # initialize scaler
-        if self._scaler:
-            assert not self._scaler
-            LOG.debug("Fitting scaler...", scaler=self._scaler.get_type())
-            self._scaler.fit(episodes)
-            if replay_episodess is not None:
-                for replay_episodes in replay_episodess:
-                    self._scaler.fit(replay_episodes)
+        # # TODO: 这些还没写，别用！
+        # # initialize scaler
+        # if self._scaler:
+        #     assert not self._scaler
+        #     LOG.debug("Fitting scaler...", scaler=self._scaler.get_type())
+        #     self._scaler.fit(episodes)
+        #     if replay_episodess is not None:
+        #         for replay_episodes in replay_episodess:
+        #             self._scaler.fit(replay_episodes)
 
-        # initialize action scaler
-        if self._action_scaler:
-            assert not self._action_scaler
-            LOG.debug(
-                "Fitting action scaler...",
-                action_scaler=self._action_scaler.get_type(),
-            )
-            self._action_scaler.fit(episodes)
-            if replay_episodess is not None:
-                for replay_episodes in replay_episodess:
-                    self._action_scaler.fit(replay_episodes)
+        # # initialize action scaler
+        # if self._action_scaler:
+        #     assert not self._action_scaler
+        #     LOG.debug(
+        #         "Fitting action scaler...",
+        #         action_scaler=self._action_scaler.get_type(),
+        #     )
+        #     self._action_scaler.fit(episodes)
+        #     if replay_episodess is not None:
+        #         for replay_episodes in replay_episodess:
+        #             self._action_scaler.fit(replay_episodes)
 
-        # initialize reward scaler
-        if self._reward_scaler:
-            assert not self._reward_scaler
-            LOG.debug(
-                "Fitting reward scaler...",
-                reward_scaler=self._reward_scaler.get_type(),
-            )
-            self._reward_scaler.fit(episodes)
-            if replay_episodess is not None:
-                for replay_episodes in replay_episodess:
-                    self._reward_scaler.fit(replay_episodes)
+        # # initialize reward scaler
+        # if self._reward_scaler:
+        #     assert not self._reward_scaler
+        #     LOG.debug(
+        #         "Fitting reward scaler...",
+        #         reward_scaler=self._reward_scaler.get_type(),
+        #     )
+        #     self._reward_scaler.fit(episodes)
+        #     if replay_episodess is not None:
+        #         for replay_episodes in replay_episodess:
+        #             self._reward_scaler.fit(replay_episodes)
 
         # instantiate implementation
         if self._impl is None:
@@ -560,6 +628,7 @@ class CO(TD3PlusBC):
             )
             LOG.debug("Models have been built.")
         else:
+            self._impl.update_alpha()
             LOG.warning("Skip building models since they're already built.")
 
         # save hyperparameters
@@ -576,17 +645,67 @@ class CO(TD3PlusBC):
                 self._replay_loss_histories[replay_num] = defaultdict(list)
 
         # training loop
+        if pretrain_phi_epoch > 0 and self._train_phi:
+            pretrain_epoch_loss = defaultdict(list)
+            for epoch in range(1, pretrain_phi_epoch + 1):
+                range_gen = tqdm(
+                    range(len(iterator)),
+                    disable=not show_progress,
+                    desc=f'Pretrain Epoch {epoch}/{pretrain_phi_epoch}'
+                )
+                iterator.reset()
+                for itr in range_gen:
+                    with logger.measure_time("step"):
+                        # pick transitions
+                        with logger.measure_time("sample_batch"):
+                            batch = next(iterator)
+                            if replay_iterators is not None:
+                                assert replay_dataloaders is not None
+                                replay_batches = dict()
+                                for replay_iterator_num in replay_iterators.keys():
+                                    try:
+                                        replay_batches[replay_iterator_num] = next(replay_iterators[replay_iterator_num])
+                                    except StopIteration:
+                                        replay_iterators[replay_iterator_num] = iter(replay_dataloaders[replay_iterator_num])
+                                        replay_batches[replay_iterator_num] = next(replay_iterators[replay_iterator_num])
+                            else:
+                                replay_batches = None
+
+                        # update parameters
+                        with logger.measure_time("algorithm_update"):
+                            loss = self.pretrain_update(batch, replay_batches, all_data)
+                            if pretrain_phi_epoch > 0:
+                                self._impl.increase_siamese_alpha(0, itr / len(iterator))
+                            else:
+                                self._impl.increase_siamese_alpha(epoch - n_epochs, itr / len(iterator))
+
+                        # record metrics
+                        for name, val in loss.items():
+                            logger.add_metric(name, val)
+                            pretrain_epoch_loss[name].append(val)
+
+                        # update progress postfix with losses
+                        if itr % 10 == 0:
+                            for k, v in pretrain_epoch_loss.items():
+                                try:
+                                    hh = np.mean(v)
+                                except TypeError:
+                                    print(f'mean_loss wrong: {k}: {v}')
+                            mean_loss = {
+                                k: np.mean(v) for k, v in pretrain_epoch_loss.items()
+                            }
+                            range_gen.set_postfix(mean_loss)
+
+            # save loss to loss history dict
+            self._loss_history["pretrain_epoch"].append(epoch)
+            for name, vals in pretrain_epoch_loss.items():
+                if vals:
+                    self._loss_history[name].append(np.mean(vals))
         total_step = 0
         for epoch in range(1, n_epochs + 1):
 
             # dict to add incremental mean losses to epoch
             epoch_loss = defaultdict(list)
-            if replay_datasets is not None:
-                replay_epoch_losses = dict()
-                for replay_num, replay_dataset in replay_datasets.items():
-                    replay_epoch_losses[replay_num] = defaultdict(list)
-            else:
-                replay_epoch_losses = None
 
             range_gen = tqdm(
                 range(len(iterator)),
@@ -648,6 +767,7 @@ class CO(TD3PlusBC):
                     # update parameters
                     with logger.measure_time("algorithm_update"):
                         loss = self.update(batch, replay_batches, all_data)
+                        self._impl.increase_siamese_alpha(epoch - n_epochs, itr / len(iterator))
 
                     # record metrics
                     for name, val in loss.items():
@@ -673,15 +793,10 @@ class CO(TD3PlusBC):
             for name, vals in epoch_loss.items():
                 if vals:
                     self._loss_history[name].append(np.mean(vals))
-            if replay_iterators is not None:
-                assert replay_epoch_losses is not None
-                for replay_num, replay_epoch_loss in replay_epoch_losses.items():
-                    for name, vals in replay_epoch_loss.items():
-                        if vals:
-                            self._replay_loss_histories[replay_num][name].append(np.mean(vals))
 
-            if scorers and eval_episodes:
-                self._evaluate(eval_episodes, scorers, logger)
+            if scorers and eval_episodess:
+                for id, eval_episodes in eval_episodess.items():
+                    self._evaluate(eval_episodes, scorers[id], logger)
 
             if replay_scorers:
                 if replay_dataloaders is not None:
