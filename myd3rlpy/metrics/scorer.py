@@ -1,7 +1,8 @@
-from typing import List, cast, Callable, Any, Dict
+from typing import List, cast, Callable, Any, Dict, Tuple
+import matplotlib.pyplot as plt
+from typing_extensions import Protocol
 import gym
 import numpy as np
-from typing_extensions import Protocol
 import torch
 import torch.nn.functional as F
 
@@ -42,36 +43,33 @@ def bc_error_scorer(real_action_size: int) -> Callable[..., float]:
         return float(torch.mean(total_errors).detach().cpu().numpy())
     return scorer
 
-def td_error_scorer(real_action_size: int) -> Callable[...,Dict[int, float]]:
-    def scorer(algo: AlgoProtocol, episodess: Dict[int, List[Episode]]) -> Dict[int, float]:
-        total_errorss = dict()
-        for id, episodes in episodess.items():
-            total_errors = []
-            for episode in episodes:
-                for batch in _make_batches(episode, WINDOW_SIZE, algo.n_frames):
-                    # estimate values for current observations
-                    values = algo.predict_value(batch.observations, batch.actions[:, :real_action_size])
+def td_error_scorer(real_action_size: int) -> Callable[..., float]:
+    def scorer(algo: AlgoProtocol, episodes: List[Episode]) -> float:
+        total_errors = []
+        for episode in episodes:
+            for batch in _make_batches(episode, WINDOW_SIZE, algo.n_frames):
+                # estimate values for current observations
+                values = algo.predict_value(batch.observations, batch.actions[:, :real_action_size])
 
-                    # estimate values for next observations
-                    next_actions = algo.predict(batch.next_observations)
-                    next_values = algo.predict_value(
-                        batch.next_observations, next_actions
-                    )
+                # estimate values for next observations
+                next_actions = algo.predict(batch.next_observations)
+                next_values = algo.predict_value(
+                    batch.next_observations, next_actions
+                )
 
-                    # calculate td errors
-                    mask = (1.0 - np.asarray(batch.terminals)).reshape(-1)
-                    rewards = np.asarray(batch.next_rewards).reshape(-1)
-                    if algo.reward_scaler:
-                        rewards = algo.reward_scaler.transform_numpy(rewards)
-                    y = rewards + algo.gamma * cast(np.ndarray, next_values) * mask
-                    total_errors += ((values - y) ** 2).tolist()
-            total_errorss[id] = float(np.mean(total_errors))
+                # calculate td errors
+                mask = (1.0 - np.asarray(batch.terminals)).reshape(-1)
+                rewards = np.asarray(batch.next_rewards).reshape(-1)
+                if algo.reward_scaler:
+                    rewards = algo.reward_scaler.transform_numpy(rewards)
+                y = rewards + algo.gamma * cast(np.ndarray, next_values) * mask
+                total_errors += ((values - y) ** 2).tolist()
 
-        return total_errorss
+        return float(np.mean(total_errors))
     return scorer
 
 def evaluate_on_environment(
-        env: gym.Env, task_id: int, task_nums: int, n_trials: int = 10, epsilon: float = 0.0, render: bool = False,
+        env: gym.Env, task_id: int, task_nums: int, draw_path: str, n_trials: int = 10, epsilon: float = 0.0, render: bool = False,
 ) -> Callable[..., float]:
     """Returns scorer function of evaluation on environment.
     This function returns scorer function, which is suitable to the standard
@@ -100,13 +98,22 @@ def evaluate_on_environment(
     is_image = len(observation_shape) == 3
 
     def scorer(algo: AlgoProtocol, *args: Any) -> float:
+
+        def draw(trajectories: List[List[Tuple[float, float]]]):
+            for i, trajectory in enumerate(trajectories):
+                x, y = list(map(list, zip(*trajectory)))
+                plt.plot(x, y)
+            plt.savefig(draw_path)
         if is_image:
             stacked_observation = StackedObservation(
                 observation_shape, algo.n_frames
             )
 
+        trajectories = []
+
         episode_rewards = []
         for _ in range(n_trials):
+            trajectory = []
             observation = env.reset()
             task_id_numpy = np.eye(task_nums)[task_id].squeeze()
             observation = np.concatenate([observation, task_id_numpy], axis=0)
@@ -128,6 +135,7 @@ def evaluate_on_environment(
                         action = algo.predict([observation])[0]
 
                 observation, reward, done, _ = env.step(action)
+                trajectory.append(observation[:2])
                 task_id_numpy = np.eye(task_nums)[task_id].squeeze()
                 observation = np.concatenate([observation, task_id_numpy], axis=0)
                 episode_reward += reward
@@ -140,7 +148,10 @@ def evaluate_on_environment(
 
                 if done:
                     break
+            trajectories.append(trajectory)
             episode_rewards.append(episode_reward)
+        draw(trajectories)
         return float(np.mean(episode_rewards))
 
     return scorer
+

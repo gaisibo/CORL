@@ -54,11 +54,10 @@ def main(args, device):
     else:
         raise NotImplementedError
     experiment_name = "CO_"
-    experiment_name += "update" if args.use_phi_update else "noupdate"
-    experiment_name += '_'
-    experiment_name += "replay" if args.use_phi_replay else "noreplay"
-    experiment_name += '_'
-    experiment_name += 'pretrain' if args.pretrain_phi_epoch else "nopretrain"
+    algos_name = "update" if args.use_phi_update else "noupdate"
+    algos_name += '_'
+    algos_name += "replay" if args.use_phi_replay else "noreplay"
+    algos_name += '_pretrain' if args.pretrain_phi_epoch else ""
 
     if not args.eval:
         replay_datasets = dict()
@@ -82,7 +81,7 @@ def main(args, device):
                 replay_scorers={
                     'bc_error': bc_error_scorer(real_action_size=real_action_size)
                 },
-                experiment_name=experiment_name
+                experiment_name=experiment_name + algos_name
             )
             assert co._impl is not None
             assert co._impl._q_func is not None
@@ -91,28 +90,31 @@ def main(args, device):
                 replay_datasets[dataset_num] = finish_task(dataset_num, task_nums, dataset, original, co, indexes_euclids[dataset_num], real_action_size, args, device)
             else:
                 raise NotImplementedError
-            co.save_model(args.model_path + '_' + str(dataset_num) + '.pt')
-        torch.save(replay_datasets, f=args.model_path + '_datasets.pt')
-
+            co.save_model(args.model_path + algos_name + '_' + str(dataset_num) + '.pt')
+        torch.save(replay_datasets, f=args.model_path + algos_name + '_datasets.pt')
     else:
         assert args.model_path
-        co.load_model(args.model_path + '_' + str(task_nums - 1) + '.pt')
-
-    for dataset_num, dataset in taskid_task_datasets.items():
-        # off-policy evaluation algorithm
-        fqe = FQE(algo=co)
-
-        # metrics to evaluate with
-
-        # train estimators to evaluate the trained policy
-        fqe.fit(dataset.episodes,
-                eval_episodes=dataset.episodes,
-                n_epochs=1,
+        eval_datasets = dict()
+        if co._impl is None:
+            co.create_impl([real_observation_size + task_nums], real_action_size)
+        for dataset_num, dataset in task_datasets.items():
+            eval_datasets[dataset_num] = dataset
+            co.load_model(args.model_path + algos_name + '_' + str(dataset_num) + '.pt')
+            replay_datasets = torch.load(args.model_path + algos_name + '_datasets.pt')
+            draw_path = args.model_path + algos_name + '_trajectories.png'
+            co.test(
+                replay_datasets,
+                eval_episodess=eval_datasets,
                 scorers={
-                   'init_value': initial_state_value_estimation_scorer,
-                   'soft_opc': soft_opc_scorer(return_threshold=600),
-                   'evaluate_on_environment': evaluate_on_environment(envs[dataset_num], dataset_num, task_nums)
-                })
+                    # 'environment': evaluate_on_environment(env),
+                    'td_error': td_error_scorer(real_action_size=real_action_size),
+                    "real_env": evaluate_on_environment(envs[dataset_num], dataset_num, task_nums, draw_path),
+                },
+                replay_scorers={
+                    'bc_error': bc_error_scorer(real_action_size=real_action_size)
+                },
+
+            )
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Experimental evaluation of lifelong PG learning')
@@ -128,7 +130,6 @@ if __name__ == '__main__':
     parser.add_argument('--task_split_type', default='undirected', type=str)
     parser.add_argument('--dataset_name', default='antmaze-large-play-v0', type=str)
     parser.add_argument('--algos', default='co', type=str)
-    parser.add_argument('--model_path', default='d3rlpy_choose/model_')
     parser.add_argument('--eval', action='store_true')
     parser.add_argument('--n_epochs', default=20, type=int)
     parser.add_argument('--pretrain_phi_epoch', default=0, type=int)
@@ -139,6 +140,7 @@ if __name__ == '__main__':
     use_phi_update_parser.add_argument('--use_phi_update', dest='use_phi_update', action='store_true')
     use_phi_update_parser.add_argument('--no_use_phi_update', dest='use_phi_update', action='store_false')
     args = parser.parse_args()
+    args.model_path = 'd3rlpy_' + ('train' if not args.eval else 'eval') + '/model_'
     global DATASET_PATH
     DATASET_PATH = './.d4rl/datasets/'
     device = torch.device('cuda:0')

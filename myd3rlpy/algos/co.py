@@ -377,10 +377,10 @@ class CO(TD3PlusBC):
         eval_episodess: Optional[Dict[int, List[Episode]]] = None,
         save_interval: int = 1,
         scorers: Optional[
-            Dict[int, Callable[[Any, List[Episode]], Dict[int, float]]]
+            Dict[str, Callable[[Any, List[Episode]], float]]
         ] = None,
         replay_scorers: Optional[
-            Dict[int, Callable[[Any, Iterator], float]]
+            Dict[str, Callable[[Any, Iterator], float]]
         ] = None,
         shuffle: bool = True,
         callback: Optional[Callable[[LearnableBase, int, int], None]] = None,
@@ -465,10 +465,10 @@ class CO(TD3PlusBC):
         eval_episodess: Optional[Dict[int, List[Episode]]] = None,
         save_interval: int = 1,
         scorers: Optional[
-            Dict[int, Callable[[Any, List[Episode]], Dict[int, float]]]
+            Dict[str, Callable[[Any, List[Episode]], float]]
         ] = None,
         replay_scorers: Optional[
-            Dict[int, Callable[[Any, Iterator], float]]
+            Dict[str, Callable[[Any, Iterator], float]]
         ] = None,
         shuffle: bool = True,
         callback: Optional[Callable[["LearnableBase", int, int], None]] = None,
@@ -621,7 +621,6 @@ class CO(TD3PlusBC):
             LOG.debug("Building models...")
             transition = iterator.transitions[0]
             action_size = real_action_size
-            observation_shape = real_observation_size
             observation_shape = tuple(transition.get_observation_shape())
             self.create_impl(
                 self._process_observation_shape(observation_shape), action_size
@@ -796,14 +795,15 @@ class CO(TD3PlusBC):
 
             if scorers and eval_episodess:
                 for id, eval_episodes in eval_episodess.items():
-                    self._evaluate(eval_episodes, scorers[id], logger)
+                    scorers_tmp = {k + str(id): v for k, v in scorers.items()}
+                    self._evaluate(eval_episodes, scorers_tmp, logger)
 
             if replay_scorers:
                 if replay_dataloaders is not None:
                     for replay_num, replay_dataloader in replay_dataloaders.items():
                         # 重命名
                         replay_scorers_tmp = {k + str(replay_num): v for k, v in replay_scorers.items()}
-                        self._evaluate(replay_dataloader, replay_scorers, logger)
+                        self._evaluate(replay_dataloader, replay_scorers_tmp, logger)
 
             # save metrics
             metrics = logger.commit(epoch, total_step)
@@ -813,6 +813,194 @@ class CO(TD3PlusBC):
                 logger.save_model(total_step, self)
 
             yield epoch, metrics
+
+        # drop reference to active logger since out of fit there is no active
+        # logger
+        self._active_logger = None
+
+    def test(
+        self,
+        replay_datasets: Optional[Dict[int, List[TensorDataset]]],
+        save_metrics: bool = True,
+        experiment_name: Optional[str] = None,
+        with_timestamp: bool = True,
+        logdir: str = "d3rlpy_logs",
+        verbose: bool = True,
+        show_progress: bool = True,
+        tensorboard_dir: Optional[str] = None,
+        eval_episodess: Optional[Dict[int, List[Episode]]] = None,
+        save_interval: int = 1,
+        scorers: Optional[
+            Dict[str, Callable[[Any, List[Episode]], float]]
+        ] = None,
+        replay_scorers: Optional[
+            Dict[str, Callable[[Any, Iterator], float]]
+        ] = None,
+    ) -> List[Tuple[int, Dict[int, float]]]:
+        results = list(
+            self.tester(
+                replay_datasets,
+                save_metrics,
+                experiment_name,
+                with_timestamp,
+                logdir,
+                verbose,
+                show_progress,
+                tensorboard_dir,
+                eval_episodess,
+                save_interval,
+                scorers,
+                replay_scorers,
+            )
+        )
+        return results
+
+    def tester(
+        self,
+        replay_datasets: Optional[Dict[int, List[TensorDataset]]],
+        save_metrics: bool = True,
+        experiment_name: Optional[str] = None,
+        with_timestamp: bool = True,
+        logdir: str = "d3rlpy_logs",
+        verbose: bool = True,
+        show_progress: bool = True,
+        tensorboard_dir: Optional[str] = None,
+        eval_episodess: Optional[Dict[int, List[Episode]]] = None,
+        save_interval: int = 1,
+        scorers: Optional[
+            Dict[str, Callable[[Any, List[Episode]], float]]
+        ] = None,
+        replay_scorers: Optional[
+            Dict[str, Callable[[Any, Iterator], float]]
+        ] = None,
+    ) -> Generator[Tuple[int, Dict[int, float]], None, None]:
+
+        replay_dataloaders: Optional[Dict[int, List[TensorDataset]]]
+        if replay_datasets is not None:
+            replay_dataloaders = dict()
+            for replay_num, replay_dataset in replay_datasets.items():
+                dataloader = DataLoader(replay_dataset, batch_size=self._batch_size, shuffle=True)
+                replay_dataloaders[replay_num] = dataloader
+            replay_iterators = dict()
+            for replay_num, replay_dataloader in replay_dataloaders.items():
+                replay_iterators[replay_num] = iter(replay_dataloader)
+        else:
+            replay_dataloaders = None
+            replay_iterators = None
+
+        # setup logger
+        logger = self._prepare_logger(
+            save_metrics,
+            experiment_name,
+            with_timestamp,
+            logdir,
+            verbose,
+            tensorboard_dir,
+        )
+
+        # add reference to active logger to algo class during fit
+        self._active_logger = logger
+
+        # # TODO: 这些还没写，别用！
+        # # initialize scaler
+        # if self._scaler:
+        #     assert not self._scaler
+        #     LOG.debug("Fitting scaler...", scaler=self._scaler.get_type())
+        #     self._scaler.fit(episodes)
+        #     if replay_episodess is not None:
+        #         for replay_episodes in replay_episodess:
+        #             self._scaler.fit(replay_episodes)
+
+        # # initialize action scaler
+        # if self._action_scaler:
+        #     assert not self._action_scaler
+        #     LOG.debug(
+        #         "Fitting action scaler...",
+        #         action_scaler=self._action_scaler.get_type(),
+        #     )
+        #     self._action_scaler.fit(episodes)
+        #     if replay_episodess is not None:
+        #         for replay_episodes in replay_episodess:
+        #             self._action_scaler.fit(replay_episodes)
+
+        # # initialize reward scaler
+        # if self._reward_scaler:
+        #     assert not self._reward_scaler
+        #     LOG.debug(
+        #         "Fitting reward scaler...",
+        #         reward_scaler=self._reward_scaler.get_type(),
+        #     )
+        #     self._reward_scaler.fit(episodes)
+        #     if replay_episodess is not None:
+        #         for replay_episodes in replay_episodess:
+        #             self._reward_scaler.fit(replay_episodes)
+
+        # instantiate implementation
+        assert self._impl is not None
+        self._impl.update_alpha()
+        LOG.warning("Skip building models since they're already built.")
+
+        # save hyperparameters
+        self.save_params(logger)
+
+        # refresh evaluation metrics
+        self._eval_results = defaultdict(list)
+
+        # refresh loss history
+        self._loss_history = defaultdict(list)
+        if replay_datasets is not None:
+            self._replay_loss_histories = dict()
+            for replay_num in self._loss_history:
+                self._replay_loss_histories[replay_num] = defaultdict(list)
+
+        total_step = 0
+        epoch = 1
+
+        # dict to add incremental mean losses to epoch
+        epoch_loss = defaultdict(list)
+
+        if replay_dataloaders is not None:
+            replay_iterators = dict()
+            for replay_num, replay_dataloader in replay_dataloaders.items():
+                replay_iterators[replay_num] = iter(replay_dataloader)
+        else:
+            replay_iterators = None
+
+        with logger.measure_time("step"):
+            # pick transitions
+            with logger.measure_time("sample_batch"):
+                if replay_iterators is not None:
+                    assert replay_dataloaders is not None
+                    replay_batches = dict()
+                    for replay_iterator_num in replay_iterators.keys():
+                        try:
+                            replay_batches[replay_iterator_num] = next(replay_iterators[replay_iterator_num])
+                        except StopIteration:
+                            replay_iterators[replay_iterator_num] = iter(replay_dataloaders[replay_iterator_num])
+                            replay_batches[replay_iterator_num] = next(replay_iterators[replay_iterator_num])
+                else:
+                    replay_batches = None
+
+        if scorers and eval_episodess:
+            for id, eval_episodes in eval_episodess.items():
+                scorers_tmp = {k + str(id): v for k, v in scorers.items()}
+                self._evaluate(eval_episodes, scorers_tmp, logger)
+
+        if replay_scorers:
+            if replay_dataloaders is not None:
+                for replay_num, replay_dataloader in replay_dataloaders.items():
+                    # 重命名
+                    replay_scorers_tmp = {k + str(replay_num): v for k, v in replay_scorers.items()}
+                    self._evaluate(replay_dataloader, replay_scorers_tmp, logger)
+
+        # save metrics
+        metrics = logger.commit(epoch, total_step)
+
+        # save model parameters
+        if epoch % save_interval == 0:
+            logger.save_model(total_step, self)
+
+        yield epoch, metrics
 
         # drop reference to active logger since out of fit there is no active
         # logger
