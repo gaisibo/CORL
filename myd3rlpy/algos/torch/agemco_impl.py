@@ -21,7 +21,7 @@ from d3rlpy.models.builders import create_squashed_normal_policy, create_continu
 
 from myd3rlpy.models.torch.siamese import Phi, Psi
 from myd3rlpy.algos.torch.co_impl import COImpl
-from utils.siamese_similar import similar_euclid, similar_psi, similar_phi
+from myd3rlpy.siamese_similar import similar_euclid, similar_psi, similar_phi
 from myd3rlpy.algos.torch.gemco_impl import overwrite_grad, store_grad
 
 def project(gxy: torch.Tensor, ger: torch.Tensor) -> torch.Tensor:

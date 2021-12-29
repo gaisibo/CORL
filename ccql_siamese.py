@@ -16,10 +16,10 @@ from d3rlpy.ope import FQE
 from d3rlpy.metrics.scorer import soft_opc_scorer, initial_state_value_estimation_scorer
 from d3rlpy.dataset import MDPDataset
 # from myd3rlpy.datasets import get_d4rl
-from utils.siamese_similar import similar_psi, similar_phi
 from utils.k_means import kmeans
 from dataset.split_navigate import split_navigate_antmaze_large_play_v0
 from myd3rlpy.metrics.scorer import bc_error_scorer, td_error_scorer, evaluate_on_environment
+from myd3rlpy.siamese_similar import similar_psi, similar_phi
 
 
 def main(args, device):
@@ -37,7 +37,7 @@ def main(args, device):
 #         buffer_._obs = np.hstack((buffer_._obs, task_id_np))
 #         datasets.append(MDPDataset(buffer_._obs, buffer_._actions, buffer_._rewards, buffer_._terminals))
 #         break
-    origin_dataset, task_datasets, taskid_task_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums = split_navigate_antmaze_large_play_v0(args.task_split_type, device)
+    origin_dataset, task_datasets, taskid_task_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums = split_navigate_antmaze_large_play_v0(args.task_split_type, args.top_euclid, device)
     np.set_printoptions(precision=1, suppress=True)
 
     # prepare algorithm
@@ -87,7 +87,7 @@ def main(args, device):
             assert co._impl._q_func is not None
             assert co._impl._policy is not None
             if args.algos == 'co':
-                replay_datasets[dataset_num] = finish_task(dataset_num, task_nums, dataset, original, co, indexes_euclids[dataset_num], real_action_size, args, device)
+                replay_datasets[dataset_num] = finish_task(dataset_num, task_nums, dataset, original, co, indexes_euclids[dataset_num], real_action_size, args.topk, device)
             else:
                 raise NotImplementedError
             co.save_model(args.model_path + algos_name + '_' + str(dataset_num) + '.pt')
@@ -101,14 +101,14 @@ def main(args, device):
             eval_datasets[dataset_num] = dataset
             co.load_model(args.model_path + algos_name + '_' + str(dataset_num) + '.pt')
             replay_datasets = torch.load(args.model_path + algos_name + '_datasets.pt')
-            draw_path = args.model_path + algos_name + '_trajectories.png'
+            draw_path = args.model_path + algos_name + '_trajectories_' + str(dataset_num) + '_'
             co.test(
                 replay_datasets,
                 eval_episodess=eval_datasets,
                 scorers={
                     # 'environment': evaluate_on_environment(env),
                     'td_error': td_error_scorer(real_action_size=real_action_size),
-                    "real_env": evaluate_on_environment(envs[dataset_num], dataset_num, task_nums, draw_path),
+                    "real_env": evaluate_on_environment(envs, end_points, task_nums, draw_path),
                 },
                 replay_scorers={
                     'bc_error': bc_error_scorer(real_action_size=real_action_size)
@@ -125,14 +125,15 @@ if __name__ == '__main__':
     parser.add_argument('--siamese_threshold', default=1, type=float)
     parser.add_argument('--eval_batch_size', default=256, type=int)
     parser.add_argument('--batch_size', default=256, type=int)
-    parser.add_argument('--sample_times', default=4, type=int)
-    parser.add_argument('--topk', default=2, type=int)
+    parser.add_argument('--topk', default=4, type=int)
     parser.add_argument('--task_split_type', default='undirected', type=str)
     parser.add_argument('--dataset_name', default='antmaze-large-play-v0', type=str)
     parser.add_argument('--algos', default='co', type=str)
     parser.add_argument('--eval', action='store_true')
+    parser.add_argument('--test', action='store_true')
     parser.add_argument('--n_epochs', default=20, type=int)
     parser.add_argument('--pretrain_phi_epoch', default=0, type=int)
+    parser.add_argument('--top_euclid', default=8, type=int)
     use_phi_replay_parser = parser.add_mutually_exclusive_group(required=True)
     use_phi_replay_parser.add_argument('--use_phi_replay', dest='use_phi_replay', action='store_true')
     use_phi_replay_parser.add_argument('--no_use_phi_replay', dest='use_phi_replay', action='store_false')
@@ -140,7 +141,7 @@ if __name__ == '__main__':
     use_phi_update_parser.add_argument('--use_phi_update', dest='use_phi_update', action='store_true')
     use_phi_update_parser.add_argument('--no_use_phi_update', dest='use_phi_update', action='store_false')
     args = parser.parse_args()
-    args.model_path = 'd3rlpy_' + ('train' if not args.eval else 'eval') + '/model_'
+    args.model_path = 'd3rlpy_' + ('test' if args.test else ('train' if not args.eval else 'eval')) + '/model_'
     global DATASET_PATH
     DATASET_PATH = './.d4rl/datasets/'
     device = torch.device('cuda:0')

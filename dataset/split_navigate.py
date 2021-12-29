@@ -5,10 +5,10 @@ import torch
 
 from d3rlpy.datasets import get_d4rl
 from d3rlpy.dataset import MDPDataset
-from utils.siamese_similar import similar_euclid
+from myd3rlpy.siamese_similar import similar_euclid
 
 
-def split_navigate_antmaze_large_play_v0(task_split_type, device):
+def split_navigate_antmaze_large_play_v0(task_split_type, top_euclid, device):
     origin_dataset, env = get_d4rl('antmaze-large-play-v0')
     dataset_name = 'antmaze-large-play-v0'
     task_nums = 7
@@ -52,7 +52,7 @@ def split_navigate_antmaze_large_play_v0(task_split_type, device):
         actions = np.concatenate([episode.actions for episode in task_episodes], axis=0)
         obs = torch.from_numpy(observations).cuda()
         end_point = torch.from_numpy(end_points[task_index]).unsqueeze(0).expand(obs.shape[0], -1).cuda()
-        rewards = torch.where(torch.linalg.vector_norm(obs[:, :2] - end_point, dim=1) < 0.5, 1, 0).cpu().numpy()
+        rewards = - torch.linalg.vector_norm(obs[:, :2] - end_point, dim=1).cpu().numpy()
         terminals = [np.zeros(task_episode.observations.shape[0]) for task_episode in task_episodes]
         for terminal in terminals:
             terminal[-1] = 1
@@ -66,7 +66,7 @@ def split_navigate_antmaze_large_play_v0(task_split_type, device):
     real_action_size = 0
     real_observation_size = 0
     for dataset_num, dataset in task_datasets.items():
-        indexes_euclid = similar_euclid(torch.from_numpy(dataset.observations).cuda(), dataset_name, dataset_num)
+        indexes_euclid = similar_euclid(torch.from_numpy(dataset.observations).cuda(), dataset_name, dataset_num)[:, :top_euclid]
         real_action_size = dataset.actions.shape[1]
         task_id_numpy = np.eye(task_nums)[dataset_num].squeeze()
         task_id_numpy = np.broadcast_to(task_id_numpy, (dataset.observations.shape[0], task_nums))

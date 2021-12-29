@@ -1,3 +1,4 @@
+import time
 import math
 from typing import Any, Dict, Optional, Sequence, List, Union, Callable, Tuple, Generator, Iterator
 from collections import defaultdict
@@ -128,6 +129,7 @@ class CO(TD3PlusBC):
         *,
         actor_learning_rate: float = 1e-3,
         critic_learning_rate: float = 1e-3,
+        alpha: float = 2.5,
         phi_learning_rate: float = 1e-3,
         psi_learning_rate: float = 1e-3,
         actor_optim_factory: OptimizerFactory = AdamFactory(),
@@ -145,7 +147,7 @@ class CO(TD3PlusBC):
         replay_psi_alpha=2.5,
         replay_critic: bool = True,
         use_phi_update: bool = True,
-        use_same_encoder: bool = True,
+        use_same_encoder: bool = False,
         train_phi: bool = True,
         batch_size: int = 256,
         n_frames: int = 1,
@@ -156,7 +158,6 @@ class CO(TD3PlusBC):
         target_reduction_type: str = "min",
         target_smoothing_sigma: float = 0.2,
         target_smoothing_clip: float = 0.5,
-        n_sample_actions: int = 10,
         update_actor_interval: int = 2,
         use_gpu: UseGPUArg = False,
         scaler: ScalerArg = None,
@@ -191,6 +192,7 @@ class CO(TD3PlusBC):
             impl = impl,
             kwargs = kwargs,
         )
+        self._alpha = alpha
         self._phi_learning_rate = phi_learning_rate
         self._psi_learning_rate = psi_learning_rate
         self._phi_optim_factory = phi_optim_factory
@@ -199,7 +201,6 @@ class CO(TD3PlusBC):
         self._use_phi_update = use_phi_update
         self._use_same_encoder = use_same_encoder
         self._train_phi = train_phi
-        self._n_sample_actions = n_sample_actions
         self._replay_actor_alpha = replay_actor_alpha
         self._replay_critic_alpha = replay_critic_alpha
         self._siamese_actor_alpha = siamese_actor_alpha
@@ -228,6 +229,7 @@ class CO(TD3PlusBC):
             action_size=action_size,
             actor_learning_rate=self._actor_learning_rate,
             critic_learning_rate=self._critic_learning_rate,
+            alpha=self._alpha,
             phi_learning_rate=self._phi_learning_rate,
             psi_learning_rate=self._psi_learning_rate,
             actor_optim_factory=self._actor_optim_factory,
@@ -252,7 +254,6 @@ class CO(TD3PlusBC):
             target_reduction_type=self._target_reduction_type,
             target_smoothing_sigma=self._target_smoothing_sigma,
             target_smoothing_clip=self._target_smoothing_clip,
-            n_sample_actions = self._n_sample_actions,
             use_gpu=self._use_gpu,
             scaler=self._scaler,
             action_scaler=self._action_scaler,
@@ -280,16 +281,12 @@ class CO(TD3PlusBC):
         # 更新phi和psi。
         assert self._train_phi
         if self._grad_step % self._update_actor_interval == 0:
-            half_batch_len = len(batch) // 2
-            batch1 = TransitionMiniBatch(batch[: half_batch_len])
-            batch2 = TransitionMiniBatch(batch[half_batch_len :])
-
-            phi_loss, phi_policy_loss, phi_replay_loss = self._impl.update_phi(batch1, batch2, replay_batches=replay_batches)
+            phi_loss, phi_policy_loss, phi_replay_loss = self._impl.update_phi(batch, replay_batches=replay_batches)
             metrics.update({"phi_pretrain_loss": phi_loss})
             metrics.update({"phi_pretrain_policy_loss": phi_policy_loss})
             metrics.update({"phi_pretrain_replay_loss": phi_replay_loss})
 
-            psi_loss, psi_policy_loss, psi_replay_loss = self._impl.update_psi(batch1, batch2, replay_batches=replay_batches, pretrain=True)
+            psi_loss, psi_policy_loss, psi_replay_loss = self._impl.update_psi(batch, replay_batches=replay_batches, pretrain=True)
             metrics.update({"psi_pretrain_loss": psi_loss})
             metrics.update({"psi_pretrain_policy_loss": psi_policy_loss})
             metrics.update({"psi_pretrain_replay_loss": psi_replay_loss})
@@ -336,16 +333,12 @@ class CO(TD3PlusBC):
         # 更新phi和psi。
         if self._train_phi:
             if self._grad_step % self._update_actor_interval == 0:
-                half_batch_len = len(batch) // 2
-                batch1 = TransitionMiniBatch(batch[: half_batch_len])
-                batch2 = TransitionMiniBatch(batch[half_batch_len :])
-
-                phi_loss, phi_policy_loss, phi_replay_loss = self._impl.update_phi(batch1, batch2, replay_batches=replay_batches)
+                phi_loss, phi_policy_loss, phi_replay_loss = self._impl.update_phi(batch, replay_batches=replay_batches)
                 metrics.update({"phi_loss": phi_loss})
                 metrics.update({"phi_policy_loss": phi_policy_loss})
                 metrics.update({"phi_replay_loss": phi_replay_loss})
 
-                psi_loss, psi_policy_loss, psi_replay_loss = self._impl.update_psi(batch1, batch2, replay_batches=replay_batches)
+                psi_loss, psi_policy_loss, psi_replay_loss = self._impl.update_psi(batch, replay_batches=replay_batches)
                 metrics.update({"psi_loss": psi_loss})
                 metrics.update({"psi_policy_loss": psi_policy_loss})
                 metrics.update({"psi_replay_loss": psi_replay_loss})
@@ -673,10 +666,10 @@ class CO(TD3PlusBC):
                         # update parameters
                         with logger.measure_time("algorithm_update"):
                             loss = self.pretrain_update(batch, replay_batches, all_data)
-                            if pretrain_phi_epoch > 0:
-                                self._impl.increase_siamese_alpha(0, itr / len(iterator))
-                            else:
-                                self._impl.increase_siamese_alpha(epoch - n_epochs, itr / len(iterator))
+                            # if pretrain_phi_epoch > 0:
+                            #     self._impl.increase_siamese_alpha(0, itr / len(iterator))
+                            # else:
+                            #     self._impl.increase_siamese_alpha(epoch - n_epochs, itr / len(iterator))
 
                         # record metrics
                         for name, val in loss.items():
@@ -766,7 +759,7 @@ class CO(TD3PlusBC):
                     # update parameters
                     with logger.measure_time("algorithm_update"):
                         loss = self.update(batch, replay_batches, all_data)
-                        self._impl.increase_siamese_alpha(epoch - n_epochs, itr / len(iterator))
+                        # self._impl.increase_siamese_alpha(epoch - n_epochs, itr / len(iterator))
 
                     # record metrics
                     for name, val in loss.items():
@@ -831,7 +824,7 @@ class CO(TD3PlusBC):
         eval_episodess: Optional[Dict[int, List[Episode]]] = None,
         save_interval: int = 1,
         scorers: Optional[
-            Dict[str, Callable[[Any, List[Episode]], float]]
+            Dict[str, Callable[[Any, List[Episode]], Callable[..., float]]]
         ] = None,
         replay_scorers: Optional[
             Dict[str, Callable[[Any, Iterator], float]]
@@ -868,7 +861,7 @@ class CO(TD3PlusBC):
         eval_episodess: Optional[Dict[int, List[Episode]]] = None,
         save_interval: int = 1,
         scorers: Optional[
-            Dict[str, Callable[[Any, List[Episode]], float]]
+            Dict[str, Callable[[Any, List[Episode]], Callable[..., float]]]
         ] = None,
         replay_scorers: Optional[
             Dict[str, Callable[[Any, Iterator], float]]
@@ -983,7 +976,7 @@ class CO(TD3PlusBC):
 
         if scorers and eval_episodess:
             for id, eval_episodes in eval_episodess.items():
-                scorers_tmp = {k + str(id): v for k, v in scorers.items()}
+                scorers_tmp = {k + str(id): v(id) for k, v in scorers.items()}
                 self._evaluate(eval_episodes, scorers_tmp, logger)
 
         if replay_scorers:
