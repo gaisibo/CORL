@@ -72,15 +72,8 @@ def main(args, device):
                 real_action_size = real_action_size,
                 real_observation_size = real_observation_size,
                 eval_episodess=eval_datasets,
-                n_epochs=20,
+                n_epochs=args.n_epochs,#  if not args.test else 1,
                 pretrain_phi_epoch=args.pretrain_phi_epoch,
-                scorers={
-                    # 'environment': evaluate_on_environment(env),
-                    'td_error': td_error_scorer(real_action_size=real_action_size)
-                },
-                replay_scorers={
-                    'bc_error': bc_error_scorer(real_action_size=real_action_size)
-                },
                 experiment_name=experiment_name + algos_name
             )
             assert co._impl is not None
@@ -91,6 +84,8 @@ def main(args, device):
             else:
                 raise NotImplementedError
             co.save_model(args.model_path + algos_name + '_' + str(dataset_num) + '.pt')
+            if args.test:
+                break
         torch.save(replay_datasets, f=args.model_path + algos_name + '_datasets.pt')
     else:
         assert args.model_path
@@ -131,8 +126,8 @@ if __name__ == '__main__':
     parser.add_argument('--algos', default='co', type=str)
     parser.add_argument('--eval', action='store_true')
     parser.add_argument('--test', action='store_true')
-    parser.add_argument('--n_epochs', default=20, type=int)
     parser.add_argument('--pretrain_phi_epoch', default=0, type=int)
+    parser.add_argument("--n_epochs", default=200, type=int)
     parser.add_argument('--top_euclid', default=8, type=int)
     use_phi_replay_parser = parser.add_mutually_exclusive_group(required=True)
     use_phi_replay_parser.add_argument('--use_phi_replay', dest='use_phi_replay', action='store_true')

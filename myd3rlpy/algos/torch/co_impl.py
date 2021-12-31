@@ -1,3 +1,4 @@
+import sys
 import time
 import math
 import copy
@@ -135,6 +136,8 @@ class COImpl(TD3Impl):
         else:
             self._phi = create_phi(self._observation_shape, self._action_size, self._critic_encoder_factory)
             self._psi = create_psi(self._observation_shape, self._actor_encoder_factory)
+        self._targ_phi = copy.deepcopy(self._phi)
+        self._targ_psi = copy.deepcopy(self._psi)
 
         if self._use_gpu:
             self.to_gpu(self._use_gpu)
@@ -224,13 +227,15 @@ class COImpl(TD3Impl):
         assert self._q_func is not None
         if self._use_phi_update:
             assert all_data is not None
-            near_observations = all_data._observations[batch.next_actions[:, self._action_size:].to(torch.int64).cpu().numpy()]
-            near_actions = all_data._actions[batch.next_actions[:, self._action_size:].to(torch.int64).cpu().numpy()]
-            near_actions = near_actions[:, :, :self._action_size]
-            _, _, smallest_distance = similar_phi(batch.next_observations, action, near_observations, near_actions, self._phi)
-            b = torch.mean(torch.exp(- beta * smallest_distance))
-            # siamese_loss = self._temp_siamese_critic_alpha * b
-            siamese_loss = self._siamese_critic_alpha * b
+            with torch.no_grad():
+                near_observations = all_data._observations[batch.next_actions[:, self._action_size:].to(torch.int64).cpu().numpy()]
+                near_actions = all_data._actions[batch.next_actions[:, self._action_size:].to(torch.int64).cpu().numpy()]
+                near_actions = near_actions[:, :, :self._action_size]
+                _, _, smallest_distance = similar_phi(batch.next_observations, action, near_observations, near_actions, self._targ_phi)
+                # b = torch.mean(q_tpn * torch.exp(- beta * smallest_distance))
+                b = torch.mean(torch.exp(- beta * smallest_distance))
+                # siamese_loss = self._temp_siamese_critic_alpha * b
+                siamese_loss = self._siamese_critic_alpha * b
         else:
             siamese_loss = 0
         q_func_loss = self._q_func.compute_error(
@@ -324,11 +329,13 @@ class COImpl(TD3Impl):
         q_t = self._q_func(batch.observations, action)[0]
         if self._use_phi_update:
             assert all_data is not None
-            near_observations = all_data._observations[batch.actions[:, self._action_size:].to(torch.int64).cpu().numpy()]
-            near_actions = all_data._actions[batch.actions[:, self._action_size:].to(torch.int64).cpu().numpy()]
-            near_actions = near_actions[:, :, :self._action_size]
-            _, _, smallest_distance = similar_phi(batch.observations, action, near_observations, near_actions, self._phi)
-            b = torch.mean(torch.exp(- beta * smallest_distance))
+            with torch.no_grad():
+                near_observations = all_data._observations[batch.actions[:, self._action_size:].to(torch.int64).cpu().numpy()]
+                near_actions = all_data._actions[batch.actions[:, self._action_size:].to(torch.int64).cpu().numpy()]
+                near_actions = near_actions[:, :, :self._action_size]
+                _, _, smallest_distance = similar_phi(batch.observations, action, near_observations, near_actions, self._targ_phi)
+                b = torch.mean(torch.exp(- beta * smallest_distance))
+                # b = torch.mean(q_t * torch.exp(- beta * smallest_distance))
             lam = self._alpha / (q_t.abs().mean()).detach()
             policy_loss = lam * -q_t.mean() + ((batch.actions[:, :self._action_size] - action) ** 2).mean()
             # siamese_loss = - b * self._temp_siamese_actor_alpha
@@ -449,3 +456,13 @@ class COImpl(TD3Impl):
             loss_psi_u = torch.linalg.vector_norm(phi[:half_size] - phi[half_size:], dim=1)
         loss_psi = loss_psi - loss_psi_u
         return torch.mean(loss_psi)
+
+    def update_phi_target(self) -> None:
+        assert self._phi is not None
+        assert self._targ_phi is not None
+        soft_sync(self._targ_phi, self._phi, self._tau)
+
+    def update_psi_target(self) -> None:
+        assert self._psi is not None
+        assert self._targ_psi is not None
+        soft_sync(self._targ_psi, self._psi, self._tau)

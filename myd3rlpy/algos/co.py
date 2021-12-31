@@ -280,16 +280,17 @@ class CO(TD3PlusBC):
 
         # 更新phi和psi。
         assert self._train_phi
+        phi_loss, phi_policy_loss, phi_replay_loss = self._impl.update_phi(batch, replay_batches=replay_batches)
+        metrics.update({"phi_pretrain_loss": phi_loss})
+        metrics.update({"phi_pretrain_policy_loss": phi_policy_loss})
+        metrics.update({"phi_pretrain_replay_loss": phi_replay_loss})
         if self._grad_step % self._update_actor_interval == 0:
-            phi_loss, phi_policy_loss, phi_replay_loss = self._impl.update_phi(batch, replay_batches=replay_batches)
-            metrics.update({"phi_pretrain_loss": phi_loss})
-            metrics.update({"phi_pretrain_policy_loss": phi_policy_loss})
-            metrics.update({"phi_pretrain_replay_loss": phi_replay_loss})
-
             psi_loss, psi_policy_loss, psi_replay_loss = self._impl.update_psi(batch, replay_batches=replay_batches, pretrain=True)
             metrics.update({"psi_pretrain_loss": psi_loss})
             metrics.update({"psi_pretrain_policy_loss": psi_policy_loss})
             metrics.update({"psi_pretrain_replay_loss": psi_replay_loss})
+            self._impl.update_critic_target()
+            self._impl.update_actor_target()
 
         return metrics
 
@@ -332,16 +333,17 @@ class CO(TD3PlusBC):
 
         # 更新phi和psi。
         if self._train_phi:
+            phi_loss, phi_policy_loss, phi_replay_loss = self._impl.update_phi(batch, replay_batches=replay_batches)
+            metrics.update({"phi_loss": phi_loss})
+            metrics.update({"phi_policy_loss": phi_policy_loss})
+            metrics.update({"phi_replay_loss": phi_replay_loss})
             if self._grad_step % self._update_actor_interval == 0:
-                phi_loss, phi_policy_loss, phi_replay_loss = self._impl.update_phi(batch, replay_batches=replay_batches)
-                metrics.update({"phi_loss": phi_loss})
-                metrics.update({"phi_policy_loss": phi_policy_loss})
-                metrics.update({"phi_replay_loss": phi_replay_loss})
-
                 psi_loss, psi_policy_loss, psi_replay_loss = self._impl.update_psi(batch, replay_batches=replay_batches)
                 metrics.update({"psi_loss": psi_loss})
                 metrics.update({"psi_policy_loss": psi_policy_loss})
                 metrics.update({"psi_replay_loss": psi_replay_loss})
+                self._impl.update_critic_target()
+                self._impl.update_actor_target()
 
         return metrics
 
@@ -687,6 +689,8 @@ class CO(TD3PlusBC):
                                 k: np.mean(v) for k, v in pretrain_epoch_loss.items()
                             }
                             range_gen.set_postfix(mean_loss)
+                if epoch % 100 == 0:
+                    LOG.debug('Log Output Time')
 
             # save loss to loss history dict
             self._loss_history["pretrain_epoch"].append(epoch)
