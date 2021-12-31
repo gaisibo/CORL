@@ -8,3 +8,6 @@ out_*.txt
 MUJOCO_LOG.TXT
 test.sh
 test_*.txt
+*.pt
+*.png
+*.json
