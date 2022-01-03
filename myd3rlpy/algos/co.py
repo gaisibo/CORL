@@ -280,9 +280,12 @@ class CO(TD3PlusBC):
 
         # 更新phi和psi。
         assert self._train_phi
-        phi_loss, phi_policy_loss, phi_replay_loss = self._impl.update_phi(batch, replay_batches=replay_batches)
+        phi_loss, phi_policy_loss, phi_diff_phi, phi_diff_r, phi_diff_psi, phi_replay_loss = self._impl.update_phi(batch, replay_batches=replay_batches)
         metrics.update({"phi_pretrain_loss": phi_loss})
         metrics.update({"phi_pretrain_policy_loss": phi_policy_loss})
+        metrics.update({"phi_pretrain_diff_phi": phi_diff_phi})
+        metrics.update({"phi_pretrain_diff_r": phi_diff_r})
+        metrics.update({"phi_pretrain_diff_psi": phi_diff_psi})
         metrics.update({"phi_pretrain_replay_loss": phi_replay_loss})
         if self._grad_step % self._update_actor_interval == 0:
             psi_loss, psi_policy_loss, psi_replay_loss = self._impl.update_psi(batch, replay_batches=replay_batches, pretrain=True)
@@ -311,17 +314,19 @@ class CO(TD3PlusBC):
 
         metrics = {}
 
-        critic_loss, critic_q_func_loss, critic_siamese_loss, critic_replay_loss, critic_smallest_distance = self._impl.update_critic(batch, replay_batches=replay_batches, all_data=all_data) * self._critic_alpha()
+        critic_loss, critic_q_func_loss, critic_up_loss, critic_down_loss, critic_siamese_loss, critic_replay_loss, critic_smallest_distance, _, _, _, _, _, _ = self._impl.update_critic(batch, replay_batches=replay_batches, all_data=all_data) * self._critic_alpha()
         metrics.update({"critic_loss": critic_loss})
         metrics.update({"critic_q_func_loss": critic_q_func_loss})
         metrics.update({"critic_siamese_loss": critic_siamese_loss})
+        metrics.update({"critic_up_loss": critic_up_loss})
+        metrics.update({"critic_down_loss": critic_down_loss})
         metrics.update({"critic_replay_loss": critic_replay_loss})
         metrics.update({"critic_siamese_alpha": self._impl._temp_siamese_critic_alpha})
         metrics.update({'critic_smallest_distance': critic_smallest_distance})
 
         # delayed policy update
         if self._grad_step % self._update_actor_interval == 0:
-            actor_loss, actor_policy_loss, actor_siamese_loss, actor_replay_loss, actor_smallest_distance = self._impl.update_actor(batch, replay_batches=replay_batches, all_data=all_data) * self._actor_alpha()
+            actor_loss, actor_policy_loss, actor_siamese_loss, actor_replay_loss, actor_smallest_distance, _, _ = self._impl.update_actor(batch, replay_batches=replay_batches, all_data=all_data) * self._actor_alpha()
             metrics.update({"actor_loss": actor_loss})
             metrics.update({"actor_policy_loss": actor_policy_loss})
             metrics.update({"actor_siamese_loss": actor_siamese_loss})
@@ -333,9 +338,12 @@ class CO(TD3PlusBC):
 
         # 更新phi和psi。
         if self._train_phi:
-            phi_loss, phi_policy_loss, phi_replay_loss = self._impl.update_phi(batch, replay_batches=replay_batches)
+            phi_loss, phi_policy_loss, phi_diff_phi, phi_diff_r, phi_diff_psi, phi_replay_loss = self._impl.update_phi(batch, replay_batches=replay_batches)
             metrics.update({"phi_loss": phi_loss})
             metrics.update({"phi_policy_loss": phi_policy_loss})
+            metrics.update({"phi_diff_phi": phi_diff_phi})
+            metrics.update({"phi_diff_r": phi_diff_r})
+            metrics.update({"phi_diff_psi": phi_diff_psi})
             metrics.update({"phi_replay_loss": phi_replay_loss})
             if self._grad_step % self._update_actor_interval == 0:
                 psi_loss, psi_policy_loss, psi_replay_loss = self._impl.update_psi(batch, replay_batches=replay_batches)

@@ -11,9 +11,12 @@ from d3rlpy.preprocessing.reward_scalers import RewardScaler
 from d3rlpy.preprocessing.stack import StackedObservation
 from d3rlpy.metrics.scorer import AlgoProtocol, _make_batches
 
+from utils.utils import Struct
+
 WINDOW_SIZE = 1024
 
 
+replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'next_actions', 'next_rewards', 'replay_terminals', 'policy_actions', 'qs', 'phis', 'psis']
 def get_task_id_tensor(observations: torch.Tensor, task_id_int: int, task_id_size: int):
     task_id_tensor = F.one_hot(torch.full([observations.shape[0]], task_id_int, dtype=torch.int64), num_classes=task_id_size).to(observations.dtype).to(observations.device)
     return task_id_tensor
@@ -22,10 +25,11 @@ def bc_error_scorer(real_action_size: int) -> Callable[..., float]:
     def scorer(algo, replay_iterator):
         total_errors = []
         for batch in replay_iterator:
-            observations, actions, qs, _, _ = batch
-            observations = observations.to(algo._impl.device)
-            actions = actions.to(algo._impl.device)
-            qs = qs.to(algo._impl.device)
+            batch = dict(zip(replay_name, batch))
+            batch = Struct(**batch)
+            observations = batch.observations.to(algo._impl.device)
+            actions = batch.policy_actions.to(algo._impl.device)
+            qs = batch.qs.to(algo._impl.device)
             rebuild_actions = algo._impl._policy(observations)
             rebuild_qs = algo._impl._q_func.forward(observations, actions[:, :real_action_size])
             loss = F.mse_loss(rebuild_qs, qs) + F.mse_loss(rebuild_actions, actions[:, :real_action_size])

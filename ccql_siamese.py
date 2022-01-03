@@ -72,7 +72,7 @@ def main(args, device):
                 real_action_size = real_action_size,
                 real_observation_size = real_observation_size,
                 eval_episodess=eval_datasets,
-                n_epochs=args.n_epochs,#  if not args.test else 1,
+                n_epochs=args.n_epochs if not args.test else 1,
                 pretrain_phi_epoch=args.pretrain_phi_epoch,
                 experiment_name=experiment_name + algos_name
             )
@@ -84,7 +84,7 @@ def main(args, device):
             else:
                 raise NotImplementedError
             co.save_model(args.model_path + algos_name + '_' + str(dataset_num) + '.pt')
-            if args.test:
+            if args.test and dataset_num >= 1:
                 break
         torch.save(replay_datasets, f=args.model_path + algos_name + '_datasets.pt')
     else:
@@ -120,7 +120,7 @@ if __name__ == '__main__':
     parser.add_argument('--siamese_threshold', default=1, type=float)
     parser.add_argument('--eval_batch_size', default=256, type=int)
     parser.add_argument('--batch_size', default=256, type=int)
-    parser.add_argument('--topk', default=4, type=int)
+    parser.add_argument('--topk', default=8, type=int)
     parser.add_argument('--task_split_type', default='undirected', type=str)
     parser.add_argument('--dataset_name', default='antmaze-large-play-v0', type=str)
     parser.add_argument('--algos', default='co', type=str)
@@ -136,7 +136,7 @@ if __name__ == '__main__':
     use_phi_update_parser.add_argument('--use_phi_update', dest='use_phi_update', action='store_true')
     use_phi_update_parser.add_argument('--no_use_phi_update', dest='use_phi_update', action='store_false')
     args = parser.parse_args()
-    args.model_path = 'd3rlpy_' + ('test' if args.test else ('train' if not args.eval else 'eval')) + '/model_'
+    args.model_path = 'd3rlpy_' + ('test' if args.test else ('train' if not args.eval else 'eval')) + '/model_2_'
     global DATASET_PATH
     DATASET_PATH = './.d4rl/datasets/'
     device = torch.device('cuda:0')
