@@ -362,7 +362,10 @@ def test_new_buffer():
     buf.save('test_buf.h5')
     #buf2 = ReplayBuffer(size, state, action, load_from='test_buf.h5')
     import pdb; pdb.set_trace()
-    
+
+class Struct:
+    def __init__(self, **entries):
+        self.__dict__.update(entries)
 
 if __name__ == '__main__':
     test_new_buffer()
