@@ -16,7 +16,7 @@ from utils.utils import Struct
 WINDOW_SIZE = 1024
 
 
-replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'next_actions', 'next_rewards', 'replay_terminals', 'policy_actions', 'qs', 'phis', 'psis']
+replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'next_actions', 'next_rewards', 'replay_terminals', 'policy_actions', 'means', 'std_logs', 'qs', 'phis', 'psis']
 def get_task_id_tensor(observations: torch.Tensor, task_id_int: int, task_id_size: int):
     task_id_tensor = F.one_hot(torch.full([observations.shape[0]], task_id_int, dtype=torch.int64), num_classes=task_id_size).to(observations.dtype).to(observations.device)
     return task_id_tensor
@@ -28,11 +28,14 @@ def bc_error_scorer(real_action_size: int) -> Callable[..., float]:
             batch = dict(zip(replay_name, batch))
             batch = Struct(**batch)
             observations = batch.observations.to(algo._impl.device)
+            means = batch.means.to(algo._impl.device)
+            std_logs = batch.std_logs.to(algo._impl.device)
+            dists = torch.distributions.normal.Normal(means, std_logs)
             actions = batch.policy_actions.to(algo._impl.device)
             qs = batch.qs.to(algo._impl.device)
-            rebuild_actions = algo._impl._policy(observations)
-            rebuild_qs = algo._impl._q_func.forward(observations, actions[:, :real_action_size])
-            loss = F.mse_loss(rebuild_qs, qs) + F.mse_loss(rebuild_actions, actions[:, :real_action_size])
+            rebuild_dists = algo._impl._policy.dist(observations)
+            rebuild_qs = algo._impl._q_func.forward(observations, actions)
+            loss = F.mse_loss(rebuild_qs, qs) + torch.distributions.kl.kl_divergence(rebuild_dists, dists)
             total_errors.append(loss)
         total_errors = torch.stack(total_errors, dim=0)
         return float(torch.mean(total_errors).detach().cpu().numpy())

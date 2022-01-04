@@ -161,6 +161,7 @@ class CO(TD3PlusBC):
         batch_size: int = 256,
         n_frames: int = 1,
         n_steps: int = 1,
+        sample_num: int = 4,
         gamma: float = 0.99,
         tau: float = 0.005,
         n_critics: int = 2,
@@ -221,6 +222,7 @@ class CO(TD3PlusBC):
         self._siamese_critic_alpha = siamese_critic_alpha
         self._replay_phi_alpha = replay_phi_alpha
         self._replay_psi_alpha = replay_psi_alpha
+        self._sample_num = sample_num
 
         self._impl_name = impl_name
 
@@ -267,6 +269,7 @@ class CO(TD3PlusBC):
             psi_bc_loss=self._psi_bc_loss,
             use_phi_update=self._use_phi_update,
             use_same_encoder=self._use_same_encoder,
+            sample_num=self._sample_num,
             gamma=self._gamma,
             tau=self._tau,
             n_critics=self._n_critics,
@@ -307,9 +310,12 @@ class CO(TD3PlusBC):
         metrics.update({"phi_pretrain_diff_psi": phi_diff_psi})
         metrics.update({"phi_pretrain_replay_loss": phi_replay_loss})
         if self._grad_step % self._update_actor_interval == 0:
-            psi_loss, psi_policy_loss, psi_replay_loss = self._impl.update_psi(batch, replay_batches=replay_batches, pretrain=True)
+            psi_loss, psi_policy_loss, psi_diff_loss, psi_kl_loss, psi_u_loss, psi_replay_loss = self._impl.update_psi(batch, replay_batches=replay_batches, pretrain=True)
             metrics.update({"psi_pretrain_loss": psi_loss})
             metrics.update({"psi_pretrain_policy_loss": psi_policy_loss})
+            metrics.update({"psi_pretrain_diff_loss": psi_diff_loss})
+            metrics.update({"psi_pretrain_kl_loss": psi_kl_loss})
+            metrics.update({"psi_pretrain_u_loss": psi_u_loss})
             metrics.update({"psi_pretrain_replay_loss": psi_replay_loss})
             self._impl.update_critic_target()
             self._impl.update_actor_target()
@@ -365,9 +371,12 @@ class CO(TD3PlusBC):
             metrics.update({"phi_diff_psi": phi_diff_psi})
             metrics.update({"phi_replay_loss": phi_replay_loss})
             if self._grad_step % self._update_actor_interval == 0:
-                psi_loss, psi_policy_loss, psi_replay_loss = self._impl.update_psi(batch, replay_batches=replay_batches)
+                psi_loss, psi_policy_loss, psi_diff_loss, psi_kl_loss, psi_u_loss, psi_replay_loss = self._impl.update_psi(batch, replay_batches=replay_batches, pretrain=False)
                 metrics.update({"psi_loss": psi_loss})
                 metrics.update({"psi_policy_loss": psi_policy_loss})
+                metrics.update({"psi_diff_loss": psi_diff_loss})
+                metrics.update({"psi_kl_loss": psi_kl_loss})
+                metrics.update({"psi_u_loss": psi_u_loss})
                 metrics.update({"psi_replay_loss": psi_replay_loss})
                 self._impl.update_critic_target()
                 self._impl.update_actor_target()

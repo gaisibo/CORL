@@ -15,7 +15,7 @@ def finish_task_co(dataset_num, task_nums, dataset, original, network, indexes_e
     start_actions = network._impl._policy(start_observations)
     replay_indexes, replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_next_actions, replay_next_rewards, replay_terminals = [], [], [], [], [], [], [], []
     if not for_ewc:
-        replay_policy_actions, replay_qs, replay_phis, replay_psis = [], [], [], []
+        replay_policy_actions, replay_means, replay_std_logs, replay_qs, replay_phis, replay_psis = [], [], [], [], [], []
     while len(start_indexes) != 0:
         near_observations = dataset._observations[indexes_euclid[start_indexes]]
         near_actions = dataset._actions[indexes_euclid[start_indexes]][:, :, :real_action_size]
@@ -55,10 +55,15 @@ def finish_task_co(dataset_num, task_nums, dataset, original, network, indexes_e
         replay_terminals.append(start_terminals)
         if not for_ewc:
             start_policy_actions = network._impl._policy(start_observations)
+            start_dists = network._impl._policy.dist(start_observations)
+            start_means = start_dists.mean
+            start_std_logs = start_dists.stddev
             start_psis = network._impl._psi.forward(start_observations)
             start_qs = network._impl._q_func.forward(start_observations, start_policy_actions)
             start_phis = network._impl._phi.forward(start_observations, start_policy_actions)
             replay_policy_actions.append(start_policy_actions)
+            replay_means.append(start_means)
+            replay_std_logs.append(start_std_logs)
             replay_qs.append(start_qs)
             replay_psis.append(start_psis)
             replay_phis.append(start_phis)
@@ -73,8 +78,10 @@ def finish_task_co(dataset_num, task_nums, dataset, original, network, indexes_e
         replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_next_actions, replay_next_rewards, replay_terminals)
     else:
         replay_policy_actions = torch.cat(replay_policy_actions, dim=0).cpu()
+        replay_means = torch.cat(replay_means, dim=0).cpu()
+        replay_std_logs = torch.cat(replay_std_logs, dim=0).cpu()
         replay_qs = torch.cat(replay_qs, dim=0).cpu()
         replay_phis = torch.cat(replay_phis, dim=0).cpu()
         replay_psis = torch.cat(replay_psis, dim=0).cpu()
-        replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_next_actions, replay_next_rewards, replay_terminals, replay_policy_actions, replay_qs, replay_phis, replay_psis)
+        replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_next_actions, replay_next_rewards, replay_terminals, replay_policy_actions, replay_means, replay_std_logs, replay_qs, replay_phis, replay_psis)
     return replay_dataset

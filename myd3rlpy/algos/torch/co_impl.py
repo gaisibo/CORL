@@ -1,4 +1,3 @@
-
 import time
 import math
 import copy
@@ -22,7 +21,7 @@ from d3rlpy.algos.torch.base import TorchImplBase
 from d3rlpy.algos.torch.td3_impl import TD3Impl
 
 from myd3rlpy.models.torch.siamese import Phi, Psi
-from d3rlpy.models.builders import create_deterministic_policy, create_continuous_q_function
+from d3rlpy.models.builders import create_squashed_normal_policy, create_continuous_q_function
 from myd3rlpy.models.builders import create_phi, create_psi
 from myd3rlpy.siamese_similar import similar_euclid, similar_psi, similar_phi
 from utils.utils import Struct
@@ -67,6 +66,7 @@ class COImpl(TD3Impl):
         psi_bc_loss: bool,
         use_phi_update: bool,
         use_same_encoder:bool,
+        sample_num: int,
         gamma: float,
         tau: float,
         n_critics: int,
@@ -124,8 +124,9 @@ class COImpl(TD3Impl):
         self._psi_optim = None
         self._use_phi_update = use_phi_update
         self._use_same_encoder = use_same_encoder
+        self._sample_num = sample_num
 
-        self.replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'next_actions', 'next_rewards', 'terminals', 'policy_actions', 'qs', 'phis', 'psis']
+        self.replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'next_actions', 'next_rewards', 'terminals', 'policy_actions', 'means', 'std_logs', 'qs', 'phis', 'psis']
     def build(self) -> None:
 
         # 共用encoder
@@ -137,7 +138,7 @@ class COImpl(TD3Impl):
             q_func_factory=self._q_func_factory,
             n_ensembles=self._n_critics,
         )
-        self._policy = create_deterministic_policy(
+        self._policy = create_squashed_normal_policy(
             observation_shape=self._observation_shape,
             action_size=self._action_size,
             encoder_factory=self._actor_encoder_factory,
@@ -337,9 +338,11 @@ class COImpl(TD3Impl):
                 if self._policy_bc_loss:
                     with torch.no_grad():
                         replay_observations = replay_batch.observations.to(self.device)
-                        replay_actions = replay_batch.policy_actions.to(self.device)
-                    actions = self._policy(replay_observations)
-                    replay_bc_loss = F.mse_loss(replay_actions, actions).mean() / len(replay_batches)
+                        replay_means = replay_batch.means.to(self.device)
+                        replay_std_logs = replay_batch.std_logs.to(self.device)
+                        replay_actions = torch.distributions.normla.Normal(replay_means, replay_std_logs)
+                    actions = self._policy.dist(replay_observations)
+                    replay_bc_loss = torch.distributions.kl.kl_divergence(actions, replay_actions).mean() / len(replay_batches)
                     replay_bc_losses.append(replay_bc_loss.cpu().detach().numpy())
                     replay_loss += replay_bc_loss
             loss += self._replay_actor_alpha * replay_loss
@@ -449,7 +452,7 @@ class COImpl(TD3Impl):
 
         self._psi_optim.zero_grad()
 
-        loss = self.compute_psi_loss(batch, pretrain)
+        loss, loss_psi_diff, loss_psi_kl, loss_psi_u = self.compute_psi_loss(batch, pretrain)
         policy_loss = loss.cpu().detach().numpy()
         replay_loss = 0
         if replay_batches is not None and len(replay_batches) != 0 and self._psi_bc_loss:
@@ -465,26 +468,33 @@ class COImpl(TD3Impl):
         loss.backward()
         self._psi_optim.step()
 
-        return loss.cpu().detach().numpy(), policy_loss, replay_loss
+        return loss.cpu().detach().numpy(), policy_loss, loss_psi_diff, loss_psi_kl, loss_psi_u, replay_loss
 
     def compute_psi_loss(self, batch: TransitionMiniBatch, pretrain: bool = False) -> torch.Tensor:
         assert self._phi is not None
         assert self._psi is not None
         assert self._policy is not None
-        s, a = batch.observations, batch.actions
+        s, a = batch.observations.to(self.device), batch.actions.to(self.device)
         half_size = batch.observations.shape[0] // 2
-        psi = self._psi(s.to(self.device))
-        loss_psi = torch.linalg.vector_norm(psi[:half_size] - psi[half_size:], dim=1)
+        psi = self._psi(s)
+        loss_psi_diff = torch.linalg.vector_norm(psi[:half_size] - psi[half_size:], dim=1)
+        action = self._policy.dist(s)
+        loss_psi_kl = torch.distributions.kl.kl_divergence(s[:half_size], s[half_size:])
         with torch.no_grad():
             if not pretrain:
-                u = self._policy(s.to(self.device))
+                u, _ = self._policy.sample_n_with_log_prob(s, self._sample_num)
             else:
-                u = torch.randn(a.shape[0], self._action_size).to(self.device)
+                u = torch.randn(a.shape[0], self._sample_num, self._action_size).to(self.device)
+            u = u.reshape(a.shape[0] * self._sample_num, self._action_size)
+            s = s.unsqueeze(dim=1).expand(s.shape[0], self._sample_num, -1).reshape(s.shape[0] * self._sample_num, -1)
             loss_psi_u = 0
-            phi = self._phi(s, u)
-            loss_psi_u = torch.linalg.vector_norm(phi[:half_size] - phi[half_size:], dim=1)
-        loss_psi = loss_psi - loss_psi_u
-        return torch.mean(loss_psi)
+            phi = self._phi(s, u).reshape(s.shape[0], self._sample_num, -1).mean(dim=1)
+            loss_psi_u = torch.linalg.vector_norm(phi[:half_size * self._sample_num] - phi[half_size * self._sample_num:], dim=1)
+        loss_psi = loss_psi_diff + loss_psi_kl - loss_psi_u
+        loss_psi_diff = loss_psi_diff.cpu().detach().numpy()
+        loss_psi_kl = loss_psi_kl.cpu().detach().numpy()
+        loss_psi_u = loss_psi_u.cpu().detach().numpy()
+        return torch.mean(loss_psi), loss_psi_diff, loss_psi_kl, loss_psi_u
 
     def update_phi_target(self) -> None:
         assert self._phi is not None
