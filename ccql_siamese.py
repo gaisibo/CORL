@@ -23,22 +23,15 @@ from myd3rlpy.siamese_similar import similar_psi, similar_phi
 
 
 def main(args, device):
-#     with open(f"./{args.task_config}", "r") as f:
-#         task_config = json.load(
-#             f, object_hook=lambda d: namedtuple("X", d.keys())(*d.values())
-#         )
-#     env = get_env(task_config)
-#     buffers = build_networks_and_buffers(args, env, task_config)
-#     task_num = len(buffers)
-#     datasets = []
-#     for task_id, buffer_ in enumerate(buffers):
-#         task_id_np = np.zeros((buffer_._obs.shape[0], task_num), dtype=np.float32)
-#         task_id_np[:, task_id] = 1
-#         buffer_._obs = np.hstack((buffer_._obs, task_id_np))
-#         datasets.append(MDPDataset(buffer_._obs, buffer_._actions, buffer_._rewards, buffer_._terminals))
-#         break
-    origin_dataset, task_datasets, taskid_task_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums = split_navigate_antmaze_large_play_v0(args.task_split_type, args.top_euclid, device)
     np.set_printoptions(precision=1, suppress=True)
+    if args.dataset == 'ant_maze':
+        origin_dataset, task_datasets, taskid_task_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums = split_navigate_antmaze_large_play_v0(args.task_split_type, args.top_euclid, device)
+    else:
+        assert args.dataset == 'antmaze'
+        real_action_size = 0
+        real_observation_size = 0
+        task_nums = 0
+        task_datasets = dict()
 
     # prepare algorithm
     if args.algos == 'co':
@@ -46,7 +39,7 @@ def main(args, device):
         train_phi = True
         if not args.use_phi_update and not args.use_phi_replay:
             train_phi = False
-        co = CO(use_gpu=True, batch_size=args.batch_size, use_phi_update=args.use_phi_update, train_phi=train_phi, sample_num=args.sample_num)
+        co = CO(use_gpu=True, batch_size=args.batch_size, use_phi_update=args.use_phi_update, train_phi=train_phi, sample_num=args.sample_num, cql_loss=args.cql_loss, q_bc_loss=args.q_bc_loss, td3_loss=args.td3_loss, policy_bc_loss=args.policy_bc_loss, phi_bc_loss=args.phi_bc_loss, psi_bc_loss=args.psi_bc_loss)
         if args.use_phi_replay:
             from myd3rlpy.finish_task.finish_task_co import finish_task_co as finish_task
         else:
@@ -55,8 +48,8 @@ def main(args, device):
         raise NotImplementedError
     experiment_name = "CO_"
     algos_name = "update" if args.use_phi_update else "noupdate"
-    algos_name += '_'
-    algos_name += "replay" if args.use_phi_replay else "noreplay"
+    algos_name += "_replay" if args.use_phi_replay else "_noreplay"
+    algos_name += "_orl" if args.orl else "_noorl"
     algos_name += '_pretrain' if args.pretrain_phi_epoch else ""
 
     if not args.eval:
@@ -71,6 +64,7 @@ def main(args, device):
                 dataset,
                 real_action_size = real_action_size,
                 real_observation_size = real_observation_size,
+                id_size = task_nums,
                 eval_episodess=eval_datasets,
                 n_epochs=args.n_epochs if not args.test else 1,
                 pretrain_phi_epoch=args.pretrain_phi_epoch,
@@ -113,6 +107,7 @@ def main(args, device):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Experimental evaluation of lifelong PG learning')
+    parser.add_argument("--dataset", default='ant_maze', type=str)
     parser.add_argument('--inner_buffer_size', default=-1, type=int)
     parser.add_argument('--task_config', default='task_config/cheetah_dir.json', type=str)
     parser.add_argument('--siamese_hidden_size', default=100, type=int)
@@ -130,6 +125,9 @@ if __name__ == '__main__':
     parser.add_argument("--n_epochs", default=200, type=int)
     parser.add_argument("--sample_num", default=4, type=int)
     parser.add_argument('--top_euclid', default=8, type=int)
+    orl_parser = parser.add_mutually_exclusive_group(required=True)
+    orl_parser.add_argument('--orl', dest='orl', action='store_true')
+    orl_parser.add_argument('--no_orl', dest='orl', action='store_false')
     use_phi_replay_parser = parser.add_mutually_exclusive_group(required=True)
     use_phi_replay_parser.add_argument('--use_phi_replay', dest='use_phi_replay', action='store_true')
     use_phi_replay_parser.add_argument('--no_use_phi_replay', dest='use_phi_replay', action='store_false')
@@ -138,6 +136,20 @@ if __name__ == '__main__':
     use_phi_update_parser.add_argument('--no_use_phi_update', dest='use_phi_update', action='store_false')
     args = parser.parse_args()
     args.model_path = 'd3rlpy_' + ('test' if args.test else ('train' if not args.eval else 'eval')) + '/model_2_'
+    if args.orl:
+        args.cql_loss = True
+        args.td3_loss = True
+        args.q_bc_loss = False
+        args.policy_bc_loss = False
+        args.phi_bc_loss = False
+        args.psi_bc_loss = False
+    else:
+        args.cql_loss = False
+        args.td3_loss = False
+        args.q_bc_loss = True
+        args.policy_bc_loss = True
+        args.phi_bc_loss = True
+        args.psi_bc_loss = True
     global DATASET_PATH
     DATASET_PATH = './.d4rl/datasets/'
     device = torch.device('cuda:0')
