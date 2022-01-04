@@ -59,7 +59,12 @@ class COImpl(TD3Impl):
         siamese_critic_alpha: float,
         replay_phi_alpha: float,
         replay_psi_alpha: float,
-        replay_critic: bool,
+        cql_loss: bool,
+        q_bc_loss: bool,
+        td3_loss: bool,
+        policy_bc_loss: bool,
+        phi_bc_loss: bool,
+        psi_bc_loss: bool,
         use_phi_update: bool,
         use_same_encoder:bool,
         gamma: float,
@@ -99,6 +104,12 @@ class COImpl(TD3Impl):
         self._psi_learning_rate = psi_learning_rate
         self._phi_optim_factory = phi_optim_factory
         self._psi_optim_factory = psi_optim_factory
+        self._cql_loss = cql_loss
+        self._q_bc_loss = q_bc_loss
+        self._td3_loss = td3_loss
+        self._policy_bc_loss = policy_bc_loss
+        self._phi_bc_loss = phi_bc_loss
+        self._psi_bc_loss = psi_bc_loss
         self._replay_actor_alpha = replay_actor_alpha
         self._replay_critic_alpha = replay_critic_alpha
         self._siamese_actor_alpha = siamese_actor_alpha
@@ -107,7 +118,6 @@ class COImpl(TD3Impl):
         self._temp_siamese_critic_alpha = siamese_critic_alpha
         self._replay_phi_alpha = replay_phi_alpha
         self._replay_psi_alpha = replay_psi_alpha
-        self._replay_critic = replay_critic
 
         # initialized in build
         self._phi_optim = None
@@ -115,7 +125,7 @@ class COImpl(TD3Impl):
         self._use_phi_update = use_phi_update
         self._use_same_encoder = use_same_encoder
 
-        self.replay_name = ['observations', 'normal_actions', 'rewards', 'next_observations', 'next_actions', 'next_rewards', 'terminals', 'policy_actions', 'qs', 'phis', 'psis']
+        self.replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'next_actions', 'next_rewards', 'terminals', 'policy_actions', 'qs', 'phis', 'psis']
     def build(self) -> None:
 
         # 共用encoder
@@ -195,7 +205,7 @@ class COImpl(TD3Impl):
 
         loss, q_func_loss, up_loss, down_loss, siamese_loss, smallest_distance = self.compute_critic_loss(batch, q_tpn, action, all_data=all_data)
         replay_loss = 0
-        replay_losses = []
+        replay_cql_losses = []
         replay_q_func_losses = []
         replay_up_losses = []
         replay_down_losses = []
@@ -206,26 +216,31 @@ class COImpl(TD3Impl):
             for i, replay_batch in replay_batches.items():
                 replay_batch = dict(zip(self.replay_name, replay_batch))
                 replay_batch = Struct(**replay_batch)
-                replay_batch.n_steps = 1
-                replay_batch.masks = None
-                q_tpn, action = self.compute_target(batch)
-                replay_loss, replay_q_func_loss, replay_up_loss, replay_down_loss, replay_siamese_loss, replay_smallest_distance = self.compute_critic_loss(batch, q_tpn, action, all_data=None)
-                replay_losses.append(replay_loss)
-                replay_q_func_losses.append(replay_q_func_loss)
-                replay_up_losses.append(replay_up_loss)
-                replay_down_losses.append(replay_down_loss)
-                replay_siamese_losses.append(replay_siamese_loss)
-                replay_smallest_distances.append(replay_smallest_distance)
-                with torch.no_grad():
-                    replay_observations = replay_batch.observations.to(self.device)
-                    replay_actions = replay_batch.policy_actions.to(self.device)
-                    replay_qs = batch.qs.to(self.device)
-                q = self._q_func(replay_observations, replay_actions)
-                replay_bc_loss = F.mse_loss(replay_qs, q) / len(replay_batches)
-                replay_bc_losses.append(replay_bc_loss.cpu().detach().numpy())
-                replay_loss += replay_bc_loss
+                replay_loss = 0
+                if self._cql_loss:
+                    replay_batch.n_steps = 1
+                    replay_batch.masks = None
+                    q_tpn, action = self.compute_target(batch)
+                    replay_cql_loss, replay_q_func_loss, replay_up_loss, replay_down_loss, replay_siamese_loss, replay_smallest_distance = self.compute_critic_loss(batch, q_tpn, action, all_data=None)
+                    replay_loss += replay_cql_loss
+                    replay_cql_losses.append(replay_cql_loss)
+                    replay_q_func_losses.append(replay_q_func_loss)
+                    replay_up_losses.append(replay_up_loss)
+                    replay_down_losses.append(replay_down_loss)
+                    replay_siamese_losses.append(replay_siamese_loss)
+                    replay_smallest_distances.append(replay_smallest_distance)
+                if self._q_bc_loss:
+                    with torch.no_grad():
+                        replay_observations = replay_batch.observations.to(self.device)
+                        replay_actions = replay_batch.policy_actions.to(self.device)
+                        replay_qs = batch.qs.to(self.device)
+                    q = self._q_func(replay_observations, replay_actions)
+                    replay_bc_loss = F.mse_loss(replay_qs, q) / len(replay_batches)
+                    replay_bc_losses.append(replay_bc_loss.cpu().detach().numpy())
+                    replay_loss += replay_bc_loss
             loss += self._replay_critic_alpha * replay_loss
-            replay_loss = replay_loss.cpu().detach().numpy()
+            if self._cql_loss or self._q_bc_loss:
+                replay_loss = replay_loss.cpu().detach().numpy()
 
         loss.backward()
         self._critic_optim.step()
@@ -305,26 +320,31 @@ class COImpl(TD3Impl):
 
         loss, policy_loss, bc_loss, siamese_loss, smallest_distance = self.compute_actor_loss(batch, all_data)
         replay_loss = 0
-        replay_losses = []
+        replay_td3_losses = []
         replay_policy_losses = []
         replay_siamese_losses = []
+        replay_bc_losses = []
         if replay_batches is not None and len(replay_batches) != 0:
             for i, replay_batch in replay_batches.items():
                 replay_batch_s = dict(zip(self.replay_name, replay_batch))
                 replay_batch_s = Struct(**replay_batch_s)
-                replay_loss, replay_policy_loss, replay_bc_loss, replay_siamese_loss, replay_smallest_distance = self.compute_actor_loss(replay_batch_s, all_data=None)
-                replay_losses.append(replay_loss)
-                replay_policy_losses.append(replay_policy_loss)
-                replay_siamese_losses.append(replay_siamese_loss)
-                with torch.no_grad():
-                    replay_observations = replay_batch.observations.to(self.device)
-                    replay_actions = replay_batch.policy_actions.to(self.device)
-                actions = self._policy(replay_observations)
-                replay_bc_loss = F.mse_loss(replay_actions, actions).mean() / len(replay_batches)
-                replay_bc_losses.append(replay_bc_loss.cpu().detach().numpy())
-                replay_loss += replay_bc_loss
+                if self._td3_loss:
+                    replay_td3_loss, replay_policy_loss, replay_bc_loss, replay_siamese_loss, replay_smallest_distance = self.compute_actor_loss(replay_batch_s, all_data=None)
+                    replay_td3_losses.append(replay_td3_loss)
+                    replay_policy_losses.append(replay_policy_loss)
+                    replay_siamese_losses.append(replay_siamese_loss)
+                    replay_loss += replay_td3_loss
+                if self._policy_bc_loss:
+                    with torch.no_grad():
+                        replay_observations = replay_batch.observations.to(self.device)
+                        replay_actions = replay_batch.policy_actions.to(self.device)
+                    actions = self._policy(replay_observations)
+                    replay_bc_loss = F.mse_loss(replay_actions, actions).mean() / len(replay_batches)
+                    replay_bc_losses.append(replay_bc_loss.cpu().detach().numpy())
+                    replay_loss += replay_bc_loss
             loss += self._replay_actor_alpha * replay_loss
-            replay_loss = replay_loss.cpu().detach().numpy()
+            if self._td3_loss or self._policy_bc_loss:
+                replay_loss = replay_loss.cpu().detach().numpy()
 
         loss.backward()
         self._actor_optim.step()
@@ -336,26 +356,26 @@ class COImpl(TD3Impl):
     def compute_actor_loss(self, batch: TorchMiniBatch, all_data: MDPDataset=None, beta=0.5) -> torch.Tensor:
         assert self._policy is not None
         assert self._q_func is not None
-        action = self._policy(batch.observations)
-        q_t = self._q_func(batch.observations, action)[0]
+        action = self._policy(batch.observations.to(self.device))
+        q_t = self._q_func(batch.observations.to(self.device), action)[0]
         if self._use_phi_update and all_data is not None:
             with torch.no_grad():
                 near_observations = all_data._observations[batch.actions[:, self._action_size:].to(torch.int64).cpu().numpy()]
                 near_actions = all_data._actions[batch.actions[:, self._action_size:].to(torch.int64).cpu().numpy()]
                 near_actions = near_actions[:, :, :self._action_size]
-                _, _, smallest_distance = similar_phi(batch.observations, action, near_observations, near_actions, self._targ_phi)
+                _, _, smallest_distance = similar_phi(batch.observations.to(self.device), action, near_observations, near_actions, self._targ_phi)
                 b = torch.mean(torch.exp(- beta * smallest_distance))
                 # b = torch.mean(q_t * torch.exp(- beta * smallest_distance))
             lam = self._alpha / (q_t.abs().mean()).detach()
             lam = self._alpha / (q_t.abs().mean()).detach()
-            bc_loss = ((batch.actions[:, :self._action_size] - action) ** 2).mean()
+            bc_loss = ((batch.actions[:, :self._action_size].to(self.device) - action) ** 2).mean()
             # siamese_loss = - b * self._temp_siamese_actor_alpha
             siamese_loss = - b * self._siamese_actor_alpha
             loss = lam * -q_t.mean() + bc_loss
             return loss, -q_t.mean().cpu().detach().numpy(), bc_loss.cpu().detach().numpy(), siamese_loss.cpu().detach().numpy(), smallest_distance.mean().cpu().detach().numpy()
         else:
             lam = self._alpha / (q_t.abs().mean()).detach()
-            bc_loss = ((batch.actions[:, :self._action_size] - action) ** 2).mean()
+            bc_loss = ((batch.actions[:, :self._action_size].to(self.device) - action) ** 2).mean()
             loss = lam * -q_t.mean() + bc_loss
             return loss, -q_t.mean().cpu().detach().numpy(), bc_loss.cpu().detach().numpy(), 0, 0
 
@@ -379,7 +399,7 @@ class COImpl(TD3Impl):
         loss, diff_phi, diff_r, diff_psi = self.compute_phi_loss(batch)
         policy_loss = loss.cpu().detach().numpy()
         replay_loss = 0
-        if replay_batches is not None and len(replay_batches) != 0:
+        if replay_batches is not None and len(replay_batches) != 0 and self._phi_bc_loss:
             for i, replay_batch in replay_batches.items():
                 replay_batch_s = Struct(**dict(zip(self.replay_name, replay_batch)))
                 # replay_loss = self.compute_phi_loss(replay_batch_s)
@@ -401,7 +421,7 @@ class COImpl(TD3Impl):
     def compute_phi_loss(self, batch: TorchMiniBatch) -> torch.Tensor:
         assert self._phi is not None
         assert self._psi is not None
-        s, a, r, sp = batch.observations, batch.actions[:, :self.action_size], batch.rewards, batch.next_observations
+        s, a, r, sp = batch.observations.to(self.device), batch.actions[:, :self.action_size].to(self.device), batch.rewards.to(self.device), batch.next_observations.to(self.device)
         half_size = batch.observations.shape[0] // 2
         phi = self._phi(s, a[:, :self._action_size])
         psi = self._psi(sp)
@@ -432,7 +452,7 @@ class COImpl(TD3Impl):
         loss = self.compute_psi_loss(batch, pretrain)
         policy_loss = loss.cpu().detach().numpy()
         replay_loss = 0
-        if replay_batches is not None and len(replay_batches) != 0:
+        if replay_batches is not None and len(replay_batches) != 0 and self._psi_bc_loss:
             for i, replay_batch in replay_batches.items():
                 replay_batch_s = Struct(**dict(zip(self.replay_name, replay_batch)))
                 with torch.no_grad():
@@ -453,11 +473,11 @@ class COImpl(TD3Impl):
         assert self._policy is not None
         s, a = batch.observations, batch.actions
         half_size = batch.observations.shape[0] // 2
-        psi = self._psi(s)
+        psi = self._psi(s.to(self.device))
         loss_psi = torch.linalg.vector_norm(psi[:half_size] - psi[half_size:], dim=1)
         with torch.no_grad():
             if not pretrain:
-                u = self._policy(s)
+                u = self._policy(s.to(self.device))
             else:
                 u = torch.randn(a.shape[0], self._action_size).to(self.device)
             loss_psi_u = 0

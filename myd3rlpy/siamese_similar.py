@@ -93,7 +93,7 @@ def similar_euclid_act(obs_batch, act_batch, obs_near, act_near, input_indexes=N
     smallest_distance, smallest_index = near_distances[:, 0], near_indexes[:, 0]
     return near_indexes, smallest_index, smallest_distance
 
-def similar_phi(obs_batch, act_batch, obs_near, act_near, phi, input_indexes=None, topk=4, eval_batch_size=64):
+def similar_phi(obs_batch, act_batch, obs_near, act_near, phi, input_indexes=None, topk=4, eval_batch_size=32):
     b, n, o = obs_near.shape
     near_distances = []
     near_indexes = []
