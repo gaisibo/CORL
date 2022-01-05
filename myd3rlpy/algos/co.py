@@ -515,7 +515,7 @@ class CO(TD3PlusBC):
         expl_noise: float = 0.1,
         eval_freq: int = int(5e3),
         scorers: Optional[
-            Dict[str, Callable[[Any, List[Episode]], float]]
+            Dict[str, Callable[[int, int], Callable[[Any, List[Episode]], float]]]
         ] = None,
         replay_scorers: Optional[
             Dict[str, Callable[[Any, Iterator], float]]
@@ -799,7 +799,7 @@ class CO(TD3PlusBC):
 
                 if scorers and eval_episodess:
                     for id, eval_episodes in eval_episodess.items():
-                        scorers_tmp = {k + str(id): v for k, v in scorers.items()}
+                        scorers_tmp = {k + str(id): v(id, epoch) for k, v in scorers.items()}
                         self._evaluate(eval_episodes, scorers_tmp, logger)
 
                 if replay_scorers:
@@ -909,7 +909,7 @@ class CO(TD3PlusBC):
                             logger.save_model(t, self)
                         if scorers and eval_episodess:
                             for id, eval_episodes in eval_episodess.items():
-                                scorers_tmp = {k + str(id): v for k, v in scorers.items()}
+                                scorers_tmp = {k + str(id): v(id) for k, v in scorers.items()}
                                 self._evaluate(eval_episodes, scorers_tmp, logger)
 
                         if replay_scorers:

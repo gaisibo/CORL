@@ -32,6 +32,8 @@ def main(args, device):
         real_observation_size = 0
         task_nums = 0
         task_datasets = dict()
+        indexes_euclids = []
+        original = 0
 
     # prepare algorithm
     if args.algos == 'co':
@@ -57,6 +59,7 @@ def main(args, device):
         eval_datasets = dict()
         for dataset_num, dataset in task_datasets.items():
             eval_datasets[dataset_num] = dataset
+            draw_path = args.model_path + algos_name + '_trajectories_' + str(dataset_num) + '_'
             # train
             co.fit(
                 dataset,
@@ -68,7 +71,10 @@ def main(args, device):
                 eval_episodess=eval_datasets,
                 n_epochs=args.n_epochs if not args.test else 1,
                 pretrain_phi_epoch=args.pretrain_phi_epoch,
-                experiment_name=experiment_name + algos_name
+                experiment_name=experiment_name + algos_name,
+                scorers={
+                    "real_env": evaluate_on_environment(envs, end_points, task_nums, draw_path),
+                },
             )
             assert co._impl is not None
             assert co._impl._q_func is not None
@@ -90,7 +96,6 @@ def main(args, device):
             eval_datasets[dataset_num] = dataset
             co.load_model(args.model_path + algos_name + '_' + str(dataset_num) + '.pt')
             replay_datasets = torch.load(args.model_path + algos_name + '_datasets.pt')
-            draw_path = args.model_path + algos_name + '_trajectories_' + str(dataset_num) + '_'
             co.test(
                 replay_datasets,
                 eval_episodess=eval_datasets,
@@ -115,7 +120,7 @@ if __name__ == '__main__':
     parser.add_argument('--siamese_threshold', default=1, type=float)
     parser.add_argument('--eval_batch_size', default=256, type=int)
     parser.add_argument('--batch_size', default=256, type=int)
-    parser.add_argument('--topk', default=8, type=int)
+    parser.add_argument('--topk', default=4, type=int)
     parser.add_argument('--task_split_type', default='undirected', type=str)
     parser.add_argument('--dataset_name', default='antmaze-large-play-v0', type=str)
     parser.add_argument('--algos', default='co', type=str)

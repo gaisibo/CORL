@@ -1,7 +1,3 @@
-<<<<<<< HEAD
-
-=======
->>>>>>> sample_n
 import time
 import math
 import copy
@@ -432,12 +428,11 @@ class COImpl(TD3Impl):
         half_size = batch.observations.shape[0] // 2
         phi = self._phi(s, a[:, :self._action_size])
         psi = self._psi(sp)
-        diff_phi = torch.linalg.vector_norm(phi[:half_size] - phi[half_size:], dim=1)
-        diff_r = torch.abs(r[:half_size] - r[half_size:])
-        diff_psi = self._gamma * torch.linalg.vector_norm(psi[:half_size] - psi[half_size:], dim=1)
+        diff_phi = torch.linalg.vector_norm(phi[:half_size] - phi[half_size:], dim=1).mean()
+        diff_r = torch.abs(r[:half_size] - r[half_size:]).mean()
+        diff_psi = self._gamma * torch.linalg.vector_norm(psi[:half_size] - psi[half_size:], dim=1).mean()
         loss_phi = diff_phi + diff_r + diff_psi
-        loss_phi = torch.mean(loss_phi)
-        return loss_phi, diff_phi.mean().cpu().detach().numpy(), diff_r.mean().cpu().detach().numpy(), diff_psi.mean().cpu().detach().numpy()
+        return loss_phi, diff_phi.cpu().detach().numpy(), diff_r.cpu().detach().numpy(), diff_psi.cpu().detach().numpy()
 
     @train_api
     def update_psi(self, batch: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[torch.Tensor]]]=None, pretrain=False) -> np.ndarray:
@@ -481,9 +476,11 @@ class COImpl(TD3Impl):
         s, a = batch.observations.to(self.device), batch.actions.to(self.device)
         half_size = batch.observations.shape[0] // 2
         psi = self._psi(s)
-        loss_psi_diff = torch.linalg.vector_norm(psi[:half_size] - psi[half_size:], dim=1)
+        loss_psi_diff = torch.linalg.vector_norm(psi[:half_size] - psi[half_size:], dim=1).mean()
         action = self._policy.dist(s)
-        loss_psi_kl = torch.distributions.kl.kl_divergence(s[:half_size], s[half_size:])
+        action1 = torch.distributions.normal.Normal(action.mean[:half_size], action.stddev[:half_size])
+        action2 = torch.distributions.normal.Normal(action.mean[half_size:], action.stddev[half_size:])
+        loss_psi_kl = torch.distributions.kl.kl_divergence(action1, action2).mean()
         with torch.no_grad():
             if not pretrain:
                 u, _ = self._policy.sample_n_with_log_prob(s, self._sample_num)
@@ -493,12 +490,12 @@ class COImpl(TD3Impl):
             s = s.unsqueeze(dim=1).expand(s.shape[0], self._sample_num, -1).reshape(s.shape[0] * self._sample_num, -1)
             loss_psi_u = 0
             phi = self._phi(s, u).reshape(s.shape[0], self._sample_num, -1).mean(dim=1)
-            loss_psi_u = torch.linalg.vector_norm(phi[:half_size * self._sample_num] - phi[half_size * self._sample_num:], dim=1)
+            loss_psi_u = torch.linalg.vector_norm(phi[:half_size * self._sample_num] - phi[half_size * self._sample_num:], dim=1).mean()
         loss_psi = loss_psi_diff + loss_psi_kl - loss_psi_u
         loss_psi_diff = loss_psi_diff.cpu().detach().numpy()
         loss_psi_kl = loss_psi_kl.cpu().detach().numpy()
         loss_psi_u = loss_psi_u.cpu().detach().numpy()
-        return torch.mean(loss_psi), loss_psi_diff, loss_psi_kl, loss_psi_u
+        return loss_psi, loss_psi_diff, loss_psi_kl, loss_psi_u
 
     def update_phi_target(self) -> None:
         assert self._phi is not None

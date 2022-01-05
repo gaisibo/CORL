@@ -74,7 +74,7 @@ def evaluate_on_environment(
 
     # for image observation
 
-    def id_scorer(id: int):
+    def id_scorer(id: int, epoch: int):
         env = envs[id]
         end_point = end_points[id]
         observation_shape = env.observation_space.shape
@@ -87,7 +87,7 @@ def evaluate_on_environment(
                     x, y = list(map(list, zip(*trajectory)))
                     plt.plot(x, y)
                 plt.plot(end_point[0], end_point[1], 'o', markersize=4)
-                plt.savefig(draw_path + str(id) + '.png')
+                plt.savefig(draw_path + '_' + str(id) + '_' + str(epoch) + '.png')
                 plt.close('all')
             if is_image:
                 stacked_observation = StackedObservation(
