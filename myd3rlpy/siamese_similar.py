@@ -3,6 +3,7 @@ import time
 import itertools
 import torch
 from torch.multiprocessing import Pool
+from torch.distributions.normal import Normal
 import numpy as np
 from myd3rlpy.models.torch.siamese import Phi, Psi
 
@@ -118,6 +119,25 @@ def similar_phi(obs_batch, act_batch, obs_near, act_near, phi, input_indexes=Non
         i += eval_batch_size
     near_distances = torch.cat(near_distances, dim=0)
     near_indexes = torch.cat(near_indexes, dim=0)
+    if input_indexes is not None:
+        for i in range(near_indexes.shape[0]):
+            near_indexes[i, :] = input_indexes[i, near_indexes[i, :]]
+    smallest_distance, smallest_index = near_distances[:, 0], near_indexes[:, 0]
+    return near_indexes, smallest_index, smallest_distance
+
+def similar_mb(mus, logstds, observations, network, topk=topk, batch_size=32, input_indexes=None):
+    i = 0
+    near_distances, near_indexes = [], []
+    while i < observations.shape[0]:
+        normal = Normal(mus.unsqueeze(dim=1).expand(-1, batch_size, -1), logstds.unsqueeze(dim=1).expand(-1, batch_size, -1))
+        log_prob = normal.log_prob(observations[i: min(i + batch_size, observations.shape[0]).unsqueeze(dim=0).expand(len(network._models), -1, -1)].to(mus.device))
+        i += batch_size
+        log_prob = torch.sum(log_prob, dim=-1)
+        near_distances_, near_indexes_ = torch.topk(log_prob, topk)
+        near_distances.append(near_distances_)
+        near_indexes.append(near_indexes_)
+    near_distances = torch.cat(near_distances, dim=1)
+    near_indexes = torch.cat(near_indexes, dim=1)
     if input_indexes is not None:
         for i in range(near_indexes.shape[0]):
             near_indexes[i, :] = input_indexes[i, near_indexes[i, :]]

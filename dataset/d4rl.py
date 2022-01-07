@@ -5,7 +5,6 @@ from utils.k_means import kmeans
 
 
 def cut_antmaze(name, start_point_index, end_point_index, directed=True, task_num=None):
-    # 只有play数据集是从起点到终点的。
     assert 'play' in name
     if 'large' in name and task_num is None:
         task_num = 7

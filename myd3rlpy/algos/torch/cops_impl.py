@@ -126,7 +126,6 @@ class COImpl(TD3Impl):
         self._use_same_encoder = use_same_encoder
         self._sample_num = sample_num
 
-        self.replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'next_actions', 'next_rewards', 'terminals', 'policy_actions', 'means', 'std_logs', 'qs', 'phis', 'psis']
     def build(self) -> None:
 
         # 共用encoder
@@ -215,7 +214,7 @@ class COImpl(TD3Impl):
         replay_bc_losses = []
         if replay_batches is not None and len(replay_batches) != 0:
             for i, replay_batch in replay_batches.items():
-                replay_batch = dict(zip(self.replay_name, replay_batch))
+                replay_batch = dict(zip(replay_name, replay_batch))
                 replay_batch = Struct(**replay_batch)
                 replay_loss = 0
                 if self._cql_loss:
@@ -327,7 +326,7 @@ class COImpl(TD3Impl):
         replay_bc_losses = []
         if replay_batches is not None and len(replay_batches) != 0:
             for i, replay_batch in replay_batches.items():
-                replay_batch_s = dict(zip(self.replay_name, replay_batch))
+                replay_batch_s = dict(zip(replay_name, replay_batch))
                 replay_batch_s = Struct(**replay_batch_s)
                 if self._td3_loss:
                     replay_td3_loss, replay_policy_loss, replay_bc_loss, replay_siamese_loss, replay_smallest_distance = self.compute_actor_loss(replay_batch_s, all_data=None)
@@ -404,7 +403,7 @@ class COImpl(TD3Impl):
         replay_loss = 0
         if replay_batches is not None and len(replay_batches) != 0 and self._phi_bc_loss:
             for i, replay_batch in replay_batches.items():
-                replay_batch_s = Struct(**dict(zip(self.replay_name, replay_batch)))
+                replay_batch_s = Struct(**dict(zip(replay_name, replay_batch)))
                 # replay_loss = self.compute_phi_loss(replay_batch_s)
                 with torch.no_grad():
                     replay_observations = replay_batch_s.observations.to(self.device)
@@ -456,7 +455,7 @@ class COImpl(TD3Impl):
         replay_loss = 0
         if replay_batches is not None and len(replay_batches) != 0 and self._psi_bc_loss:
             for i, replay_batch in replay_batches.items():
-                replay_batch_s = Struct(**dict(zip(self.replay_name, replay_batch)))
+                replay_batch_s = Struct(**dict(zip(replay_name, replay_batch)))
                 with torch.no_grad():
                     replay_observations = replay_batch_s.observations.to(self.device)
                     replay_psis = replay_batch_s.psis.to(self.device)

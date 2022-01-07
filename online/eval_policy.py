@@ -1,3 +1,7 @@
+import numpy as np
+import gym
+
+
 # Runs policy for X episodes and returns average reward
 # A fixed seed is used for the eval environment
 def eval_policy(policy, env_name, seed, eval_episodes=10):

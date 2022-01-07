@@ -15,40 +15,34 @@ import d3rlpy
 from d3rlpy.ope import FQE
 from d3rlpy.metrics.scorer import soft_opc_scorer, initial_state_value_estimation_scorer
 from d3rlpy.dataset import MDPDataset
+from sklearn.model_selection import train_test_split
 # from myd3rlpy.datasets import get_d4rl
 from utils.k_means import kmeans
 from dataset.split_navigate import split_navigate_antmaze_large_play_v0
 from myd3rlpy.metrics.scorer import bc_error_scorer, td_error_scorer, evaluate_on_environment
 from myd3rlpy.siamese_similar import similar_psi, similar_phi
+from myd3rlpy.dynamics.probabilistic_ensemble_dynamics_with_log_std import ProbabilisticEnsembleDynamicsWithLogStd
 
 
+replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'next_actions', 'next_rewards', 'terminals', 'means', 'std_logs', 'qs', 'phis', 'psis']
 def main(args, device):
     np.set_printoptions(precision=1, suppress=True)
     if args.dataset == 'ant_maze':
         origin_dataset, task_datasets, taskid_task_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums = split_navigate_antmaze_large_play_v0(args.task_split_type, args.top_euclid, device)
     else:
-        assert args.dataset == 'antmaze'
-        real_action_size = 0
-        real_observation_size = 0
-        task_nums = 0
-        task_datasets = dict()
-        indexes_euclids = []
-        original = 0
+        assert False
 
     # prepare algorithm
     if args.algos == 'co':
-        from myd3rlpy.algos.co import CO
-        train_phi = True
-        if not args.use_phi_update and not args.use_phi_replay:
-            train_phi = False
-        co = CO(use_gpu=True, batch_size=args.batch_size, use_phi_update=args.use_phi_update, train_phi=train_phi, sample_num=args.sample_num, cql_loss=args.cql_loss, q_bc_loss=args.q_bc_loss, td3_loss=args.td3_loss, policy_bc_loss=args.policy_bc_loss, phi_bc_loss=args.phi_bc_loss, psi_bc_loss=args.psi_bc_loss)
+        from myd3rlpy.algos.comb import COMB
+        co = COMB(use_gpu=True, batch_size=args.batch_size, n_action_samples=args.n_action_samples, cql_loss=args.cql_loss, q_bc_loss=args.q_bc_loss, td3_loss=args.td3_loss, policy_bc_loss=args.policy_bc_loss)
         if args.use_phi_replay:
             from myd3rlpy.finish_task.finish_task_co import finish_task_co as finish_task
         else:
             from myd3rlpy.finish_task.finish_task_mi import finish_task_mi as finish_task
     else:
         raise NotImplementedError
-    experiment_name = "CO_"
+    experiment_name = "COMB_"
     algos_name = "update" if args.use_phi_update else "noupdate"
     algos_name += "_replay" if args.use_phi_replay else "_noreplay"
     algos_name += "_orl" if args.orl else "_noorl"
@@ -60,25 +54,25 @@ def main(args, device):
         for dataset_num, dataset in task_datasets.items():
             eval_datasets[dataset_num] = dataset
             draw_path = args.model_path + algos_name + '_trajectories_' + str(dataset_num) + '_'
+
+            dynamics = ProbabilisticEnsembleDynamicsWithLogStd(learning_rate=1e-4, use_gpu=True)
+# same as algorithms
+            co._dynamics = dynamics
+            co._origin = original
             # train
             co.fit(
                 dataset,
                 replay_datasets,
-                dataset,
                 real_action_size = real_action_size,
                 real_observation_size = real_observation_size,
                 id_size = task_nums,
                 eval_episodess=eval_datasets,
                 n_epochs=args.n_epochs if not args.test else 1,
-                pretrain_phi_epoch=args.pretrain_phi_epoch,
                 experiment_name=experiment_name + algos_name,
                 scorers={
                     "real_env": evaluate_on_environment(envs, end_points, task_nums, draw_path),
                 },
             )
-            assert co._impl is not None
-            assert co._impl._q_func is not None
-            assert co._impl._policy is not None
             if args.algos == 'co':
                 replay_datasets[dataset_num] = finish_task(dataset_num, task_nums, dataset, original, co, indexes_euclids[dataset_num], real_action_size, args.topk, device)
             else:
@@ -101,13 +95,8 @@ def main(args, device):
                 eval_episodess=eval_datasets,
                 scorers={
                     # 'environment': evaluate_on_environment(env),
-                    'td_error': td_error_scorer(real_action_size=real_action_size),
                     "real_env": evaluate_on_environment(envs, end_points, task_nums, draw_path),
                 },
-                replay_scorers={
-                    'bc_error': bc_error_scorer(real_action_size=real_action_size)
-                },
-
             )
 
 if __name__ == '__main__':
@@ -140,7 +129,7 @@ if __name__ == '__main__':
     use_phi_update_parser.add_argument('--use_phi_update', dest='use_phi_update', action='store_true')
     use_phi_update_parser.add_argument('--no_use_phi_update', dest='use_phi_update', action='store_false')
     args = parser.parse_args()
-    args.model_path = 'd3rlpy_' + ('test' if args.test else ('train' if not args.eval else 'eval')) + '/model_2_'
+    args.model_path = 'd3rlpy_mb_' + ('test' if args.test else ('train' if not args.eval else 'eval')) + '/model_'
     if args.orl:
         args.cql_loss = True
         args.td3_loss = True

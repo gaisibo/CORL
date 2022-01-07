@@ -20,12 +20,12 @@ from d3rlpy.argument_utility import (
     check_use_gpu,
 )
 from d3rlpy.constants import IMPL_NOT_INITIALIZED_ERROR, ActionSpace
-from d3rlpy.dataset import MDPDataset, Episode, TransitionMiniBatch, Transition
+from d3rlpy.dataset import MDPDataset, Episode, TransitionMiniBatch
 from d3rlpy.gpu import Device
 from d3rlpy.models.optimizers import AdamFactory, OptimizerFactory
 from d3rlpy.models.q_functions import QFunctionFactory
 from d3rlpy.algos.base import AlgoBase
-from d3rlpy.algos.mopo import MOPO
+from d3rlpy.algos.td3_plus_bc import TD3PlusBC
 from d3rlpy.constants import (
     CONTINUOUS_ACTION_SPACE_MISMATCH_ERROR,
     DISCRETE_ACTION_SPACE_MISMATCH_ERROR,
@@ -42,7 +42,7 @@ import gym
 from online.utils import ReplayBuffer
 from online.eval_policy import eval_policy
 
-class CO(MOPO):
+class CO(TD3PlusBC):
     r"""Twin Delayed Deep Deterministic Policy Gradients algorithm.
     TD3 is an improved DDPG-based algorithm.
     Major differences from DDPG are as follows.
@@ -283,24 +283,63 @@ class CO(MOPO):
         )
         self._impl.build()
 
-    def update(self, batch: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[Tensor]]]) -> Dict[int, float]:
+    def pretrain_update(self, batch: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[Tensor]]], all_data: MDPDataset) -> Dict[int, float]:
         """Update parameters with mini-batch of data.
         Args:
             batch: mini-batch data.
         Returns:
             dictionary of metrics.
         """
-        loss = self._update(batch, replay_batches)
-        self._grad_step += 1
+        loss = self._pretrain_update(batch, replay_batches, all_data)
+        self._pretrain_grad_step += 1
         return loss
 
     # 注意欧氏距离最近邻被塞到actions后面了。
-    def _update(self, batch: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[Tensor]]]) -> Dict[int, float]:
+    def _pretrain_update(self, batch: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[Tensor]]], all_data: MDPDataset) -> Dict[int, float]:
         assert self._impl is not None, IMPL_NOT_INITIALIZED_ERROR
 
         metrics = {}
 
-        critic_loss, critic_q_func_loss, critic_up_loss, critic_down_loss, critic_siamese_loss, critic_replay_loss, critic_smallest_distance, _, _, _, _, _, _ = self._impl.update_critic(batch, replay_batches=replay_batches) * self._critic_alpha()
+        # 更新phi和psi。
+        assert self._train_phi
+        phi_loss, phi_policy_loss, phi_diff_phi, phi_diff_r, phi_diff_psi, phi_replay_loss = self._impl.update_phi(batch, replay_batches=replay_batches)
+        metrics.update({"phi_pretrain_loss": phi_loss})
+        metrics.update({"phi_pretrain_policy_loss": phi_policy_loss})
+        metrics.update({"phi_pretrain_diff_phi": phi_diff_phi})
+        metrics.update({"phi_pretrain_diff_r": phi_diff_r})
+        metrics.update({"phi_pretrain_diff_psi": phi_diff_psi})
+        metrics.update({"phi_pretrain_replay_loss": phi_replay_loss})
+        if self._grad_step % self._update_actor_interval == 0:
+            psi_loss, psi_policy_loss, psi_diff_loss, psi_kl_loss, psi_u_loss, psi_replay_loss = self._impl.update_psi(batch, replay_batches=replay_batches, pretrain=True)
+            metrics.update({"psi_pretrain_loss": psi_loss})
+            metrics.update({"psi_pretrain_policy_loss": psi_policy_loss})
+            metrics.update({"psi_pretrain_diff_loss": psi_diff_loss})
+            metrics.update({"psi_pretrain_kl_loss": psi_kl_loss})
+            metrics.update({"psi_pretrain_u_loss": psi_u_loss})
+            metrics.update({"psi_pretrain_replay_loss": psi_replay_loss})
+            self._impl.update_critic_target()
+            self._impl.update_actor_target()
+
+        return metrics
+
+    def update(self, batch: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[Tensor]]], all_data: MDPDataset) -> Dict[int, float]:
+        """Update parameters with mini-batch of data.
+        Args:
+            batch: mini-batch data.
+        Returns:
+            dictionary of metrics.
+        """
+        loss = self._update(batch, replay_batches, all_data)
+        self._grad_step += 1
+        return loss
+
+    # 注意欧氏距离最近邻被塞到actions后面了。
+    def _update(self, batch: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[Tensor]]], all_data: MDPDataset) -> Dict[int, float]:
+        assert self._impl is not None, IMPL_NOT_INITIALIZED_ERROR
+
+        metrics = {}
+
+        critic_loss, critic_q_func_loss, critic_up_loss, critic_down_loss, critic_siamese_loss, critic_replay_loss, critic_smallest_distance, _, _, _, _, _, _ = self._impl.update_critic(batch, replay_batches=replay_batches, all_data=all_data) * self._critic_alpha()
         metrics.update({"critic_loss": critic_loss})
         metrics.update({"critic_q_func_loss": critic_q_func_loss})
         metrics.update({"critic_siamese_loss": critic_siamese_loss})
@@ -312,19 +351,35 @@ class CO(MOPO):
 
         # delayed policy update
         if self._grad_step % self._update_actor_interval == 0:
-            actor_loss, actor_policy_loss, actor_siamese_loss, actor_replay_loss, actor_smallest_distance, _, _ = self._impl.update_actor(batch, replay_batches=replay_batches) * self._actor_alpha()
+            actor_loss, actor_policy_loss, actor_siamese_loss, actor_replay_loss, actor_smallest_distance, _, _ = self._impl.update_actor(batch, replay_batches=replay_batches, all_data=all_data) * self._actor_alpha()
             metrics.update({"actor_loss": actor_loss})
             metrics.update({"actor_policy_loss": actor_policy_loss})
             metrics.update({"actor_siamese_loss": actor_siamese_loss})
             metrics.update({"actor_replay_loss": actor_replay_loss})
             metrics.update({"actor_siamese_alpha": self._impl._temp_siamese_actor_alpha})
             metrics.update({'actor_smallest_distance': actor_smallest_distance})
-            if self._temp_learning_rate > 0:
-                temp_loss, temp = self._impl.update_temp(batch)
-                metrics.update({"temp_loss": temp_loss, "temp": temp})
-
             self._impl.update_critic_target()
             self._impl.update_actor_target()
+
+        # 更新phi和psi。
+        if self._train_phi:
+            phi_loss, phi_policy_loss, phi_diff_phi, phi_diff_r, phi_diff_psi, phi_replay_loss = self._impl.update_phi(batch, replay_batches=replay_batches)
+            metrics.update({"phi_loss": phi_loss})
+            metrics.update({"phi_policy_loss": phi_policy_loss})
+            metrics.update({"phi_diff_phi": phi_diff_phi})
+            metrics.update({"phi_diff_r": phi_diff_r})
+            metrics.update({"phi_diff_psi": phi_diff_psi})
+            metrics.update({"phi_replay_loss": phi_replay_loss})
+            if self._grad_step % self._update_actor_interval == 0:
+                psi_loss, psi_policy_loss, psi_diff_loss, psi_kl_loss, psi_u_loss, psi_replay_loss = self._impl.update_psi(batch, replay_batches=replay_batches, pretrain=False)
+                metrics.update({"psi_loss": psi_loss})
+                metrics.update({"psi_policy_loss": psi_policy_loss})
+                metrics.update({"psi_diff_loss": psi_diff_loss})
+                metrics.update({"psi_kl_loss": psi_kl_loss})
+                metrics.update({"psi_u_loss": psi_u_loss})
+                metrics.update({"psi_replay_loss": psi_replay_loss})
+                self._impl.update_critic_target()
+                self._impl.update_actor_target()
 
         return metrics
 
@@ -336,14 +391,15 @@ class CO(MOPO):
 
     def fit(
         self,
-        id: int,
         dataset: Optional[Union[List[Episode], MDPDataset]] = None,
-        replay_transitions: Optional[Dict[int, List[Transition]]] = None,
+        replay_datasets: Optional[Dict[int, List[TensorDataset]]] = None,
+        all_data: Optional[MDPDataset] = None,
         env: gym.envs = None,
         seed: int = None,
         n_epochs: Optional[int] = None,
         n_steps: Optional[int] = None,
         n_steps_per_epoch: int = 10000,
+        pretrain_phi_epoch: int = 0,
         save_metrics: bool = True,
         experiment_name: Optional[str] = None,
         with_timestamp: bool = True,
@@ -358,7 +414,10 @@ class CO(MOPO):
         expl_noise: float = 0.1,
         eval_freq: int = int(5e3),
         scorers: Optional[
-            Dict[str, Callable[[int, int], Callable[[Any, List[Episode]], float]]]
+            Dict[str, Callable[[Any, List[Episode]], float]]
+        ] = None,
+        replay_scorers: Optional[
+            Dict[str, Callable[[Any, Iterator], float]]
         ] = None,
         shuffle: bool = True,
         callback: Optional[Callable[[LearnableBase, int, int], None]] = None,
@@ -399,14 +458,15 @@ class CO(MOPO):
         """
         results = list(
             self.fitter(
-                id,
                 dataset,
-                replay_transitions,
+                replay_datasets,
+                all_data,
                 env,
                 seed,
                 n_epochs,
                 n_steps,
                 n_steps_per_epoch,
+                pretrain_phi_epoch,
                 save_metrics,
                 experiment_name,
                 with_timestamp,
@@ -421,6 +481,7 @@ class CO(MOPO):
                 expl_noise,
                 eval_freq,
                 scorers,
+                replay_scorers,
                 shuffle,
                 callback,
                 real_action_size,
@@ -431,14 +492,15 @@ class CO(MOPO):
 
     def fitter(
         self,
-        id: int,
         dataset: Optional[Union[List[Episode], MDPDataset]] = None,
-        replay_transitions: Optional[Dict[int, List[Transition]]] = None,
+        replay_datasets: Optional[Optional[Dict[int, List[TensorDataset]]]] = None,
+        all_data: Optional[MDPDataset] = None,
         env: gym.envs = None,
         seed: int = None,
         n_epochs: Optional[int] = None,
         n_steps: Optional[int] = None,
         n_steps_per_epoch: int = 10000,
+        pretrain_phi_epoch: int = 0,
         save_metrics: bool = True,
         experiment_name: Optional[str] = None,
         with_timestamp: bool = True,
@@ -454,6 +516,9 @@ class CO(MOPO):
         eval_freq: int = int(5e3),
         scorers: Optional[
             Dict[str, Callable[[int, int], Callable[[Any, List[Episode]], float]]]
+        ] = None,
+        replay_scorers: Optional[
+            Dict[str, Callable[[Any, Iterator], float]]
         ] = None,
         shuffle: bool = True,
         callback: Optional[Callable[["LearnableBase", int, int], None]] = None,
@@ -527,43 +592,28 @@ class CO(MOPO):
 
         # refresh loss history
         self._loss_history = defaultdict(list)
+        if replay_datasets is not None:
+            self._replay_loss_histories = dict()
+            for replay_num in self._loss_history:
+                self._replay_loss_histories[replay_num] = defaultdict(list)
+
+        replay_dataloaders: Optional[Dict[int, List[TensorDataset]]]
+        if replay_datasets is not None:
+            replay_dataloaders = dict()
+            for replay_num, replay_dataset in replay_datasets.items():
+                dataloader = DataLoader(replay_dataset, batch_size=self._batch_size, shuffle=True)
+                replay_dataloaders[replay_num] = dataloader
+            replay_iterators = dict()
+            for replay_num, replay_dataloader in replay_dataloaders.items():
+                replay_iterators[replay_num] = iter(replay_dataloader)
+        else:
+            replay_dataloaders = None
+            replay_iterators = None
 
         iterator: TransitionIterator
-        if replay_transitions is not None:
-            replay_iterators = dict()
-            for replay_num, replay_transition in replay_transitions.items():
-                if n_epochs is None and n_steps is not None:
-                    assert n_steps >= n_steps_per_epoch
-                    n_epochs = n_steps // n_steps_per_epoch
-                    replay_iterators[replay_num]  = RandomIterator(
-                        replay_transition,
-                        n_steps_per_epoch,
-                        batch_size=self._batch_size,
-                        n_steps=self._n_steps,
-                        gamma=self._gamma,
-                        n_frames=self._n_frames,
-                        real_ratio=self._real_ratio,
-                        generated_maxlen=self._generated_maxlen,
-                    )
-                    LOG.debug("RandomIterator is selected.")
-                elif n_epochs is not None and n_steps is None:
-                    replay_iterators[replay_num] = RoundIterator(
-                        replay_transition,
-                        batch_size=self._batch_size,
-                        n_steps=self._n_steps,
-                        gamma=self._gamma,
-                        n_frames=self._n_frames,
-                        real_ratio=self._real_ratio,
-                        generated_maxlen=self._generated_maxlen,
-                        shuffle=shuffle,
-                    )
-                    LOG.debug("Replay RoundIterator is selected.")
-                else:
-                    raise ValueError("Either of n_epochs or n_steps must be given.")
-        else:
-            replay_iterators = None
         if env is None:
             assert dataset is not None
+            assert all_data is not None
             if isinstance(dataset, MDPDataset):
                 episodes = dataset.episodes
             else:
@@ -596,7 +646,64 @@ class CO(MOPO):
                 LOG.debug("RoundIterator is selected.")
             else:
                 raise ValueError("Either of n_epochs or n_steps must be given.")
+            if pretrain_phi_epoch > 0 and self._train_phi:
+                pretrain_epoch_loss = defaultdict(list)
+                for epoch in range(1, pretrain_phi_epoch + 1):
+                    range_gen = tqdm(
+                        range(len(iterator)),
+                        disable=not show_progress,
+                        desc=f'Pretrain Epoch {epoch}/{pretrain_phi_epoch}'
+                    )
+                    iterator.reset()
+                    for itr in range_gen:
+                        with logger.measure_time("step"):
+                            # pick transitions
+                            with logger.measure_time("sample_batch"):
+                                batch = next(iterator)
+                                if replay_iterators is not None:
+                                    assert replay_dataloaders is not None
+                                    replay_batches = dict()
+                                    for replay_iterator_num in replay_iterators.keys():
+                                        try:
+                                            replay_batches[replay_iterator_num] = next(replay_iterators[replay_iterator_num])
+                                        except StopIteration:
+                                            replay_iterators[replay_iterator_num] = iter(replay_dataloaders[replay_iterator_num])
+                                            replay_batches[replay_iterator_num] = next(replay_iterators[replay_iterator_num])
+                                else:
+                                    replay_batches = None
 
+                            # update parameters
+                            with logger.measure_time("algorithm_update"):
+                                loss = self.pretrain_update(batch, replay_batches, all_data)
+                                # if pretrain_phi_epoch > 0:
+                                #     self._impl.increase_siamese_alpha(0, itr / len(iterator))
+                                # else:
+                                #     self._impl.increase_siamese_alpha(epoch - n_epochs, itr / len(iterator))
+
+                            # record metrics
+                            for name, val in loss.items():
+                                logger.add_metric(name, val)
+                                pretrain_epoch_loss[name].append(val)
+
+                            # update progress postfix with losses
+                            if itr % 10 == 0:
+                                for k, v in pretrain_epoch_loss.items():
+                                    try:
+                                        hh = np.mean(v)
+                                    except TypeError:
+                                        print(f'mean_loss wrong: {k}: {v}')
+                                mean_loss = {
+                                    k: np.mean(v) for k, v in pretrain_epoch_loss.items()
+                                }
+                                range_gen.set_postfix(mean_loss)
+                    if epoch % 100 == 0:
+                        LOG.debug('Log Output Time')
+
+                # save loss to loss history dict
+                self._loss_history["pretrain_epoch"].append(epoch)
+                for name, vals in pretrain_epoch_loss.items():
+                    if vals:
+                        self._loss_history[name].append(np.mean(vals))
             total_step = 0
             for epoch in range(1, n_epochs + 1):
 
@@ -610,39 +717,59 @@ class CO(MOPO):
                 )
 
                 iterator.reset()
-                if replay_iterators is not None:
-                    for replay_iterator in replay_iterators:
-                        replay_iterator.reset()
+                if replay_dataloaders is not None:
+                    replay_iterators = dict()
+                    for replay_num, replay_dataloader in replay_dataloaders.items():
+                        replay_iterators[replay_num] = iter(replay_dataloader)
+                else:
+                    replay_iterators = None
 
                 for itr in range_gen:
 
                     # generate new transitions with dynamics models
-                    new_transitions = self.generate_new_data(
-                        transitions=iterator.transitions,
-                        id = id,
-                    )
-                    if new_transitions:
-                        iterator.add_generated_transitions(new_transitions)
-                        LOG.debug(
-                            f"{len(new_transitions)} transitions are generated.",
-                            real_transitions=len(iterator.transitions),
-                            fake_transitions=len(iterator.generated_transitions),
-                        )
+                    # new_transitions = self.generate_new_data(
+                    #     transitions=iterator.transitions,
+                    # )
+                    # if new_transitions:
+                    #     iterator.add_generated_transitions(new_transitions)
+                    #     LOG.debug(
+                    #         f"{len(new_transitions)} transitions are generated.",
+                    #         real_transitions=len(iterator.transitions),
+                    #         fake_transitions=len(iterator.generated_transitions),
+                    #     )
+
+                    # model based only, useless
+                    # if replay_iterators is not None:
+                    #     for replay_iterator in replay_iterators:
+                    #         self._scaler.fit(replay_iterator)
+                    #     replay_new_transitionss = self.generate_new_data(
+                    #         transitions=replay_iterator.transitions
+                    #     )
+                    #     LOG.debug(
+                    #         f"{len(replay_new_transitions)} replay_transitions are generated.",
+                    #         real_transitions=len(replay_iterator.transitions),
+                    #         fake_transitions=len(replay_iterator.generated_transitions),
+                    #     )
 
                     with logger.measure_time("step"):
                         # pick transitions
                         with logger.measure_time("sample_batch"):
                             batch = next(iterator)
                             if replay_iterators is not None:
+                                assert replay_dataloaders is not None
                                 replay_batches = dict()
                                 for replay_iterator_num in replay_iterators.keys():
-                                    replay_batches[replay_iterator_num] = next(replay_iterators[replay_iterator_num])
+                                    try:
+                                        replay_batches[replay_iterator_num] = next(replay_iterators[replay_iterator_num])
+                                    except StopIteration:
+                                        replay_iterators[replay_iterator_num] = iter(replay_dataloaders[replay_iterator_num])
+                                        replay_batches[replay_iterator_num] = next(replay_iterators[replay_iterator_num])
                             else:
                                 replay_batches = None
 
                         # update parameters
                         with logger.measure_time("algorithm_update"):
-                            loss = self.update(batch, replay_batches)
+                            loss = self.update(batch, replay_batches, all_data)
                             # self._impl.increase_siamese_alpha(epoch - n_epochs, itr / len(iterator))
 
                         # record metrics
@@ -675,6 +802,13 @@ class CO(MOPO):
                         scorers_tmp = {k + str(id): v(id, epoch) for k, v in scorers.items()}
                         self._evaluate(eval_episodes, scorers_tmp, logger)
 
+                if replay_scorers:
+                    if replay_dataloaders is not None:
+                        for replay_num, replay_dataloader in replay_dataloaders.items():
+                            # 重命名
+                            replay_scorers_tmp = {k + str(replay_num): v for k, v in replay_scorers.items()}
+                            self._evaluate(replay_dataloader, replay_scorers_tmp, logger)
+
                 # save metrics
                 metrics = logger.commit(epoch, total_step)
 
@@ -706,70 +840,84 @@ class CO(MOPO):
             max_action = float(env.action_space.high[0])
 
             kwargs = {
-                "state_dim": state_dim,
-                "action_dim": action_dim,
-                "max_action": max_action,
-                "discount": discount,
-                "tau": self._tau,
+                    "state_dim": state_dim,
+                    "action_dim": action_dim,
+                    "max_action": max_action,
+                    "discount": discount,
+                    "tau": self._tau,
             }
 
             for t in range(n_steps):
 
-                episode_timesteps += 1
+                    episode_timesteps += 1
 
-                # Select action randomly or according to policy
-                if t < start_timesteps:
-                    action = env.action_space.sample()
-                else:
-                    action = (
-                            self._impl._policy(np.array(state))
-                            + np.random.normal(0, max_action * expl_noise, size=action_dim)
-                    ).clip(-max_action, max_action)
+                    # Select action randomly or according to policy
+                    if t < start_timesteps:
+                            action = env.action_space.sample()
+                    else:
+                            action = (
+                                    self._impl._policy(np.array(state))
+                                    + np.random.normal(0, max_action * expl_noise, size=action_dim)
+                            ).clip(-max_action, max_action)
 
-                # Perform action
-                next_state, reward, done, _ = env.step(action)
-                done_bool = float(done) if episode_timesteps < env._max_episode_steps else 0
+                    # Perform action
+                    next_state, reward, done, _ = env.step(action)
+                    done_bool = float(done) if episode_timesteps < env._max_episode_steps else 0
 
-                # Store data in replay buffer
-                replay_buffer.add(state, action, next_state, reward, done_bool)
+                    # Store data in replay buffer
+                    replay_buffer.add(state, action, next_state, reward, done_bool)
 
-                state = next_state
-                episode_reward += reward
+                    state = next_state
+                    episode_reward += reward
 
-                batch = replay_buffer.sample()
-                # Train agent after collecting sufficient data
-                if t >= start_timesteps:
-                    # update parameters
-                    with logger.measure_time("sample_batch"):
-                        if replay_iterators is not None:
-                            replay_batches = dict()
-                            for replay_iterator_num in replay_iterators.keys():
-                                replay_batches[replay_iterator_num] = next(replay_iterators[replay_iterator_num])
-                        else:
-                            replay_batches = None
+                    batch = replay_buffer.sample()
+                    # Train agent after collecting sufficient data
+                    if t >= start_timesteps:
+                        # update parameters
+                        with logger.measure_time("sample_batch"):
+                            if replay_iterators is not None:
+                                assert replay_dataloaders is not None
+                                replay_batches = dict()
+                                for replay_iterator_num in replay_iterators.keys():
+                                    try:
+                                        replay_batches[replay_iterator_num] = next(replay_iterators[replay_iterator_num])
+                                    except StopIteration:
+                                        replay_iterators[replay_iterator_num] = iter(replay_dataloaders[replay_iterator_num])
+                                        replay_batches[replay_iterator_num] = next(replay_iterators[replay_iterator_num])
+                            else:
+                                replay_batches = None
+                        with logger.measure_time("algorithm_update"):
+                            loss = self.update(batch, replay_batches, all_data)
 
-                if done:
-                        # +1 to account for 0 indexing. +0 on ep_timesteps since it will increment +1 even if done=True
-                        print(f"Total T: {t+1} Episode Num: {episode_num+1} Episode T: {episode_timesteps} Reward: {episode_reward:.3f}")
-                        # Reset environment
-                        state, done = env.reset(), False
-                        episode_reward = 0
-                        episode_timesteps = 0
-                        episode_num += 1
+                    if done:
+                            # +1 to account for 0 indexing. +0 on ep_timesteps since it will increment +1 even if done=True
+                            print(f"Total T: {t+1} Episode Num: {episode_num+1} Episode T: {episode_timesteps} Reward: {episode_reward:.3f}")
+                            # Reset environment
+                            state, done = env.reset(), False
+                            episode_reward = 0
+                            episode_timesteps = 0
+                            episode_num += 1
 
-                # Evaluate episode
-                if (t + 1) % eval_freq == 0:
-                    evaluations.append(eval_policy(self._impl._policy, env, seed))
-                    # save metrics
-                    metrics = logger.commit(t, n_steps)
+                    # Evaluate episode
+                    if (t + 1) % eval_freq == 0:
+                        evaluations.append(eval_policy(self._impl._policy, env, seed))
+                        # save metrics
+                        metrics = logger.commit(t, n_steps)
 
-                    # save model parameters
-                    if t % save_interval == 0:
-                        logger.save_model(t, self)
-                    if scorers and eval_episodess:
-                        for id, eval_episodes in eval_episodess.items():
-                            scorers_tmp = {k + str(id): v(id) for k, v in scorers.items()}
-                            self._evaluate(eval_episodes, scorers_tmp, logger)
+                        # save model parameters
+                        if t % save_interval == 0:
+                            logger.save_model(t, self)
+                        if scorers and eval_episodess:
+                            for id, eval_episodes in eval_episodess.items():
+                                scorers_tmp = {k + str(id): v(id) for k, v in scorers.items()}
+                                self._evaluate(eval_episodes, scorers_tmp, logger)
+
+                        if replay_scorers:
+                            if replay_dataloaders is not None:
+                                for replay_num, replay_dataloader in replay_dataloaders.items():
+                                    # 重命名
+                                    replay_scorers_tmp = {k + str(replay_num): v for k, v in replay_scorers.items()}
+                                    self._evaluate(replay_dataloader, replay_scorers_tmp, logger)
 
 
 
