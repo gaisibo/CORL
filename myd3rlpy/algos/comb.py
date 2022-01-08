@@ -182,7 +182,7 @@ class COMB(COMBO):
         origin = None,
         n_train_dynamics = 1,
         topk = 4,
-        use_mb_generate = True,
+        mb_generate = True,
         **kwargs: Any
     ):
         super().__init__(
@@ -232,7 +232,7 @@ class COMB(COMBO):
         self._origin = origin
         self._n_train_dynamics = n_train_dynamics
         self._topk = topk
-        self._use_mb_generate = use_mb_generate
+        self._use_mb_generate = mb_generate
 
     def _create_impl(
         self, observation_shape: Sequence[int], action_size: int

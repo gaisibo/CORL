@@ -34,31 +34,29 @@ def main(args, device):
     # prepare algorithm
     if args.algos == 'co':
         from myd3rlpy.algos.comb import COMB
-        co = COMB(use_gpu=True, batch_size=args.batch_size, n_action_samples=args.n_action_samples, cql_loss=args.cql_loss, q_bc_loss=args.q_bc_loss, td3_loss=args.td3_loss, policy_bc_loss=args.policy_bc_loss)
+        co = COMB(use_gpu=False, batch_size=args.batch_size, n_action_samples=args.n_action_samples, cql_loss=args.cql_loss, q_bc_loss=args.q_bc_loss, td3_loss=args.td3_loss, policy_bc_loss=args.policy_bc_loss, mb_generate=args.mb_generate)
     else:
         raise NotImplementedError
-    experiment_name = "COMB_"
-    algos_name = "update" if args.use_phi_update else "noupdate"
-    algos_name += "_replay" if args.use_phi_replay else "_noreplay"
-    algos_name += "_orl" if args.orl else "_noorl"
+    experiment_name = "COMB"
+    algos_name = "_orl" if args.orl else "_noorl"
     algos_name += '_pretrain' if args.pretrain_phi_epoch else ""
 
     if not args.eval:
         replay_datasets = dict()
         eval_datasets = dict()
-        for dataset_num, dataset in task_datasets.items():
-            eval_datasets[dataset_num] = dataset
-            draw_path = args.model_path + algos_name + '_trajectories_' + str(dataset_num) + '_'
+        for task_id, dataset in task_datasets.items():
+            eval_datasets[task_id] = dataset
+            draw_path = args.model_path + algos_name + '_trajectories_' + str(task_id) + '_'
 
-            dynamics = ProbabilisticEnsembleDynamicsWithLogStd(learning_rate=1e-4, use_gpu=True)
+            dynamics = ProbabilisticEnsembleDynamics(task_id=task_id, original=original[task_id], learning_rate=1e-4, use_gpu=False)
 # same as algorithms
             co._dynamics = dynamics
             co._origin = original
             # train
             co.fit(
-                dataset_num,
+                task_id,
                 dataset,
-                origin_task_datasets[dataset_num],
+                origin_task_datasets[task_id],
                 replay_datasets,
                 real_action_size = real_action_size,
                 real_observation_size = real_observation_size,
@@ -70,14 +68,14 @@ def main(args, device):
                 },
             )
             if args.algos == 'co':
-                if args.use_mb_generate:
-                    replay_datasets[dataset_num] = co.generate_replay_data(dataset_num, origin_task_datasets[dataset_num], original, in_task=False, max_save_num=args.max_save_num)
+                if args.mb_replay:
+                    replay_datasets[task_id] = co.generate_replay_data(task_id, origin_task_datasets[task_id], original, in_task=False, max_save_num=args.max_save_num)
                 else:
-                    replay_datasets[dataset_num] = co.generate_new_data_random(dataset_num, origin_task_datasets[dataset_num], args.max_save_num)
+                    replay_datasets[task_id] = co.generate_new_data_random(task_id, origin_task_datasets[task_id], args.max_save_num)
             else:
                 raise NotImplementedError
-            co.save_model(args.model_path + algos_name + '_' + str(dataset_num) + '.pt')
-            if args.test and dataset_num >= 1:
+            co.save_model(args.model_path + algos_name + '_' + str(task_id) + '.pt')
+            if args.test and task_id >= 1:
                 break
         torch.save(replay_datasets, f=args.model_path + algos_name + '_datasets.pt')
     else:
@@ -85,9 +83,10 @@ def main(args, device):
         eval_datasets = dict()
         if co._impl is None:
             co.create_impl([real_observation_size + task_nums], real_action_size)
-        for dataset_num, dataset in task_datasets.items():
-            eval_datasets[dataset_num] = dataset
-            co.load_model(args.model_path + algos_name + '_' + str(dataset_num) + '.pt')
+        for task_id, dataset in task_datasets.items():
+            draw_path = args.model_path + algos_name + '_trajectories_' + str(task_id) + '_'
+            eval_datasets[task_id] = dataset
+            co.load_model(args.model_path + algos_name + '_' + str(task_id) + '.pt')
             replay_datasets = torch.load(args.model_path + algos_name + '_datasets.pt')
             co.test(
                 replay_datasets,
@@ -122,12 +121,12 @@ if __name__ == '__main__':
     orl_parser = parser.add_mutually_exclusive_group(required=True)
     orl_parser.add_argument('--orl', dest='orl', action='store_true')
     orl_parser.add_argument('--no_orl', dest='orl', action='store_false')
-    use_phi_replay_parser = parser.add_mutually_exclusive_group(required=True)
-    use_phi_replay_parser.add_argument('--use_phi_replay', dest='use_phi_replay', action='store_true')
-    use_phi_replay_parser.add_argument('--no_use_phi_replay', dest='use_phi_replay', action='store_false')
-    use_phi_update_parser = parser.add_mutually_exclusive_group(required=True)
-    use_phi_update_parser.add_argument('--use_phi_update', dest='use_phi_update', action='store_true')
-    use_phi_update_parser.add_argument('--no_use_phi_update', dest='use_phi_update', action='store_false')
+    mb_generate_parser = parser.add_mutually_exclusive_group(required=True)
+    mb_generate_parser.add_argument('--mb_generate', dest='mb_generate', action='store_true')
+    mb_generate_parser.add_argument('--no_mb_generate', dest='mb_generate', action='store_false')
+    mb_replay_parser = parser.add_mutually_exclusive_group(required=True)
+    mb_replay_parser.add_argument('--mb_replay', dest='mb_replay', action='store_true')
+    mb_replay_parser.add_argument('--no_mb_replay', dest='mb_replay', action='store_false')
     args = parser.parse_args()
     args.model_path = 'd3rlpy_mb_' + ('test' if args.test else ('train' if not args.eval else 'eval')) + '/model_'
     if args.orl:
@@ -135,15 +134,11 @@ if __name__ == '__main__':
         args.td3_loss = True
         args.q_bc_loss = False
         args.policy_bc_loss = False
-        args.phi_bc_loss = False
-        args.psi_bc_loss = False
     else:
         args.cql_loss = False
         args.td3_loss = False
         args.q_bc_loss = True
         args.policy_bc_loss = True
-        args.phi_bc_loss = True
-        args.psi_bc_loss = True
     global DATASET_PATH
     DATASET_PATH = './.d4rl/datasets/'
     device = torch.device('cuda:0')
