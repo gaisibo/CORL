@@ -62,6 +62,7 @@ def split_navigate_antmaze_large_play_v0(task_split_type, top_euclid, device):
 
     changed_task_datasets = dict()
     taskid_task_datasets = dict()
+    origin_task_datasets = dict()
     indexes_euclids = dict()
     real_action_size = 0
     real_observation_size = 0
@@ -74,7 +75,8 @@ def split_navigate_antmaze_large_play_v0(task_split_type, top_euclid, device):
         # 用action保存一下indexes_euclid，用state保存一下task_id
         changed_task_datasets[dataset_num] = MDPDataset(np.concatenate([dataset.observations, task_id_numpy], axis=1), np.concatenate([dataset.actions, indexes_euclid.cpu().numpy()], axis=1), dataset.rewards, dataset.terminals, dataset.episode_terminals)
         taskid_task_datasets[dataset_num] = MDPDataset(np.concatenate([dataset.observations, task_id_numpy], axis=1), dataset.actions, dataset.rewards, dataset.terminals, dataset.episode_terminals)
+        origin_task_datasets[dataset_num] = MDPDataset(dataset.observations, dataset.actions, dataset.rewards, dataset.terminals, dataset.episode_terminals)
         indexes_euclids[dataset_num] = indexes_euclid
 
     original = torch.zeros([1, real_observation_size], dtype=torch.float32).to(device)
-    return origin_dataset, changed_task_datasets, taskid_task_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums
+    return origin_dataset, changed_task_datasets, taskid_task_datasets, origin_task_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums

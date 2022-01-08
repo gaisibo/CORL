@@ -15,20 +15,19 @@ import d3rlpy
 from d3rlpy.ope import FQE
 from d3rlpy.metrics.scorer import soft_opc_scorer, initial_state_value_estimation_scorer
 from d3rlpy.dataset import MDPDataset
-from sklearn.model_selection import train_test_split
 # from myd3rlpy.datasets import get_d4rl
 from utils.k_means import kmeans
 from dataset.split_navigate import split_navigate_antmaze_large_play_v0
 from myd3rlpy.metrics.scorer import bc_error_scorer, td_error_scorer, evaluate_on_environment
 from myd3rlpy.siamese_similar import similar_psi, similar_phi
-from myd3rlpy.dynamics.probabilistic_ensemble_dynamics_with_log_std import ProbabilisticEnsembleDynamicsWithLogStd
+from myd3rlpy.dynamics.probabilistic_ensemble_dynamics import ProbabilisticEnsembleDynamics
 
 
 replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'next_actions', 'next_rewards', 'terminals', 'means', 'std_logs', 'qs', 'phis', 'psis']
 def main(args, device):
     np.set_printoptions(precision=1, suppress=True)
     if args.dataset == 'ant_maze':
-        origin_dataset, task_datasets, taskid_task_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums = split_navigate_antmaze_large_play_v0(args.task_split_type, args.top_euclid, device)
+        origin_dataset, task_datasets, taskid_task_datasets, origin_task_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums = split_navigate_antmaze_large_play_v0(args.task_split_type, args.top_euclid, device)
     else:
         assert False
 
@@ -36,10 +35,6 @@ def main(args, device):
     if args.algos == 'co':
         from myd3rlpy.algos.comb import COMB
         co = COMB(use_gpu=True, batch_size=args.batch_size, n_action_samples=args.n_action_samples, cql_loss=args.cql_loss, q_bc_loss=args.q_bc_loss, td3_loss=args.td3_loss, policy_bc_loss=args.policy_bc_loss)
-        if args.use_phi_replay:
-            from myd3rlpy.finish_task.finish_task_co import finish_task_co as finish_task
-        else:
-            from myd3rlpy.finish_task.finish_task_mi import finish_task_mi as finish_task
     else:
         raise NotImplementedError
     experiment_name = "COMB_"
@@ -61,11 +56,12 @@ def main(args, device):
             co._origin = original
             # train
             co.fit(
+                dataset_num,
                 dataset,
+                origin_task_datasets[dataset_num],
                 replay_datasets,
                 real_action_size = real_action_size,
                 real_observation_size = real_observation_size,
-                id_size = task_nums,
                 eval_episodess=eval_datasets,
                 n_epochs=args.n_epochs if not args.test else 1,
                 experiment_name=experiment_name + algos_name,
@@ -74,7 +70,10 @@ def main(args, device):
                 },
             )
             if args.algos == 'co':
-                replay_datasets[dataset_num] = finish_task(dataset_num, task_nums, dataset, original, co, indexes_euclids[dataset_num], real_action_size, args.topk, device)
+                if args.use_mb_generate:
+                    replay_datasets[dataset_num] = co.generate_replay_data(dataset_num, origin_task_datasets[dataset_num], original, in_task=False, max_save_num=args.max_save_num)
+                else:
+                    replay_datasets[dataset_num] = co.generate_new_data_random(dataset_num, origin_task_datasets[dataset_num], args.max_save_num)
             else:
                 raise NotImplementedError
             co.save_model(args.model_path + algos_name + '_' + str(dataset_num) + '.pt')
@@ -110,6 +109,7 @@ if __name__ == '__main__':
     parser.add_argument('--eval_batch_size', default=256, type=int)
     parser.add_argument('--batch_size', default=256, type=int)
     parser.add_argument('--topk', default=4, type=int)
+    parser.add_argument('--max_save_num', default=1000, type=int)
     parser.add_argument('--task_split_type', default='undirected', type=str)
     parser.add_argument('--dataset_name', default='antmaze-large-play-v0', type=str)
     parser.add_argument('--algos', default='co', type=str)
