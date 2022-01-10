@@ -27,7 +27,7 @@ from d3rlpy.constants import (
     ActionSpace,
 )
 from d3rlpy.context import disable_parallel
-from d3rlpy.dataset import Episode, MDPDataset
+from d3rlpy.dataset import Episode, MDPDataset, Transition
 from d3rlpy.iterators import RandomIterator, RoundIterator, TransitionIterator
 from d3rlpy.logger import LOG
 from d3rlpy.base import LearnableBase
@@ -35,6 +35,8 @@ from d3rlpy.argument_utility import ActionScalerArg, ScalerArg
 from d3rlpy.models.optimizers import AdamFactory, OptimizerFactory
 from d3rlpy.dynamics.probabilistic_ensemble_dynamics import ProbabilisticEnsembleDynamics
 from d3rlpy.dynamics.torch.probabilistic_ensemble_dynamics_impl import ProbabilisticEnsembleDynamicsImpl
+
+from myd3rlpy.siamese_similar import similar_mb
 
 
 class ProbabilisticEnsembleDynamics(ProbabilisticEnsembleDynamics):
@@ -60,6 +62,7 @@ class ProbabilisticEnsembleDynamics(ProbabilisticEnsembleDynamics):
         impl: Optional[ProbabilisticEnsembleDynamicsImpl] = None,
         topk: int = 4,
         network = None,
+        id_size: int = 7,
         **kwargs: Any
     ):
         super().__init__(
@@ -82,6 +85,52 @@ class ProbabilisticEnsembleDynamics(ProbabilisticEnsembleDynamics):
         self._topk = topk
         self._network = network
         self._task_id = task_id
+        self._id_size = id_size
+
+    def fit(
+        self,
+        dataset: Union[List[Episode], MDPDataset],
+        n_epochs: Optional[int] = None,
+        n_steps: Optional[int] = None,
+        n_steps_per_epoch: int = 10000,
+        save_metrics: bool = True,
+        experiment_name: Optional[str] = None,
+        with_timestamp: bool = True,
+        logdir: str = "d3rlpy_logs",
+        verbose: bool = True,
+        show_progress: bool = True,
+        tensorboard_dir: Optional[str] = None,
+        eval_episodes: Optional[List[Episode]] = None,
+        save_interval: int = 1,
+        scorers: Optional[
+            Dict[str, Callable[[Any, List[Episode]], float]]
+        ] = None,
+        shuffle: bool = True,
+        callback: Optional[Callable[["LearnableBase", int, int], None]] = None,
+        pretrain: bool = True,
+    ) -> List[Tuple[int, Dict[str, float]]]:
+        results = list(
+            self.fitter(
+                dataset,
+                n_epochs,
+                n_steps,
+                n_steps_per_epoch,
+                save_metrics,
+                experiment_name,
+                with_timestamp,
+                logdir,
+                verbose,
+                show_progress,
+                tensorboard_dir,
+                eval_episodes,
+                save_interval,
+                scorers,
+                shuffle,
+                callback,
+                pretrain,
+            )
+        )
+        return results
 
     def fitter(
         self,
@@ -103,6 +152,7 @@ class ProbabilisticEnsembleDynamics(ProbabilisticEnsembleDynamics):
         ] = None,
         shuffle: bool = True,
         callback: Optional[Callable[["LearnableBase", int, int], None]] = None,
+        pretrain: bool = True,
     ) -> Generator[Tuple[int, Dict[str, float]], None, None]:
         """Iterate over epochs steps to train with the given dataset. At each
              iteration algo methods and properties can be changed or queried.
@@ -221,6 +271,7 @@ class ProbabilisticEnsembleDynamics(ProbabilisticEnsembleDynamics):
             self.create_impl(
                 self._process_observation_shape(observation_shape), action_size
             )
+            assert self._impl.device
             LOG.debug("Models have been built.")
         else:
             LOG.warning("Skip building models since they're already built.")
@@ -252,7 +303,10 @@ class ProbabilisticEnsembleDynamics(ProbabilisticEnsembleDynamics):
             for itr in range_gen:
 
                 # generate new transitions with dynamics models
-                new_transitions = self.generate_new_data(dataset)
+                if pretrain:
+                    new_transitions = self.generate_new_data(iterator.transitions)
+                else:
+                    new_transitions = self.generate_new_data_trajectory(dataset)
                 if new_transitions:
                     iterator.add_generated_transitions(new_transitions)
                     LOG.debug(
@@ -311,12 +365,13 @@ class ProbabilisticEnsembleDynamics(ProbabilisticEnsembleDynamics):
         # logger
         self._active_logger = None
 
-    def generate_new_data(self, dataset, in_task=False, max_export_time = 0, max_reward=None):
+    def generate_new_data_trajectory(self, dataset, max_export_time = 0, max_reward=None):
         if self._network is not None:
             # 关键算法
-            task_id_numpy = np.eye(self._task_id)[self._id_size].squeeze()
-            task_id_numpy = np.broadcast_to(task_id_numpy, (self._original.shape[0], self._task_id))
-            original_observation = torch.cat([self._original, torch.from_numpy(task_id_numpy).to(torch.float32).to(self._impl.device)], dim=1)
+            _original = torch.from_numpy(self._original).to(self._impl.device).unsqueeze(dim=0)
+            task_id_numpy = np.eye(self._id_size)[self._task_id].squeeze()
+            task_id_numpy = torch.from_numpy(np.broadcast_to(task_id_numpy, (_original.shape[0], self._id_size))).to(torch.float32).to(self._impl.device)
+            original_observation = torch.cat([_original, task_id_numpy], dim=1)
             original_action = self._network._impl._policy(original_observation)
             replay_indexes = []
             new_transitions = []
@@ -355,13 +410,13 @@ class ProbabilisticEnsembleDynamics(ProbabilisticEnsembleDynamics):
                     transition = Transition(
                         observation_shape = self._impl.observation_shape,
                         action_size = self._impl.action_size,
-                        observation = dataset._observations[start_indexes],
-                        action = dataset._actions[start_indexes],
-                        reward = dataset._rewards[start_indexes],
-                        next_observation = dataset._observations[start_next_indexes],
-                        next_action = dataset._actions[start_next_indexes],
-                        next_reward = dataset._rewards[start_next_indexes],
-                        terminal = dataset._terminals[start_indexes]
+                        observation = dataset._observations[start_indexes[i]],
+                        action = dataset._actions[start_indexes[i]],
+                        reward = dataset._rewards[start_indexes[i]],
+                        next_observation = dataset._observations[start_next_indexes[i]],
+                        next_action = dataset._actions[start_next_indexes[i]],
+                        next_reward = dataset._rewards[start_next_indexes[i]],
+                        terminal = dataset._terminals[start_indexes[i]]
                     )
                     new_transitions.append(transition)
 

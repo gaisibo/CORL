@@ -339,7 +339,7 @@ class COImpl(TD3Impl):
                         replay_observations = replay_batch.observations.to(self.device)
                         replay_means = replay_batch.means.to(self.device)
                         replay_std_logs = replay_batch.std_logs.to(self.device)
-                        replay_actions = torch.distributions.normla.Normal(replay_means, replay_std_logs)
+                        replay_actions = torch.distributions.normal.Normal(replay_means, replay_std_logs)
                     actions = self._policy.dist(replay_observations)
                     replay_bc_loss = torch.distributions.kl.kl_divergence(actions, replay_actions).mean() / len(replay_batches)
                     replay_bc_losses.append(replay_bc_loss.cpu().detach().numpy())

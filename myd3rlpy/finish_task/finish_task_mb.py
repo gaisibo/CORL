@@ -7,9 +7,9 @@ from myd3rlpy.siamese_similar import similar_psi, similar_phi, similar_mb
 
 def finish_task_co(id_size, task_nums, dataset, original, network, indexes_euclid, real_action_size, topk, device, orl_loss=True, bc_loss=False, in_task=False, max_export_time = 0, max_reward=None):
     # 关键算法
-    task_id_numpy = np.eye(task_nums)[id_size].squeeze()
-    task_id_numpy = np.broadcast_to(task_id_numpy, (original.shape[0], task_nums))
-    original_observation = torch.cat([original, torch.from_numpy(task_id_numpy).to(torch.float32).to(device)], dim=1)
+    task_id_tensor = np.eye(task_nums)[id_size].squeeze()
+    task_id_tensor = torch.from_numpy(np.broadcast_to(task_id_tensor, (original.shape[0], task_nums))).to(torch.float32).to(device)
+    original_observation = torch.cat([original, task_id_tensor], dim=1)
     original_action = network._impl._policy(original_observation)
     replay_indexes = []
     if bc_loss and not in_task:
@@ -37,10 +37,11 @@ def finish_task_co(id_size, task_nums, dataset, original, network, indexes_eucli
         mus = mus.stack(dim=1)
         logstds = logstds.stack(dim=1)
         mus = mus[torch.arange(start_observations.shape[0]), torch.randing(len(network._models), size=(start_observations.shape[0],))]
-        logstds = logstds[torch.arange(start_observations.shape[0]), torch.randing(len(network._models), size=(start_observations.shape[0],))]
-        dist = Normal(mus, logstds)
+        logstds = logstds[torch.arange(start_observations.shape[0]), torch.randint(len(network._models), size=(start_observations.shape[0],))]
+        dist = Normal(mus, torch.exp(logstds))
         pred = dist.rsample()
-        next_x = start_observations + pred[:, :-1]
+        pred_observations = torch.cat([pred[:, :-1], task_id_tensor])
+        next_x = start_observations + pred_observations
         next_reward = pred[:, -1].view(-1, 1)
 
         near_indexes, _, _ = similar_mb(mus, logstds, dataset._observations, network._dynamics._impl._dynamics, topk=topk)

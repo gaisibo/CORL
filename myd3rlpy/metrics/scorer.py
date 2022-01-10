@@ -30,7 +30,7 @@ def bc_error_scorer(real_action_size: int) -> Callable[..., float]:
             observations = batch.observations.to(algo._impl.device)
             means = batch.means.to(algo._impl.device)
             std_logs = batch.std_logs.to(algo._impl.device)
-            dists = torch.distributions.normal.Normal(means, std_logs)
+            dists = torch.distributions.normal.Normal(means, torch.exp(std_logs))
             actions = batch.policy_actions.to(algo._impl.device)
             qs = batch.qs.to(algo._impl.device)
             rebuild_dists = algo._impl._policy.dist(observations)

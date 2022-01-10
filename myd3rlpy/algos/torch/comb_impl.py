@@ -112,13 +112,9 @@ class COMBImpl(COMBOImpl):
 
         q_tpn = self.compute_target(batch)
 
-        loss, q_func_loss, up_loss, down_loss, siamese_loss, smallest_distance = self.compute_critic_loss(batch, q_tpn)
+        loss = self.compute_critic_loss(batch, q_tpn)
         replay_loss = 0
-        replay_cql_losses = []
-        replay_q_func_losses = []
-        replay_up_losses = []
-        replay_down_losses = []
-        replay_bc_losses = []
+        replay_losses = []
         if replay_batches is not None and len(replay_batches) != 0:
             for i, replay_batch in replay_batches.items():
                 replay_batch = dict(zip(replay_name, replay_batch))
@@ -128,12 +124,9 @@ class COMBImpl(COMBOImpl):
                     replay_batch.n_steps = 1
                     replay_batch.masks = None
                     q_tpn = self.compute_target(batch)
-                    replay_cql_loss, replay_q_func_loss, replay_up_loss, replay_down_loss = self.compute_critic_loss(batch, q_tpn)
+                    replay_cql_loss = self.compute_critic_loss(batch, q_tpn)
+                    replay_losses.append(replay_cql_loss.cpu().detach().numpy())
                     replay_loss += replay_cql_loss
-                    replay_cql_losses.append(replay_cql_loss)
-                    replay_q_func_losses.append(replay_q_func_loss)
-                    replay_up_losses.append(replay_up_loss)
-                    replay_down_losses.append(replay_down_loss)
                 if self._q_bc_loss:
                     with torch.no_grad():
                         replay_observations = replay_batch.observations.to(self.device)
@@ -141,7 +134,7 @@ class COMBImpl(COMBOImpl):
                         replay_qs = batch.qs.to(self.device)
                     q = self._q_func(replay_observations, replay_actions)
                     replay_bc_loss = F.mse_loss(replay_qs, q) / len(replay_batches)
-                    replay_bc_losses.append(replay_bc_loss.cpu().detach().numpy())
+                    replay_losses.append(replay_bc_loss.cpu().detach().numpy())
                     replay_loss += replay_bc_loss
             loss += self._replay_critic_alpha * replay_loss
             if self._cql_loss or self._q_bc_loss:
@@ -152,7 +145,26 @@ class COMBImpl(COMBOImpl):
 
         loss = loss.cpu().detach().numpy()
 
-        return loss, q_func_loss, up_loss, down_loss, replay_loss, replay_q_func_losses, replay_up_losses, replay_down_losses, replay_bc_losses
+        return loss, replay_loss, replay_losses
+
+    def compute_critic_loss(
+        self, batch: TorchMiniBatch, q_tpn: torch.Tensor
+    ) -> torch.Tensor:
+        assert self._q_func is not None
+        loss = self._q_func.compute_error(
+            obs_t=batch.observations,
+            act_t=batch.actions[:, :self._action_size],
+            rew_tp1=batch.next_rewards,
+            q_tp1=q_tpn,
+            ter_tp1=batch.terminals,
+            gamma=self._gamma ** batch.n_steps,
+            use_independent_target=self._target_reduction_type == "none",
+            masks=batch.masks,
+        )
+        conservative_loss = self._compute_conservative_loss(
+            batch.observations, batch.actions[:, :self._action_size], batch.next_observations
+        )
+        return loss + conservative_loss
 
     @train_api
     def update_actor(self, batch: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[torch.Tensor]]]=None) -> np.ndarray:
@@ -172,7 +184,7 @@ class COMBImpl(COMBOImpl):
 
         self._actor_optim.zero_grad()
 
-        loss, policy_loss, bc_loss = self.compute_actor_loss(batch)
+        loss = self.compute_actor_loss(batch)
         replay_loss = 0
         replay_losses = []
         if replay_batches is not None and len(replay_batches) != 0:
@@ -188,7 +200,7 @@ class COMBImpl(COMBOImpl):
                         replay_observations = replay_batch.observations.to(self.device)
                         replay_means = replay_batch.means.to(self.device)
                         replay_std_logs = replay_batch.std_logs.to(self.device)
-                        replay_actions = torch.distributions.normla.Normal(replay_means, replay_std_logs)
+                        replay_actions = torch.distributions.normal.Normal(replay_means, torch.exp(replay_std_logs))
                     actions = self._policy.dist(replay_observations)
                     replay_loss_ = torch.distributions.kl.kl_divergence(actions, replay_actions).mean() / len(replay_batches)
                     replay_losses.append(replay_loss.cpu().detach().numpy())
@@ -202,4 +214,4 @@ class COMBImpl(COMBOImpl):
 
         loss = loss.cpu().detach().numpy()
 
-        return loss, policy_loss, replay_loss, replay_losses
+        return loss, replay_loss, replay_losses
