@@ -1,4 +1,3 @@
-import random
 import sys
 import time
 import math
@@ -1158,18 +1157,21 @@ class COMB(COMBO):
                 original_observation = None
             else:
                 start_observations = torch.from_numpy(dataset._observations[start_indexes]).to(self._impl.device)
+                task_id_tensor = np.eye(self._id_size)[task_id].squeeze()
+                task_id_tensor = torch.from_numpy(np.broadcast_to(task_id_tensor, (start_observations.shape[0], self._id_size))).to(torch.float32).to(self._impl.device)
+                start_observations = torch.cat([start_observations, task_id_tensor], dim=1)
                 start_actions = self._impl._policy(start_observations)
                 start_rewards = dataset._rewards[start_indexes]
 
             mus, logstds = [], []
             for model in self._dynamics._impl._dynamics._models:
-                mu, logstd = model.compute_stats(start_observations[:real_observation_size], start_actions)
+                mu, logstd = model.compute_stats(start_observations[:, :real_observation_size], start_actions)
                 mus.append(mu)
                 logstds.append(logstd)
             mus = torch.stack(mus, dim=1)
             logstds = torch.stack(logstds, dim=1)
-            mus = mus[torch.randint(len(self._dynamics._impl._dynamics._models))]
-            logstds = logstds[torch.randint(len(self._dynamics._impl._dynamics._models))]
+            mus = mus[torch.arange(start_observations.shape[0]), torch.randint(len(self._dynamics._impl._dynamics._models), size=(start_observations.shape[0],))]
+            logstds = logstds[torch.arange(start_observations.shape[0]), torch.randint(len(self._dynamics._impl._dynamics._models), size=(start_observations.shape[0],))]
             dist = Normal(mus, torch.exp(logstds))
             pred = dist.rsample()
             pred_observations = torch.cat([pred[:, :-1], task_id_tensor.expand(pred.shape[0], -1)], dim=1)
@@ -1192,10 +1194,10 @@ class COMB(COMBO):
                 new_transitions.append(transition)
 
             if start_indexes.shape[0] > 0:
-                line_indexes = dataset._actions[start_indexes, real_action_size:].astype(np.int64)
-                near_indexes, _, _ = similar_mb(mus, logstds, dataset._observations[line_indexes, :real_observation_size], np.expand_dims(dataset._rewards, axis=1), self._dynamics._impl._dynamics, topk=self._topk, input_indexes=line_indexes)
+                line_indexes = dataset._actions[start_indexes[0], real_action_size:].astype(np.int64)
+                near_indexes, _, _ = similar_mb(mus[0], logstds[0], dataset._observations[line_indexes, :real_observation_size], np.expand_dims(dataset._rewards, axis=1), self._dynamics._impl._dynamics, topk=self._topk, input_indexes=line_indexes)
             else:
-                near_indexes, _, _ = similar_mb(mus, logstds, dataset._observations[:, :real_observation_size], np.expand_dims(dataset._rewards, axis=1), self._dynamics._impl._dynamics, topk=self._topk)
+                near_indexes, _, _ = similar_mb(mus[0], logstds[0], dataset._observations[:, :real_observation_size], np.expand_dims(dataset._rewards, axis=1), self._dynamics._impl._dynamics, topk=self._topk)
             start_indexes = near_indexes
             if replay_indexes is not None:
                 start_indexes = np.setdiff1d(start_indexes, replay_indexes)
@@ -1208,7 +1210,6 @@ class COMB(COMBO):
                 replay_indexes = np.concatenate([replay_indexes, start_indexes], axis=0)
             else:
                 replay_indexes = start_indexes
-            start_indexes = start_indexes[0]
             export_time += 1
 
         new_transitions = self.generate_new_data(transitions=new_transitions, real_observation_size=real_observation_size, task_id=task_id)
@@ -1247,8 +1248,6 @@ class COMB(COMBO):
                 original_observation = None
             else:
                 start_observations = torch.from_numpy(dataset._observations[start_indexes]).to(self._impl.device)
-                task_id_tensor = np.eye(self._id_size)[task_id].squeeze()
-                task_id_tensor = torch.from_numpy(np.broadcast_to(task_id_tensor, (start_observations.shape[0], self._id_size))).to(torch.float32).to(self._impl.device)
                 start_actions = self._impl._policy(start_observations)
 
             mus, logstds = [], []
@@ -1258,34 +1257,38 @@ class COMB(COMBO):
                 logstds.append(logstd)
             mus = torch.stack(mus, dim=1)
             logstds = torch.stack(logstds, dim=1)
-            mus = mus[random.randint(0, mus.shape[0] - 1)]
-            logstds = logstds[random.randint(0, logstd.shape[0] - 1)]
-            print(f"mus.shape: {mus.shape}")
-            print(f"logstds.shpe: {logstds.shpe}")
+            mus = mus[torch.arange(start_observations.shape[0]), torch.randint(len(self._dynamics._impl._dynamics._models), size=(start_observations.shape[0],))]
+            logstds = logstds[torch.arange(start_observations.shape[0]), torch.randint(len(self._dynamics._impl._dynamics._models), size=(start_observations.shape[0],))]
 
+            near_indexes_list = []
             if start_indexes.shape[0] > 0:
-                line_indexes = dataset._actions[start_indexes, real_action_size:].astype(np.int64)
-                near_indexes, _, _ = similar_mb(mus, logstds, dataset._observations[line_indexes, :real_observation_size], np.expand_dims(dataset._rewards, axis=1), self._dynamics._impl._dynamics, topk=self._topk, input_indexes=line_indexes)
+                for i in start_indexes:
+                    line_indexes = dataset._actions[start_indexes[i], real_action_size:].astype(np.int64)
+                    near_indexes, _, _ = similar_mb(mus[i], logstds[i], dataset._observations[line_indexes, :real_observation_size], np.expand_dims(dataset._rewards, axis=1), self._dynamics._impl._dynamics, topk=self._topk, input_indexes=line_indexes)
+                    near_indexes_list.append(near_indexes)
             else:
-                near_indexes, _, _ = similar_mb(mus, logstds, dataset._observations[:, :real_observation_size], np.expand_dims(dataset._rewards, axis=1), self._dynamics._impl._dynamics, topk=self._topk)
-            start_indexes = near_indexes
-            if replay_indexes is not None:
-                start_indexes = np.setdiff1d(start_indexes, replay_indexes)
-            start_next_indexes = start_indexes + 1
+                near_indexes, _, _ = similar_mb(mus[0], logstds[0], dataset._observations[:, :real_observation_size], np.expand_dims(dataset._rewards, axis=1), self._dynamics._impl._dynamics, topk=self._topk)
+                near_indexes_list.append(near_indexes)
+            # 第一个将作为接下来衍生的起点被保留。
+            near_indexes_list.reverse()
+            for start_indexes in near_indexes_list:
+                if replay_indexes is not None:
+                    start_indexes = np.setdiff1d(start_indexes, replay_indexes)
+                start_next_indexes = np.where(start_indexes + 1 < dataset._observations.shape[0], start_indexes + 1, 0)
 
-            for i in range(start_observations.shape[0]):
-                transition = Transition(
-                    observation_shape = self._impl.observation_shape,
-                    action_size = self._impl.action_size,
-                    observation = dataset._observations[start_indexes[i]],
-                    action = dataset._actions[start_indexes[i]][:real_action_size],
-                    reward = dataset._rewards[start_indexes[i]],
-                    next_observation = dataset._observations[start_next_indexes[i]],
-                    next_action = dataset._actions[start_next_indexes[i]][:real_action_size],
-                    next_reward = dataset._rewards[start_next_indexes[i]],
-                    terminal = dataset._terminals[start_indexes[i]]
-                )
-                new_transitions.append(transition)
+                for i in range(start_indexes.shape[0]):
+                    transition = Transition(
+                        observation_shape = self._impl.observation_shape,
+                        action_size = self._impl.action_size,
+                        observation = dataset._observations[start_indexes[i]],
+                        action = dataset._actions[start_indexes[i]][:real_action_size],
+                        reward = dataset._rewards[start_indexes[i]],
+                        next_observation = dataset._observations[start_next_indexes[i]],
+                        next_action = dataset._actions[start_next_indexes[i]][:real_action_size],
+                        next_reward = dataset._rewards[start_next_indexes[i]],
+                        terminal = dataset._terminals[start_indexes[i]]
+                    )
+                    new_transitions.append(transition)
 
             start_rewards = dataset._rewards[start_indexes]
             if max_reward is not None:
@@ -1296,26 +1299,26 @@ class COMB(COMBO):
                 replay_indexes = np.concatenate([replay_indexes, start_indexes], axis=0)
             else:
                 replay_indexes = start_indexes
-            start_indexes = start_indexes[0]
 
         if len(new_transitions) > max_save_num:
             new_transitions = new_transitions[:max_save_num]
 
+        replay_observations = torch.stack([torch.from_numpy(transition.observation) for transition in new_transitions], dim=0)
+        replay_actions = torch.stack([torch.from_numpy(transition.action) for transition in new_transitions], dim=0)
+        replay_rewards = torch.stack([torch.from_numpy(np.array([transition.reward])) for transition in new_transitions], dim=0)
+        replay_next_observations = torch.stack([torch.from_numpy(transition.next_observation) for transition in new_transitions], dim=0)
+        replay_next_actions = torch.stack([torch.from_numpy(transition.next_action) for transition in new_transitions], dim=0)
+        replay_next_rewards = torch.stack([torch.from_numpy(np.array([transition.next_reward])) for transition in new_transitions], dim=0)
+        replay_terminals = torch.stack([torch.from_numpy(np.array([transition.terminal])) for transition in new_transitions], dim=0)
         if self._td3_loss or in_task:
-            return new_transitions
+            replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_next_actions, replay_next_rewards, replay_terminals)
+            return new_transitions, replay_dataset
         elif self._policy_bc_loss and not in_task:
-            replay_observations = torch.cat([torch.from_numpy(transition.observation) for transition in new_transitions], dim=0)
-            replay_actions = torch.cat([torch.from_numpy(transition.action) for transition in new_transitions], dim=0)
-            replay_rewards = torch.cat([torch.from_numpy(transition.reward) for transition in new_transitions], dim=0)
-            replay_next_observations = torch.cat([torch.from_numpy(transition.next_observation) for transition in new_transitions], dim=0)
-            replay_next_actions = torch.cat([torch.from_numpy(transition.next_action) for transition in new_transitions], dim=0)
-            replay_next_rewards = torch.cat([torch.from_numpy(transition.next_reward) for transition in new_transitions], dim=0)
-            replay_terminals = torch.cat([torch.from_numpy(transition.terminals) for transition in new_transitions], dim=0)
             replay_dists = self._impl.policy.dist(replay_observations)
             replay_means, replay_std_logs = replay_dists.mean, replay_dists.stddev
             replay_qs = self._impl.q_func(replay_observations, replay_actions)
             replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_next_actions, replay_next_rewards, replay_terminals, replay_means, replay_std_logs, replay_qs)
-            return replay_dataset
+            return replay_dataset, replay_dataset
 
     def generate_replay_data_random(self, task_id, dataset, in_task=False, max_save_num=1000, real_action_size=1):
         if isinstance(dataset, MDPDataset):
@@ -1350,18 +1353,19 @@ class COMB(COMBO):
                 )
             )
 
+            replay_observations = torch.stack([torch.from_numpy(transition.observation) for transition in new_transitions], dim=0)
+            replay_actions = torch.stack([torch.from_numpy(transition.action) for transition in new_transitions], dim=0)
+            replay_rewards = torch.stack([torch.from_numpy(np.array([transition.reward])) for transition in new_transitions], dim=0)
+            replay_next_observations = torch.stack([torch.from_numpy(transition.next_observation) for transition in new_transitions], dim=0)
+            replay_next_actions = torch.stack([torch.from_numpy(transition.next_action) for transition in new_transitions], dim=0)
+            replay_next_rewards = torch.stack([torch.from_numpy(np.array([transition.next_reward])) for transition in new_transitions], dim=0)
+            replay_terminals = torch.stack([torch.from_numpy(np.array([transition.terminal])) for transition in new_transitions], dim=0)
         if self._td3_loss or in_task:
-            return new_transitions
+            replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_next_actions, replay_next_rewards, replay_terminals)
+            return new_transitions, replay_dataset
         elif self._policy_bc_loss and not in_task:
-            replay_observations = torch.cat([torch.from_numpy(transition.observation) for transition in new_transitions], dim=0)
-            replay_actions = torch.cat([torch.from_numpy(transition.action) for transition in new_transitions], dim=0)
-            replay_rewards = torch.cat([torch.from_numpy(transition.reward) for transition in new_transitions], dim=0)
-            replay_next_observations = torch.cat([torch.from_numpy(transition.next_observation) for transition in new_transitions], dim=0)
-            replay_next_actions = torch.cat([torch.from_numpy(transition.next_action) for transition in new_transitions], dim=0)
-            replay_next_rewards = torch.cat([torch.from_numpy(transition.next_reward) for transition in new_transitions], dim=0)
-            replay_terminals = torch.cat([torch.from_numpy(transition.terminals) for transition in new_transitions], dim=0)
             replay_dists = self._impl.policy.dist(replay_observations)
             replay_means, replay_std_logs = replay_dists.mean, replay_dists.stddev
             replay_qs = self._impl.q_func(replay_observations, replay_actions)
             replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_next_actions, replay_next_rewards, replay_terminals, replay_means, replay_std_logs, replay_qs)
-            return replay_dataset
+            return replay_dataset, replay_dataset

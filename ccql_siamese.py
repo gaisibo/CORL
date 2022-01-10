@@ -44,6 +44,7 @@ def main(args, device):
 
     if not args.eval:
         replay_datasets = dict()
+        save_datasets = dict()
         eval_datasets = dict()
         for task_id, dataset in task_datasets.items():
             eval_datasets[task_id] = dataset
@@ -54,37 +55,35 @@ def main(args, device):
             co._dynamics = dynamics
             co._origin = original
             # train
-            co._create_impl([real_observation_size + task_nums], real_action_size)
-            co._dynamics._create_impl([real_observation_size], real_action_size)
-            # co.fit(
-            #     task_id,
-            #     dataset,
-            #     origin_task_datasets[task_id],
-            #     replay_datasets,
-            #     original = original,
-            #     real_action_size = real_action_size,
-            #     real_observation_size = real_observation_size,
-            #     eval_episodess=eval_datasets,
-            #     n_epochs=args.n_epochs if not args.test else 1,
-            #     experiment_name=experiment_name + algos_name,
-            #     scorers={
-            #         "real_env": evaluate_on_environment(envs, end_points, task_nums, draw_path),
-            #     },
-            #     test=args.test
-            # )
+            co.fit(
+                task_id,
+                dataset,
+                origin_task_datasets[task_id],
+                replay_datasets,
+                original = original,
+                real_action_size = real_action_size,
+                real_observation_size = real_observation_size,
+                eval_episodess=eval_datasets,
+                n_epochs=args.n_epochs if not args.test else 1,
+                experiment_name=experiment_name + algos_name,
+                scorers={
+                    "real_env": evaluate_on_environment(envs, end_points, task_nums, draw_path),
+                },
+                test=args.test
+            )
             if args.algos == 'co':
                 if args.mb_replay:
-                    replay_datasets[task_id] = co.generate_replay_data(task_id, origin_task_datasets[task_id], original, in_task=False, max_save_num=args.max_save_num, real_action_size=real_action_size, real_observation_size=real_observation_size)
+                    replay_datasets[task_id], save_datasets[task_id] = co.generate_replay_data(task_id, task_datasets[task_id], original, in_task=False, max_save_num=args.max_save_num, real_action_size=real_action_size, real_observation_size=real_observation_size)
                     print(f"len(replay_datasets[task_id]): {len(replay_datasets[task_id])}")
                 else:
-                    replay_datasets[task_id] = co.generate_new_data_random(task_id, origin_task_datasets[task_id], max_save_num=args.max_save_num, real_action_size=real_action_size)
+                    replay_datasets[task_id], save_datasets[task_id] = co.generate_replay_data_random_data_random(task_id, task_datasets[task_id], max_save_num=args.max_save_num, real_action_size=real_action_size)
                     print(f"replay_datasets[task_id].shape[0]: {replay_datasets[task_id].shape[0]}")
             else:
                 raise NotImplementedError
             co.save_model(args.model_path + algos_name + '_' + str(task_id) + '.pt')
             if args.test and task_id >= 1:
                 break
-        torch.save(replay_datasets, f=args.model_path + algos_name + '_datasets.pt')
+        torch.save(save_datasets, f=args.model_path + algos_name + '_datasets.pt')
     else:
         assert args.model_path
         eval_datasets = dict()
@@ -103,6 +102,7 @@ def main(args, device):
                     "real_env": evaluate_on_environment(envs, end_points, task_nums, draw_path),
                 },
             )
+    print('finish')
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Experimental evaluation of lifelong PG learning')
