@@ -303,10 +303,10 @@ class ProbabilisticEnsembleDynamics(ProbabilisticEnsembleDynamics):
             for itr in range_gen:
 
                 # generate new transitions with dynamics models
-                if pretrain:
-                    new_transitions = self.generate_new_data(iterator.transitions)
-                else:
+                if not pretrain:
                     new_transitions = self.generate_new_data_trajectory(dataset)
+                else:
+                    new_transitions = False
                 if new_transitions:
                     iterator.add_generated_transitions(new_transitions)
                     LOG.debug(
@@ -368,11 +368,12 @@ class ProbabilisticEnsembleDynamics(ProbabilisticEnsembleDynamics):
     def generate_new_data_trajectory(self, dataset, max_export_time = 0, max_reward=None):
         if self._network is not None:
             # 关键算法
-            _original = torch.from_numpy(self._original).to(self._impl.device).unsqueeze(dim=0)
+            _original = torch.from_numpy(self._original).to(self._impl.device)
             task_id_numpy = np.eye(self._id_size)[self._task_id].squeeze()
             task_id_numpy = torch.from_numpy(np.broadcast_to(task_id_numpy, (_original.shape[0], self._id_size))).to(torch.float32).to(self._impl.device)
             original_observation = torch.cat([_original, task_id_numpy], dim=1)
-            original_action = self._network._impl._policy(original_observation)
+            with torch.no_grad():
+                original_action = self._network._impl._policy(original_observation)
             replay_indexes = []
             new_transitions = []
 
@@ -385,7 +386,8 @@ class ProbabilisticEnsembleDynamics(ProbabilisticEnsembleDynamics):
                     original_observation = None
                 else:
                     start_observations = torch.from_numpy(dataset._observations[start_indexes.cpu().numpy()]).to(self._impl.device)
-                    start_actions = self._network._impl._policy(start_observations)
+                    with torch.no_grad():
+                        start_actions = self._network._impl._policy(start_observations)
 
                 mus, logstds = []
                 for model in self._impl._dynamics._models:
@@ -402,7 +404,7 @@ class ProbabilisticEnsembleDynamics(ProbabilisticEnsembleDynamics):
                 near_indexes = torch.unique(near_indexes).cpu().numpy()
                 start_indexes = near_indexes
                 for replay_index in replay_indexes:
-                    start_indexes = np.setdiff1d(start_indexes, replay_index)
+                    start_indexes = np.setdiff1d(start_indexes, replay_index, True)
                 start_indexes = start_indexes[start_indexes != dataset._observations.shape[0] - 1]
                 start_next_indexes = start_indexes + 1
 

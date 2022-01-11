@@ -128,7 +128,6 @@ def similar_phi(obs_batch, act_batch, obs_near, act_near, phi, input_indexes=Non
 def similar_mb(mus, logstds, observations, rewards, network, topk=4, batch_size=64, input_indexes=None):
     i = 0
     near_distances, near_indexes = [], []
-    print(f"observations.shape: {observations.shape}")
     while i < observations.shape[0]:
         normal = Normal(mus.unsqueeze(dim=0).expand(min(i + batch_size, observations.shape[0]) - i, -1), torch.exp(logstds).unsqueeze(dim=0).expand(min(i + batch_size, observations.shape[0]) - i, -1))
         log_prob = normal.log_prob(torch.from_numpy(np.concatenate([observations[i: min(i + batch_size, observations.shape[0])], rewards[i: min(i + batch_size, observations.shape[0])]], axis=1)).to(mus.device))
@@ -136,7 +135,6 @@ def similar_mb(mus, logstds, observations, rewards, network, topk=4, batch_size=
         log_prob = torch.sum(log_prob, dim=-1)
         near_distances_, near_indexes_ = torch.topk(log_prob, topk)
         near_distances.append(near_distances_)
-        print(f"near_distances_.shape: {near_distances_.shape}")
         near_indexes.append(near_indexes_)
     near_distances = torch.cat(near_distances, dim=0).cpu().detach().numpy()
     near_indexes = torch.cat(near_indexes, dim=0).cpu().detach().numpy()

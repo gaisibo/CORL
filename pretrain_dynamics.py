@@ -15,6 +15,7 @@ import torch
 import d3rlpy
 from d3rlpy.ope import FQE
 from d3rlpy.metrics.scorer import soft_opc_scorer, initial_state_value_estimation_scorer
+from d3rlpy.metrics.scorer import dynamics_observation_prediction_error_scorer, dynamics_reward_prediction_error_scorer, dynamics_prediction_variance_scorer
 from d3rlpy.dataset import MDPDataset
 # from myd3rlpy.datasets import get_d4rl
 from utils.k_means import kmeans
@@ -25,8 +26,6 @@ from myd3rlpy.dynamics.probabilistic_ensemble_dynamics import ProbabilisticEnsem
 
 
 replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'next_actions', 'next_rewards', 'terminals', 'means', 'std_logs', 'qs', 'phis', 'psis']
-# 暂时只练出来一个。
-dynamics_path = ['d3rlpy_logs/ProbabilisticEnsembleDynamics_20220110095933/model_1407000.pt' for _ in range(7)]
 def main(args, device):
     np.set_printoptions(precision=1, suppress=True)
     if args.dataset == 'ant_maze':
@@ -40,7 +39,7 @@ def main(args, device):
         co = COMB(use_gpu=True, batch_size=args.batch_size, n_action_samples=args.n_action_samples, cql_loss=args.cql_loss, q_bc_loss=args.q_bc_loss, td3_loss=args.td3_loss, policy_bc_loss=args.policy_bc_loss, mb_generate=args.mb_generate)
     else:
         raise NotImplementedError
-    experiment_name = "COMB"
+    experiment_name = "COMB_dynamics"
     algos_name = "_orl" if args.orl else "_noorl"
     algos_name += "_mb_generate" if args.mb_generate else "_no_mb_generate"
     algos_name += "_mb_replay" if args.mb_replay else "_no_mb_replay"
@@ -55,60 +54,17 @@ def main(args, device):
             draw_path = args.model_path + algos_name + '_trajectories_' + str(task_id) + '_'
 
             dynamics = ProbabilisticEnsembleDynamics(task_id=task_id, original=original, learning_rate=1e-4, use_gpu=True, id_size=task_nums)
-            dynamics.create_impl([real_observation_size], real_action_size)
-            dynamics.load_model(dynamics_path[task_id])
-# same as algorithms
-            co._dynamics = dynamics
-            co._origin = original
-            # train
-            co.fit(
-                task_id,
-                dataset,
-                origin_task_datasets[task_id],
-                replay_datasets,
-                original = original,
-                real_action_size = real_action_size,
-                real_observation_size = real_observation_size,
-                eval_episodess=eval_datasets,
-                n_epochs=args.n_epochs if not args.test else 1,
-                experiment_name=experiment_name + algos_name,
+            dynamics.fit(
+                origin_task_datasets[task_id].episodes,
+                n_epochs=1000,
                 scorers={
-                    "real_env": evaluate_on_environment(envs, end_points, task_nums, draw_path),
+                   'observation_error': dynamics_observation_prediction_error_scorer,
+                   'reward_error': dynamics_reward_prediction_error_scorer,
+                   'variance': dynamics_prediction_variance_scorer,
                 },
-                test=args.test
+                pretrain=True,
             )
-            if args.algos == 'co':
-                if args.mb_replay:
-                    replay_datasets[task_id], save_datasets[task_id] = co.generate_replay_data(task_id, task_datasets[task_id], original, in_task=False, max_save_num=args.max_save_num, real_action_size=real_action_size, real_observation_size=real_observation_size)
-                    print(f"len(replay_datasets[task_id]): {len(replay_datasets[task_id])}")
-                else:
-                    replay_datasets[task_id], save_datasets[task_id] = co.generate_replay_data_random_data_random(task_id, task_datasets[task_id], max_save_num=args.max_save_num, real_action_size=real_action_size)
-                    print(f"replay_datasets[task_id].shape[0]: {replay_datasets[task_id].shape[0]}")
-            else:
-                raise NotImplementedError
-            co.save_model(args.model_path + algos_name + '_' + str(task_id) + '.pt')
-            if args.test and task_id >= 1:
-                break
-        torch.save(save_datasets, f=args.model_path + algos_name + '_datasets.pt')
-    else:
-        assert args.model_path
-        eval_datasets = dict()
-        if co._impl is None:
-            co.create_impl([real_observation_size + task_nums], real_action_size)
-        for task_id, dataset in task_datasets.items():
-            draw_path = args.model_path + algos_name + '_trajectories_' + str(task_id) + '_'
-            eval_datasets[task_id] = dataset
-            co.load_model(args.model_path + algos_name + '_' + str(task_id) + '.pt')
-            replay_datasets = torch.load(args.model_path + algos_name + '_datasets.pt')
-            co.test(
-                replay_datasets,
-                eval_episodess=eval_datasets,
-                scorers={
-                    # 'environment': evaluate_on_environment(env),
-                    "real_env": evaluate_on_environment(envs, end_points, task_nums, draw_path),
-                },
-            )
-    print('finish')
+            dynamics.save_model(args.model_path + algos_name + '_' + str(task_id) + '.pt')
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Experimental evaluation of lifelong PG learning')
@@ -127,7 +83,7 @@ if __name__ == '__main__':
     parser.add_argument('--algos', default='co', type=str)
     parser.add_argument('--eval', action='store_true')
     parser.add_argument('--test', action='store_true')
-    parser.add_argument("--n_epochs", default=1000, type=int)
+    parser.add_argument("--n_epochs", default=200, type=int)
     parser.add_argument("--n_action_samples", default=4, type=int)
     parser.add_argument('--top_euclid', default=8, type=int)
     orl_parser = parser.add_mutually_exclusive_group(required=True)

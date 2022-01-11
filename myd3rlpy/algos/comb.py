@@ -139,16 +139,16 @@ class COMB(COMBO):
     def __init__(
         self,
         *,
-        actor_learning_rate: float = 1e-3,
-        critic_learning_rate: float = 1e-3,
-        temp_learning_rate: float = 3e-4,
+        actor_learning_rate: float = 1e-4,
+        critic_learning_rate: float = 3e-4,
+        temp_learning_rate: float = 1e-4,
         actor_optim_factory: OptimizerFactory = AdamFactory(),
         critic_optim_factory: OptimizerFactory = AdamFactory(),
         temp_optim_factory: OptimizerFactory = AdamFactory(),
         actor_encoder_factory: EncoderArg = "default",
         critic_encoder_factory: EncoderArg = "default",
         q_func_factory: QFuncArg = "mean",
-        replay_actor_alpha = 2.5,  # from A Minimalist Approach to Offline Reinforcement Learning
+        replay_actor_alpha = 1,
         replay_critic_alpha = 1,
         cql_loss=False,
         q_bc_loss=True,
@@ -162,7 +162,7 @@ class COMB(COMBO):
         tau: float = 0.005,
         n_critics: int = 2,
         target_reduction_type: str = "min",
-        update_actor_interval: int = 2,
+        update_actor_interval: int = 1,
         initial_temperature: float = 1.0,
         conservative_weight: float = 1.0,
         n_action_samples: int = 10,
@@ -596,29 +596,32 @@ class COMB(COMBO):
 
             total_step = 0
             # pretrain
-            self._dynamics.fit(
-                origin_episodes,
-                n_epochs=100 if not test else 1,
-                scorers={
-                   'observation_error': dynamics_observation_prediction_error_scorer,
-                   'reward_error': dynamics_reward_prediction_error_scorer,
-                   'variance': dynamics_prediction_variance_scorer,
-                },
-                pretrain=True,
-            )
+            # self._dynamics.fit(
+            #     origin_episodes,
+            #     n_epochs=100 if not test else 1,
+            #     scorers={
+            #        'observation_error': dynamics_observation_prediction_error_scorer,
+            #        'reward_error': dynamics_reward_prediction_error_scorer,
+            #        'variance': dynamics_prediction_variance_scorer,
+            #     },
+            #     pretrain=True,
+            # )
             self._dynamics._network = self
             for epoch in range(1, n_epochs + 1):
-                if self._n_train_dynamics % epoch == 0:
-                    self._dynamics.fit(
-                        origin_episodes,
-                        n_epochs=1,
-                        scorers={
-                           'observation_error': dynamics_observation_prediction_error_scorer,
-                           'reward_error': dynamics_reward_prediction_error_scorer,
-                           'variance': dynamics_prediction_variance_scorer,
-                        },
-                        pretrain=False
-                    )
+                if epoch == 3:
+                    print('finish')
+                    sys.exit()
+                # if self._n_train_dynamics % epoch == 0:
+                #     self._dynamics.fit(
+                #         origin_episodes,
+                #         n_epochs=1,
+                #         scorers={
+                #            'observation_error': dynamics_observation_prediction_error_scorer,
+                #            'reward_error': dynamics_reward_prediction_error_scorer,
+                #            'variance': dynamics_prediction_variance_scorer,
+                #         },
+                #         pretrain=False
+                #     )
 
                 # dict to add incremental mean losses to epoch
                 epoch_loss = defaultdict(list)
@@ -649,8 +652,10 @@ class COMB(COMBO):
                             real_action_size=real_action_size,
                             real_observation_size=real_observation_size,
                         )
+                        assert new_transitions is not None
                     else:
                         new_transitions = self.generate_new_data(iterator.transitions, real_observation_size=real_observation_size, task_id=task_id)
+                        assert new_transitions is not None
                     if new_transitions:
                         iterator.add_generated_transitions(new_transitions)
                         LOG.debug(
@@ -658,20 +663,6 @@ class COMB(COMBO):
                             real_transitions=len(iterator.transitions),
                             fake_transitions=len(iterator.generated_transitions),
                         )
-
-                    # model based only, offline replay only
-                    # if replay_iterators is not None and self._td3_loss:
-                    #     for replay_iterator in replay_iterators:
-                    #         self._scaler.fit(replay_iterator)
-                    #         replay_new_transitions = self.generate_new_data(
-                    #             transitions=replay_iterator.transitions
-                    #         )
-                    #         replay_iterator.add_generated_transitions(replay_new_transitions)
-                    #         LOG.debug(
-                    #             f"{len(replay_new_transitions)} replay_transitions are generated.",
-                    #             real_transitions=len(replay_iterator.transitions),
-                    #             fake_transitions=len(replay_iterator.generated_transitions),
-                    #        )
 
                     with logger.measure_time("step"):
                         # pick transitions
@@ -711,6 +702,8 @@ class COMB(COMBO):
                     # call callback if given
                     if callback:
                         callback(self, epoch, total_step)
+
+                    break
 
                 # save loss to loss history dict
                 self._loss_history["epoch"].append(epoch)
@@ -1139,7 +1132,7 @@ class COMB(COMBO):
 
     def generate_new_data_trajectory(self, task_id, dataset, original_observation, in_task=False, max_export_time = 100, max_reward=None, real_action_size=1, real_observation_size=1):
         # 关键算法
-        _original = torch.from_numpy(original_observation).to(self._impl.device).unsqueeze(dim=0)
+        _original = torch.from_numpy(original_observation).to(self._impl.device)
         task_id_tensor = np.eye(self._id_size)[task_id].squeeze()
         task_id_tensor = torch.from_numpy(np.broadcast_to(task_id_tensor, (_original.shape[0], self._id_size))).to(torch.float32).to(self._impl.device)
         original_observation = torch.cat([_original, task_id_tensor], dim=1)
@@ -1157,9 +1150,6 @@ class COMB(COMBO):
                 original_observation = None
             else:
                 start_observations = torch.from_numpy(dataset._observations[start_indexes]).to(self._impl.device)
-                task_id_tensor = np.eye(self._id_size)[task_id].squeeze()
-                task_id_tensor = torch.from_numpy(np.broadcast_to(task_id_tensor, (start_observations.shape[0], self._id_size))).to(torch.float32).to(self._impl.device)
-                start_observations = torch.cat([start_observations, task_id_tensor], dim=1)
                 start_actions = self._impl._policy(start_observations)
                 start_rewards = dataset._rewards[start_indexes]
 
@@ -1200,7 +1190,7 @@ class COMB(COMBO):
                 near_indexes, _, _ = similar_mb(mus[0], logstds[0], dataset._observations[:, :real_observation_size], np.expand_dims(dataset._rewards, axis=1), self._dynamics._impl._dynamics, topk=self._topk)
             start_indexes = near_indexes
             if replay_indexes is not None:
-                start_indexes = np.setdiff1d(start_indexes, replay_indexes)
+                start_indexes = np.setdiff1d(start_indexes, replay_indexes, True)
             start_rewards = dataset._rewards[start_indexes]
             if max_reward is not None:
                 start_indexes = start_indexes[start_rewards >= max_reward]
@@ -1240,7 +1230,7 @@ class COMB(COMBO):
         new_transitions = []
 
         export_time = 0
-        start_indexes = torch.zeros(0)
+        start_indexes = np.zeros(0)
         while (start_indexes.shape[0] != 0 or original_observation is not None) and export_time < max_export_time and len(new_transitions) < max_save_num:
             if original_observation is not None:
                 start_observations = original_observation
@@ -1273,7 +1263,7 @@ class COMB(COMBO):
             near_indexes_list.reverse()
             for start_indexes in near_indexes_list:
                 if replay_indexes is not None:
-                    start_indexes = np.setdiff1d(start_indexes, replay_indexes)
+                    start_indexes = np.setdiff1d(start_indexes, replay_indexes, True)
                 start_next_indexes = np.where(start_indexes + 1 < dataset._observations.shape[0], start_indexes + 1, 0)
 
                 for i in range(start_indexes.shape[0]):
