@@ -21,7 +21,7 @@ from d3rlpy.algos.base import AlgoBase
 from d3rlpy.algos.torch.base import TorchImplBase
 from d3rlpy.algos.torch.combo_impl import COMBOImpl
 
-from d3rlpy.models.builders import create_squashed_normal_policy, create_continuous_q_function
+from d3rlpy.models.builders import create_squashed_normal_policy, create_continuous_q_function, create_parameter
 from myd3rlpy.siamese_similar import similar_euclid, similar_psi, similar_phi
 from utils.utils import Struct
 
@@ -34,9 +34,11 @@ class COMBImpl(COMBOImpl):
         actor_learning_rate: float,
         critic_learning_rate: float,
         temp_learning_rate: float,
+        alpha_learning_rate: float,
         actor_optim_factory: OptimizerFactory,
         critic_optim_factory: OptimizerFactory,
         temp_optim_factory: OptimizerFactory,
+        alpha_optim_factory: OptimizerFactory,
         actor_encoder_factory: EncoderFactory,
         critic_encoder_factory: EncoderFactory,
         q_func_factory: QFunctionFactory,
@@ -49,8 +51,9 @@ class COMBImpl(COMBOImpl):
         gamma: float,
         tau: float,
         n_critics: int,
-        target_reduction_type: str,
         initial_temperature: float,
+        initial_alpha: float,
+        alpha_threshold: float,
         conservative_weight: float,
         n_action_samples: int,
         real_ratio: float,
@@ -75,7 +78,6 @@ class COMBImpl(COMBOImpl):
             gamma = gamma,
             tau = tau,
             n_critics = n_critics,
-            target_reduction_type = target_reduction_type,
             initial_temperature = initial_temperature,
             conservative_weight = conservative_weight,
             n_action_samples = n_action_samples,
@@ -93,8 +95,30 @@ class COMBImpl(COMBOImpl):
         self._replay_actor_alpha = replay_actor_alpha
         self._replay_critic_alpha = replay_critic_alpha
 
+        self._alpha_learning_rate = alpha_learning_rate
+        self._alpha_optim_factory = alpha_optim_factory
+        self._initial_alpha = initial_alpha
+        self._alpha_threshold = alpha_threshold
+
         # initialized in build
 
+    def print_q_func(self, batch: TransitionMiniBatch):
+
+        batch = TorchMiniBatch(
+            batch,
+            self.device,
+            scaler=self.scaler,
+            action_scaler=self.action_scaler,
+            reward_scaler=self.reward_scaler,
+        )
+
+        print('end update')
+        fake_obs_t = batch.observations[int(batch.observations.shape[0] * self._real_ratio) :]
+        fake_act_t = batch.actions[int(batch.actions.shape[0] * self._real_ratio):, :self._action_size]
+        real_obs_t = batch.observations[: int(batch.observations.shape[0] * self._real_ratio)]
+        real_act_t = batch.actions[: int(batch.actions.shape[0] * self._real_ratio), :self._action_size]
+        print(f'q_fake: {self._q_func(fake_obs_t, fake_act_t)}')
+        print(f'q_real: {self._q_func(real_obs_t, real_act_t)}')
 
     @train_api
     def update_critic(self, batch: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[torch.Tensor]]]=None) -> np.ndarray:
@@ -159,13 +183,77 @@ class COMBImpl(COMBOImpl):
             q_tp1=q_tpn,
             ter_tp1=batch.terminals,
             gamma=self._gamma ** batch.n_steps,
-            use_independent_target=self._target_reduction_type == "none",
-            masks=batch.masks,
         )
         conservative_loss = self._compute_conservative_loss(
             batch.observations, batch.actions[:, :self._action_size], batch.next_observations
         )
         return loss + conservative_loss
+
+    def _combo_compute_conservative_loss(
+        self, obs_t: torch.Tensor, act_t: torch.Tensor, obs_tp1: torch.Tensor
+    ) -> torch.Tensor:
+        assert self._policy is not None
+        assert self._q_func is not None
+        assert self._log_alpha is not None
+
+        # split batch
+        fake_obs_t = obs_t[int(obs_t.shape[0] * self._real_ratio) :]
+        fake_obs_tp1 = obs_tp1[int(obs_tp1.shape[0] * self._real_ratio) :]
+        real_obs_t = obs_t[: int(obs_t.shape[0] * self._real_ratio)]
+        real_act_t = act_t[: int(act_t.shape[0] * self._real_ratio), :self._action_size]
+
+        # compute conservative loss only with generated transitions
+        random_values = self._compute_random_is_values(fake_obs_t)
+        policy_values_t = self._compute_policy_is_values(fake_obs_t, fake_obs_t)
+        policy_values_tp1 = self._compute_policy_is_values(
+            fake_obs_tp1, fake_obs_t
+        )
+
+        # compute logsumexp
+        # (n critics, batch, 3 * n samples) -> (n critics, batch, 1)
+        target_values = torch.cat(
+            [policy_values_t, policy_values_tp1, random_values], dim=2
+        )
+        logsumexp = torch.logsumexp(target_values, dim=2, keepdim=True)
+
+        # estimate action-values for real data actions
+        data_values = self._q_func(real_obs_t, real_act_t, "none")
+
+        loss = logsumexp.sum(dim=0).mean() - data_values.sum(dim=0).mean()
+        scaled_loss = self._conservative_weight * loss
+
+        clipped_alpha = self._log_alpha().exp().clamp(0, 1e6)[0][0]
+
+        return clipped_alpha * (scaled_loss - self._alpha_threshold)
+
+    def _compute_conservative_loss(
+        self, obs_t: torch.Tensor, act_t: torch.Tensor, obs_tp1: torch.Tensor
+    ) -> torch.Tensor:
+        assert self._policy is not None
+        assert self._q_func is not None
+        assert self._log_alpha is not None
+
+        policy_values_t = self._compute_policy_is_values(obs_t, obs_t)
+        policy_values_tp1 = self._compute_policy_is_values(obs_tp1, obs_t)
+        random_values = self._compute_random_is_values(obs_t)
+
+        # compute logsumexp
+        # (n critics, batch, 3 * n samples) -> (n critics, batch, 1)
+        target_values = torch.cat(
+            [policy_values_t, policy_values_tp1, random_values], dim=2
+        )
+        logsumexp = torch.logsumexp(target_values, dim=2, keepdim=True)
+
+        # estimate action-values for data actions
+        data_values = self._q_func(obs_t, act_t[:, :self._action_size], "none")
+
+        loss = logsumexp.mean(dim=0).mean() - data_values.mean(dim=0).mean()
+        scaled_loss = self._conservative_weight * loss
+
+        # clip for stability
+        clipped_alpha = self._log_alpha().exp().clamp(0, 1e6)[0][0]
+
+        return clipped_alpha * (scaled_loss - self._alpha_threshold)
 
     @train_api
     def update_actor(self, batch: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[torch.Tensor]]]=None) -> np.ndarray:
@@ -216,35 +304,3 @@ class COMBImpl(COMBOImpl):
         loss = loss.cpu().detach().numpy()
 
         return loss, replay_loss, replay_losses
-
-    @train_api
-    @torch_api()
-    def update_temp(
-        self, batch: TorchMiniBatch
-    ) -> Tuple[np.ndarray, np.ndarray]:
-        assert self._temp_optim is not None
-        assert self._policy is not None
-        assert self._log_temp is not None
-
-        self._temp_optim.zero_grad()
-
-        with torch.no_grad():
-            h = self._policy._encoder(batch.observations)
-            mu = self._policy._mu(h)
-            logstd = cast(nn.Linear, self._policy._logstd)(h)
-            clipped_logstd = logstd.clamp(self._policy._min_logstd, self._policy._max_logstd)
-            print(f"mu: {mu}")
-            print(f"clipped_logstd: {clipped_logstd}")
-            print(f"clipped_logstd.exp(): {clipped_logstd.exp()}")
-            _, log_prob = self._policy.sample_with_log_prob(batch.observations)
-            targ_temp = log_prob - self._action_size
-
-        loss = -(self._log_temp().exp() * targ_temp).mean()
-
-        loss.backward()
-        self._temp_optim.step()
-
-        # current temperature value
-        cur_temp = self._log_temp().exp().cpu().detach().numpy()[0][0]
-
-        return loss.cpu().detach().numpy(), cur_temp

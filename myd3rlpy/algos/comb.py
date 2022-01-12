@@ -112,9 +112,11 @@ class COMB(COMBO):
     _actor_learning_rate: float
     _critic_learning_rate: float
     _temp_learning_rate: float
+    _alpha_learning_rate: float
     _actor_optim_factory: OptimizerFactory
     _critic_optim_factory: OptimizerFactory
     _temp_optim_factory: OptimizerFactory
+    _alpha_optim_factory: OptimizerFactory
     _actor_encoder_factory: EncoderFactory
     _critic_encoder_factory: EncoderFactory
     _q_func_factory: QFunctionFactory
@@ -124,9 +126,10 @@ class COMB(COMBO):
     _replay_critic: bool
     _tau: float
     _n_critics: int
-    _target_reduction_type: str
     _update_actor_interval: int
     _initial_temperature: float
+    _initial_alpha: float
+    _alpha_threshold: float
     _conservative_weight: float
     _n_action_samples: int
     _soft_q_backup: bool
@@ -142,9 +145,11 @@ class COMB(COMBO):
         actor_learning_rate: float = 1e-4,
         critic_learning_rate: float = 3e-4,
         temp_learning_rate: float = 1e-4,
+        alpha_learning_rate: float = 1e-4,
         actor_optim_factory: OptimizerFactory = AdamFactory(),
         critic_optim_factory: OptimizerFactory = AdamFactory(),
         temp_optim_factory: OptimizerFactory = AdamFactory(),
+        alpha_optim_factory: OptimizerFactory = AdamFactory(),
         actor_encoder_factory: EncoderArg = "default",
         critic_encoder_factory: EncoderArg = "default",
         q_func_factory: QFuncArg = "mean",
@@ -161,9 +166,10 @@ class COMB(COMBO):
         gamma: float = 0.99,
         tau: float = 0.005,
         n_critics: int = 2,
-        target_reduction_type: str = "min",
         update_actor_interval: int = 1,
         initial_temperature: float = 1.0,
+        initial_alpha: float = 1.0,
+        alpha_threshold: float = 10.0,
         conservative_weight: float = 1.0,
         n_action_samples: int = 10,
         soft_q_backup: bool =False,
@@ -171,7 +177,7 @@ class COMB(COMBO):
         rollout_interval: int = 1000,
         rollout_horizon: int = 5,
         rollout_batch_size: int = 50000,
-        real_ratio: float = 0.05,
+        real_ratio: float = 0.5,
         generated_maxlen: int = 50000 * 5 * 5,
         use_gpu: UseGPUArg = False,
         scaler: ScalerArg = None,
@@ -201,7 +207,6 @@ class COMB(COMBO):
             gamma = gamma,
             tau = tau,
             n_critics = n_critics,
-            target_reduction_type = target_reduction_type,
             update_actor_interval = update_actor_interval,
             initial_temperature = initial_temperature,
             conservative_weight = conservative_weight,
@@ -234,6 +239,11 @@ class COMB(COMBO):
         self._topk = topk
         self._use_mb_generate = mb_generate
 
+        self._alpha_optim_factory = alpha_optim_factory
+        self._alpha_learning_rate = alpha_learning_rate
+        self._initial_alpha = initial_alpha
+        self._alpha_threshold = alpha_threshold
+
     def _create_impl(
         self, observation_shape: Sequence[int], action_size: int
     ) -> None:
@@ -252,9 +262,11 @@ class COMB(COMBO):
             actor_learning_rate=self._actor_learning_rate,
             critic_learning_rate=self._critic_learning_rate,
             temp_learning_rate=self._temp_learning_rate,
+            alpha_learning_rate=self._alpha_learning_rate,
             actor_optim_factory=self._actor_optim_factory,
             critic_optim_factory=self._critic_optim_factory,
             temp_optim_factory=self._temp_optim_factory,
+            alpha_optim_factory=self._alpha_optim_factory,
             actor_encoder_factory=self._actor_encoder_factory,
             critic_encoder_factory=self._critic_encoder_factory,
             q_func_factory=self._q_func_factory,
@@ -267,8 +279,9 @@ class COMB(COMBO):
             gamma=self._gamma,
             tau=self._tau,
             n_critics=self._n_critics,
-            target_reduction_type=self._target_reduction_type,
             initial_temperature=self._initial_temperature,
+            initial_alpha=self._initial_alpha,
+            alpha_threshold=self._alpha_threshold,
             conservative_weight=self._conservative_weight,
             n_action_samples=self._n_action_samples,
             real_ratio=self._real_ratio,
@@ -296,23 +309,24 @@ class COMB(COMBO):
         assert self._impl is not None, IMPL_NOT_INITIALIZED_ERROR
         metrics = {}
 
+        if self._temp_learning_rate > 0:
+            temp_loss, temp = self._impl.update_temp(batch)
+            metrics.update({"temp_loss": temp_loss, "temp": temp})
+
+        if self._alpha_learning_rate > 0:
+            alpha_loss, alpha = self._impl.update_alpha(batch)
+            metrics.update({"alpha_loss": alpha_loss, "alpha": alpha})
+
         critic_loss, replay_critic_loss, _ = self._impl.update_critic(batch, replay_batches)
         metrics.update({"critic_loss": critic_loss})
         metrics.update({"replay_critic_loss": replay_critic_loss})
 
-        # delayed policy update
-        if self._grad_step % self._update_actor_interval == 0:
-            actor_loss, replay_actor_loss, _ = self._impl.update_actor(batch, replay_batches)
-            metrics.update({"actor_loss": actor_loss})
-            metrics.update({"replay_actor_loss": replay_actor_loss})
+        actor_loss, replay_actor_loss, _ = self._impl.update_actor(batch, replay_batches)
+        metrics.update({"actor_loss": actor_loss})
+        metrics.update({"replay_actor_loss": replay_actor_loss})
 
-            # lagrangian parameter update for SAC temperature
-            if self._temp_learning_rate > 0:
-                temp_loss, temp = self._impl.update_temp(batch)
-                metrics.update({"temp_loss": temp_loss, "temp": temp})
-
-            self._impl.update_critic_target()
-            self._impl.update_actor_target()
+        self._impl.update_critic_target()
+        self._impl.update_actor_target()
 
         return metrics
 
@@ -336,10 +350,10 @@ class COMB(COMBO):
         show_progress: bool = True,
         tensorboard_dir: Optional[str] = None,
         eval_episodess: Optional[Dict[int, List[Episode]]] = None,
-        save_interval: int = 1,
+        save_interval: int = 10,
         discount: float = 0.99,
         start_timesteps : int = int(25e3),
-        expl_noise: float = 0.1,
+        expl_noise: float = 1,
         eval_freq: int = int(5e3),
         scorers: Optional[
             Dict[str, Callable[[int, int], Callable[[Any, List[Episode]], float]]]
@@ -554,22 +568,39 @@ class COMB(COMBO):
         iterator: TransitionIterator
         if env is None:
 
-            assert dataset is not None
+            transitions = []
             if isinstance(dataset, MDPDataset):
-                episodes = dataset.episodes
+                for episode in dataset.episodes:
+                    transitions += episode.transitions
+            elif not dataset:
+                raise ValueError("empty dataset is not supported.")
+            elif isinstance(dataset[0], Episode):
+                for episode in cast(List[Episode], dataset):
+                    transitions += episode.transitions
+            elif isinstance(dataset[0], Transition):
+                transitions = list(cast(List[Transition], dataset))
             else:
-                episodes = dataset
-            assert origin_dataset is not None
-            if isinstance(dataset, MDPDataset):
-                origin_episodes = origin_dataset.episodes
+                raise ValueError(f"invalid dataset type: {type(dataset)}")
+
+            origin_transitions = []
+            if isinstance(origin_dataset, MDPDataset):
+                for episode in origin_dataset.episodes:
+                    origin_transitions += episode.transitions
+            elif not origin_dataset:
+                raise ValueError("empty origin_dataset is not supported.")
+            elif isinstance(origin_dataset[0], Episode):
+                for episode in cast(List[Episode], dataset):
+                    origin_transitions += episode.transitions
+            elif isinstance(origin_dataset[0], Transition):
+                origin_transitions = list(cast(List[Transition], dataset))
             else:
-                origin_episodes = origin_dataset
+                raise ValueError(f"invalid origin_dataset type: {type(dataset)}")
             assert self._dynamics is not None
             if n_epochs is None and n_steps is not None:
                 assert n_steps >= n_steps_per_epoch
                 n_epochs = n_steps // n_steps_per_epoch
                 iterator = RandomIterator(
-                    episodes,
+                    transitions,
                     n_steps_per_epoch,
                     batch_size=self._batch_size,
                     n_steps=self._n_steps,
@@ -581,7 +612,7 @@ class COMB(COMBO):
                 LOG.debug("RandomIterator is selected.")
             elif n_epochs is not None and n_steps is None:
                 iterator = RoundIterator(
-                    episodes,
+                    transitions,
                     batch_size=self._batch_size,
                     n_steps=self._n_steps,
                     gamma=self._gamma,
@@ -608,9 +639,7 @@ class COMB(COMBO):
             # )
             self._dynamics._network = self
             for epoch in range(1, n_epochs + 1):
-                if epoch == 3:
-                    print('finish')
-                    sys.exit()
+
                 # if self._n_train_dynamics % epoch == 0:
                 #     self._dynamics.fit(
                 #         origin_episodes,
@@ -644,7 +673,7 @@ class COMB(COMBO):
 
                     # generate new transitions with dynamics models
                     if self._use_mb_generate:
-                        new_transitions = self.generate_new_data_trajectory(
+                        new_transitions, _ = self.generate_replay_data(
                             task_id,
                             dataset,
                             original,
@@ -652,10 +681,14 @@ class COMB(COMBO):
                             real_action_size=real_action_size,
                             real_observation_size=real_observation_size,
                         )
-                        assert new_transitions is not None
                     else:
-                        new_transitions = self.generate_new_data(iterator.transitions, real_observation_size=real_observation_size, task_id=task_id)
-                        assert new_transitions is not None
+                        new_transitions = None
+                        # new_transitions = self.generate_new_data(
+                        #     iterator.transitions,
+                        #     real_observation_size=real_observation_size,
+                        #     task_id=task_id,
+                        # )
+
                     if new_transitions:
                         iterator.add_generated_transitions(new_transitions)
                         LOG.debug(
@@ -663,6 +696,14 @@ class COMB(COMBO):
                             real_transitions=len(iterator.transitions),
                             fake_transitions=len(iterator.generated_transitions),
                         )
+
+                    # if new_transitions:
+                    #     print(f'real_transitions: {len(iterator.transitions)}')
+                    #     print(f'fake_transitions: {len(iterator.generated_transitions)}')
+                    #     for new_transition in new_transitions:
+                    #         mu, logstd = self._impl._policy.sample_with_log_prob(torch.from_numpy(new_transition.observation).to(self._impl.device))
+                    #         print(f'mu: {mu}')
+                    #         print(f'logstd: {logstd}')
 
                     with logger.measure_time("step"):
                         # pick transitions
@@ -703,8 +744,6 @@ class COMB(COMBO):
                     if callback:
                         callback(self, epoch, total_step)
 
-                    break
-
                 # save loss to loss history dict
                 self._loss_history["epoch"].append(epoch)
                 self._loss_history["step"].append(total_step)
@@ -712,17 +751,18 @@ class COMB(COMBO):
                     if vals:
                         self._loss_history[name].append(np.mean(vals))
 
-                if scorers and eval_episodess:
-                    for id, eval_episodes in eval_episodess.items():
-                        scorers_tmp = {k + str(id): v(id, epoch) for k, v in scorers.items()}
-                        self._evaluate(eval_episodes, scorers_tmp, logger)
+                if epoch % save_interval == 0:
+                    if scorers and eval_episodess:
+                        for id, eval_episodes in eval_episodess.items():
+                            scorers_tmp = {k + str(id): v(id, epoch) for k, v in scorers.items()}
+                            self._evaluate(eval_episodes, scorers_tmp, logger)
 
-                if replay_scorers:
-                    if replay_dataloaders is not None:
-                        for replay_num, replay_dataloader in replay_dataloaders.items():
-                            # 重命名
-                            replay_scorers_tmp = {k + str(replay_num): v for k, v in replay_scorers.items()}
-                            self._evaluate(replay_dataloader, replay_scorers_tmp, logger)
+                    if replay_scorers:
+                        if replay_dataloaders is not None:
+                            for replay_num, replay_dataloader in replay_dataloaders.items():
+                                # 重命名
+                                replay_scorers_tmp = {k + str(replay_num): v for k, v in replay_scorers.items()}
+                                self._evaluate(replay_dataloader, replay_scorers_tmp, logger)
 
                 # save metrics
                 metrics = logger.commit(epoch, total_step)
@@ -1063,7 +1103,7 @@ class COMB(COMBO):
         self._active_logger = None
 
     def generate_new_data(
-        self, transitions: List[Transition], real_observation_size, task_id,
+        self, transitions: List[Transition], real_observation_size, task_id
     ) -> Optional[List[Transition]]:
         assert self._impl, IMPL_NOT_INITIALIZED_ERROR
         assert self._dynamics, DYNAMICS_NOT_GIVEN_ERROR
@@ -1087,6 +1127,7 @@ class COMB(COMBO):
         # task_id_tensor = torch.from_numpy(np.broadcast_to(task_id_tensor, (observations.shape[0], self._id_size))).to(torch.float32).to(self._impl.device)
 
         for _ in range(self._get_rollout_horizon()):
+
             # predict next state
             pred = self._dynamics.predict(observations[:, :real_observation_size], actions, True)
             pred = cast(Tuple[np.ndarray, np.ndarray, np.ndarray], pred)
@@ -1130,7 +1171,10 @@ class COMB(COMBO):
 
         return rets
 
-    def generate_new_data_trajectory(self, task_id, dataset, original_observation, in_task=False, max_export_time = 100, max_reward=None, real_action_size=1, real_observation_size=1):
+    def generate_new_data_trajectory(self, task_id, dataset, original_observation, in_task=False, max_export_time = 100, max_reward=None, real_action_size=1, real_observation_size=1, len_iterator=1):
+
+        if not self._is_generating_new_data():
+            return None
         # 关键算法
         _original = torch.from_numpy(original_observation).to(self._impl.device)
         task_id_tensor = np.eye(self._id_size)[task_id].squeeze()
@@ -1202,7 +1246,7 @@ class COMB(COMBO):
                 replay_indexes = start_indexes
             export_time += 1
 
-        new_transitions = self.generate_new_data(transitions=new_transitions, real_observation_size=real_observation_size, task_id=task_id)
+        new_transitions = self.generate_new_data(transitions=new_transitions, real_observation_size=real_observation_size, task_id=task_id, len_iterator=len_iterator)
         if self._td3_loss or in_task:
             return new_transitions
         elif self._policy_bc_loss and not in_task:
