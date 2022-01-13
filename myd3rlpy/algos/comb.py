@@ -41,7 +41,6 @@ from d3rlpy.models.encoders import EncoderFactory
 from d3rlpy.metrics.scorer import dynamics_observation_prediction_error_scorer, dynamics_reward_prediction_error_scorer, dynamics_prediction_variance_scorer
 from d3rlpy.iterators.random_iterator import RandomIterator
 from d3rlpy.iterators.round_iterator import RoundIterator
-from d3rlpy.dynamics import DynamicsBase
 from d3rlpy.logger import LOG, D3RLPyLogger
 import gym
 
@@ -49,6 +48,7 @@ from online.utils import ReplayBuffer
 from online.eval_policy import eval_policy
 
 from myd3rlpy.siamese_similar import similar_mb
+from myd3rlpy.dynamics.probabilistic_ensemble_dynamics import ProbabilisticEnsembleDynamics
 
 class COMB(COMBO):
     r"""Twin Delayed Deep Deterministic Policy Gradients algorithm.
@@ -134,7 +134,7 @@ class COMB(COMBO):
     _conservative_weight: float
     _n_action_samples: int
     _soft_q_backup: bool
-    _dynamics: Optional[DynamicsBase]
+    _dynamics: Optional[ProbabilisticEnsembleDynamics]
     _rollout_interval: int
     _rollout_horizon: int
     _rollout_batch_size: int
@@ -174,7 +174,7 @@ class COMB(COMBO):
         conservative_weight: float = 1.0,
         n_action_samples: int = 10,
         soft_q_backup: bool =False,
-        dynamics: Optional[DynamicsBase] = None,
+        dynamics: Optional[ProbabilisticEnsembleDynamics] = None,
         rollout_interval: int = 1000,
         rollout_horizon: int = 5,
         rollout_batch_size: int = 50000,
@@ -367,6 +367,7 @@ class COMB(COMBO):
         real_action_size: int = 0,
         real_observation_size: int = 0,
         test: bool = False,
+        train_dynamics = False,
     ) -> List[Tuple[int, Dict[int, float]]]:
         """Trains with the given dataset.
         .. code-block:: python
@@ -431,6 +432,7 @@ class COMB(COMBO):
                 real_action_size,
                 real_observation_size,
                 test,
+                train_dynamics,
             )
         )
         return results
@@ -471,6 +473,7 @@ class COMB(COMBO):
         real_action_size: int = 0,
         real_observation_size: int = 0,
         test: bool = False,
+        train_dynamics: bool = False,
     ) -> Generator[Tuple[int, Dict[int, float]], None, None]:
         """Iterate over epochs steps to train with the given dataset. At each
              iteration algo methods and properties can be changed or queried.
@@ -626,7 +629,20 @@ class COMB(COMBO):
                 origin_transitions = list(cast(List[Transition], dataset))
             else:
                 raise ValueError(f"invalid origin_dataset type: {type(dataset)}")
+
             assert self._dynamics is not None
+            if train_dynamics:
+                self._dynamics.fit(
+                    origin_dataset,
+                    n_epochs=1,
+                    scorers={
+                       'observation_error': dynamics_observation_prediction_error_scorer,
+                       'reward_error': dynamics_reward_prediction_error_scorer,
+                       'variance': dynamics_prediction_variance_scorer,
+                    },
+                    pretrain=True
+                )
+
             if n_epochs is None and n_steps is not None:
                 assert n_steps >= n_steps_per_epoch
                 n_epochs = n_steps // n_steps_per_epoch

@@ -15,7 +15,7 @@ def compute_vector_norm(tensor1, tensor2):
     tensor2.half()
     ret = torch.linalg.vector_norm(tensor1 - tensor2, dim = 2)
     return ret.cpu()
-def similar_euclid(obs_all, obs_transition, dataset_name, dataset_num, input_indexes=None, eval_batch_size=10000, topk=256):
+def similar_euclid(obs_all, obs_transition, dataset_name, dataset_num, input_indexes=None, eval_batch_size=1000, topk=256):
     filename = 'near_indexes_' + dataset_name + '/near_indexes_' + dataset_name + '_' + str(dataset_num) + '.pt'
     if os.path.exists(filename):
         return torch.load(filename)

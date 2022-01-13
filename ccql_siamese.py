@@ -25,7 +25,8 @@ from myd3rlpy.dynamics.probabilistic_ensemble_dynamics import ProbabilisticEnsem
 
 replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'next_actions', 'next_rewards', 'terminals', 'means', 'std_logs', 'qs', 'phis', 'psis']
 # 暂时只练出来一个。
-dynamics_path = ['d3rlpy_logs/ProbabilisticEnsembleDynamics_20220110095933/model_1407000.pt' for _ in range(7)]
+# dynamics_path = ['d3rlpy_logs/ProbabilisticEnsembleDynamics_20220110095933/model_1407000.pt' for _ in range(7)]
+dynamics_path = [None for _ in range(4)]
 def main(args, device):
     np.set_printoptions(precision=1, suppress=True)
     if args.dataset == 'ant_maze':
@@ -62,7 +63,8 @@ def main(args, device):
 
             dynamics = ProbabilisticEnsembleDynamics(task_id=task_id, original=original, learning_rate=1e-4, use_gpu=True, id_size=task_nums)
             dynamics.create_impl([real_observation_size], real_action_size)
-            dynamics.load_model(dynamics_path[task_id])
+            if dynamics_path[task_id] is not None:
+                dynamics.load_model(dynamics_path[task_id])
 # same as algorithms
             co._dynamics = dynamics
             co._origin = original
@@ -81,7 +83,8 @@ def main(args, device):
                 scorers={
                     "real_env": evaluate_on_environment(envs, end_points, task_nums, draw_path),
                 },
-                test=args.test
+                test=args.test,
+                train_dynamics=dynamics_path[task_id] is None,
             )
             if args.algos == 'co':
                 if args.mb_replay:

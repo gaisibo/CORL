@@ -21,15 +21,17 @@ def split_navigate_maze_large_dense_v1(task_split_type, top_euclid, device):
             if len(episode) == 1:
                 continue
             position = episode[-1].observation[:2]
+            end_point_distances = []
             for end_point in end_points:
                 end_point_distance = np.linalg.norm(position, end_point)
+                end_point_distances.append(end_point_distance)
             min_index = np.argmin(end_point_distance)
             task_datasets[min_index].append(episode)
     else:
         all_episodes = origin_dataset.episodes
         episodes = []
         for episode in all_episodes:
-            if len(episode) != 1:
+            if len(episode) > 1:
                 episodes.append(episode)
         # episodes = all_episodes
         random.shuffle(episodes)
@@ -51,14 +53,12 @@ def split_navigate_maze_large_dense_v1(task_split_type, top_euclid, device):
         envs[task_index].target_goal = end_points[task_index]
         observations = np.concatenate([episode.observations for episode in task_episodes], axis=0)
         actions = np.concatenate([episode.actions for episode in task_episodes], axis=0)
-        obs = torch.from_numpy(observations).cuda()
-        end_point = torch.from_numpy(end_points[task_index]).unsqueeze(0).expand(obs.shape[0], -1).cuda()
-        rewards = torch.where(torch.linalg.vector_norm(obs, end_point) < 0.5, 1, 0)
+        rewards = np.where(np.linalg.norm(observations[:, :2] - end_points[task_index], axis=1) < 0.5, 1, 0)
         terminals = [np.zeros(task_episode.observations.shape[0]) for task_episode in task_episodes]
         for terminal in terminals:
             terminal[-1] = 1
         terminals = np.concatenate(terminals, axis=0)
-        terminals = torch.where(torch.linalg.vector_norm(obs, end_point) < 0.5, 1, terminals)
+        terminals += rewards
         task_datasets_[task_index] = MDPDataset(observations, actions, rewards, terminals)
     task_datasets = task_datasets_
 
@@ -69,7 +69,9 @@ def split_navigate_maze_large_dense_v1(task_split_type, top_euclid, device):
     real_action_size = 0
     real_observation_size = 0
     for dataset_num, dataset in task_datasets.items():
-        indexes_euclid = similar_euclid(torch.from_numpy(dataset.observations).cuda(), dataset_name, dataset_num)[:, :top_euclid]
+        transitions = [transition for episode in dataset.episodes for transition in episode]
+        observations = np.stack([transition.observation for transition in transitions], axis=0)
+        indexes_euclid = similar_euclid(torch.from_numpy(dataset.observations).cuda(), torch.from_numpy(observations).cuda(), dataset_name, dataset_num)[:, :top_euclid]
         real_action_size = dataset.actions.shape[1]
         task_id_numpy = np.eye(task_nums)[dataset_num].squeeze()
         task_id_numpy = np.broadcast_to(task_id_numpy, (dataset.observations.shape[0], task_nums))
