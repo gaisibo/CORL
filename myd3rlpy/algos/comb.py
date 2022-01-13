@@ -1383,12 +1383,13 @@ class COMB(COMBO):
 
         orl_transitions = transitions[orl_indexes].tolist()
         prev_transitions = [transition.prev_transition for transition in orl_transitions]
-        prev_observations = torch.from_numpy(np.stack([prev_transition.observation for prev_transition in prev_transitions], axis=0)).to(self._impl.device)
-        prev_actions = torch.from_numpy(np.stack([prev_transition.action for prev_transition in prev_transitions], axis=0)).to(self._impl.device)
-        prev_dists = self._impl.policy.dist(prev_observations)
-        prev_log_prob = prev_dists.log_prob(prev_actions)
-        prev_index = (prev_log_prob > low_log_prob).cpu().detach().numpy()
-        prev_transitions = prev_transitions[prev_index]
+        if not in_task:
+            prev_observations = torch.from_numpy(np.stack([prev_transition.observation for prev_transition in prev_transitions], axis=0)).to(self._impl.device)
+            prev_actions = torch.from_numpy(np.stack([prev_transition.action for prev_transition in prev_transitions], axis=0)).to(self._impl.device)
+            prev_dists = self._impl.policy.dist(prev_observations)
+            prev_log_prob = prev_dists.log_prob(prev_actions)
+            prev_index = (prev_log_prob > low_log_prob).cpu().detach().numpy()
+            prev_transitions = prev_transitions[prev_index]
         random.shuffle(prev_transitions)
         if len(prev_transitions) > max_save_num:
             prev_transitions = prev_transitions[:max_save_num]
