@@ -18,7 +18,6 @@ from d3rlpy.metrics.scorer import soft_opc_scorer, initial_state_value_estimatio
 from d3rlpy.dataset import MDPDataset
 # from myd3rlpy.datasets import get_d4rl
 from utils.k_means import kmeans
-from dataset.split_navigate import split_navigate_antmaze_large_play_v0
 from myd3rlpy.metrics.scorer import bc_error_scorer, td_error_scorer, evaluate_on_environment
 from myd3rlpy.siamese_similar import similar_psi, similar_phi
 from myd3rlpy.dynamics.probabilistic_ensemble_dynamics import ProbabilisticEnsembleDynamics
@@ -30,7 +29,11 @@ dynamics_path = ['d3rlpy_logs/ProbabilisticEnsembleDynamics_20220110095933/model
 def main(args, device):
     np.set_printoptions(precision=1, suppress=True)
     if args.dataset == 'ant_maze':
+        from dataset.split_navigate import split_navigate_antmaze_large_play_v0
         origin_dataset, task_datasets, taskid_task_datasets, origin_task_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums = split_navigate_antmaze_large_play_v0(args.task_split_type, args.top_euclid, device)
+    elif args.dataset == 'maze':
+        from dataset.split_maze import split_navigate_maze_large_dense_v1
+        origin_dataset, task_datasets, taskid_task_datasets, origin_task_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums = split_navigate_maze_large_dense_v1(args.task_split_type, args.top_euclid, device)
     else:
         assert False
 

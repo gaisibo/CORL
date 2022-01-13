@@ -216,35 +216,3 @@ class COMBImpl(COMBOImpl):
         loss = loss.cpu().detach().numpy()
 
         return loss, replay_loss, replay_losses
-
-    @train_api
-    @torch_api()
-    def update_temp(
-        self, batch: TorchMiniBatch
-    ) -> Tuple[np.ndarray, np.ndarray]:
-        assert self._temp_optim is not None
-        assert self._policy is not None
-        assert self._log_temp is not None
-
-        self._temp_optim.zero_grad()
-
-        with torch.no_grad():
-            h = self._policy._encoder(batch.observations)
-            mu = self._policy._mu(h)
-            logstd = cast(nn.Linear, self._policy._logstd)(h)
-            clipped_logstd = logstd.clamp(self._policy._min_logstd, self._policy._max_logstd)
-            print(f"mu: {mu}")
-            print(f"clipped_logstd: {clipped_logstd}")
-            print(f"clipped_logstd.exp(): {clipped_logstd.exp()}")
-            _, log_prob = self._policy.sample_with_log_prob(batch.observations)
-            targ_temp = log_prob - self._action_size
-
-        loss = -(self._log_temp().exp() * targ_temp).mean()
-
-        loss.backward()
-        self._temp_optim.step()
-
-        # current temperature value
-        cur_temp = self._log_temp().exp().cpu().detach().numpy()[0][0]
-
-        return loss.cpu().detach().numpy(), cur_temp

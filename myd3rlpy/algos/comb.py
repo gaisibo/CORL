@@ -595,17 +595,6 @@ class COMB(COMBO):
                 raise ValueError("Either of n_epochs or n_steps must be given.")
 
             total_step = 0
-            # pretrain
-            # self._dynamics.fit(
-            #     origin_episodes,
-            #     n_epochs=100 if not test else 1,
-            #     scorers={
-            #        'observation_error': dynamics_observation_prediction_error_scorer,
-            #        'reward_error': dynamics_reward_prediction_error_scorer,
-            #        'variance': dynamics_prediction_variance_scorer,
-            #     },
-            #     pretrain=True,
-            # )
             self._dynamics._network = self
             for epoch in range(1, n_epochs + 1):
                 if epoch == 3:
@@ -652,10 +641,8 @@ class COMB(COMBO):
                             real_action_size=real_action_size,
                             real_observation_size=real_observation_size,
                         )
-                        assert new_transitions is not None
                     else:
                         new_transitions = self.generate_new_data(iterator.transitions, real_observation_size=real_observation_size, task_id=task_id)
-                        assert new_transitions is not None
                     if new_transitions:
                         iterator.add_generated_transitions(new_transitions)
                         LOG.debug(
@@ -663,6 +650,11 @@ class COMB(COMBO):
                             real_transitions=len(iterator.transitions),
                             fake_transitions=len(iterator.generated_transitions),
                         )
+                    if new_transitions:
+                        for new_transition in new_transitions:
+                            mu, logstd = self._impl._policy.sample_with_log_prob(torch.from_numpy(new_transition.observation).to(self._impl.device))
+                            print(f"mu: {mu}")
+                            print(f"logstd: {logstd}")
 
                     with logger.measure_time("step"):
                         # pick transitions
@@ -1131,6 +1123,8 @@ class COMB(COMBO):
         return rets
 
     def generate_new_data_trajectory(self, task_id, dataset, original_observation, in_task=False, max_export_time = 100, max_reward=None, real_action_size=1, real_observation_size=1):
+        if not self._is_generating_new_data():
+            return None
         # 关键算法
         _original = torch.from_numpy(original_observation).to(self._impl.device)
         task_id_tensor = np.eye(self._id_size)[task_id].squeeze()
