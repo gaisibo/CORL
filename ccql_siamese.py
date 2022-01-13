@@ -36,6 +36,9 @@ def main(args, device):
         origin_dataset, task_datasets, taskid_task_datasets, origin_task_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums = split_navigate_maze_large_dense_v1(args.task_split_type, args.top_euclid, device)
     else:
         assert False
+    transitions = [transition for episodes in task_datasets[0].episodes for transition in episodes]
+    indexes_euclids = task_datasets[0].actions[:, real_action_size:]
+    max_indexes_euclids = np.max(indexes_euclids)
 
     # prepare algorithm
     if args.algos == 'co':
@@ -47,7 +50,7 @@ def main(args, device):
     algos_name = "_orl" if args.orl else "_noorl"
     algos_name += "_mb_generate" if args.mb_generate else "_no_mb_generate"
     algos_name += "_mb_replay" if args.mb_replay else "_no_mb_replay"
-    algos_name += args.dataset_name
+    algos_name += '_' + args.dataset_name
 
     if not args.eval:
         replay_datasets = dict()
@@ -85,7 +88,7 @@ def main(args, device):
                     replay_datasets[task_id], save_datasets[task_id] = co.generate_replay_data(task_id, task_datasets[task_id], original, in_task=False, max_save_num=args.max_save_num, real_action_size=real_action_size, real_observation_size=real_observation_size)
                     print(f"len(replay_datasets[task_id]): {len(replay_datasets[task_id])}")
                 else:
-                    replay_datasets[task_id], save_datasets[task_id] = co.generate_replay_data_random_data_random(task_id, task_datasets[task_id], max_save_num=args.max_save_num, real_action_size=real_action_size)
+                    replay_datasets[task_id], save_datasets[task_id] = co.generate_replay_data_random(task_id, task_datasets[task_id], max_save_num=args.max_save_num, real_action_size=real_action_size, in_task=False)
                     print(f"replay_datasets[task_id].shape[0]: {replay_datasets[task_id].shape[0]}")
             else:
                 raise NotImplementedError
@@ -132,7 +135,7 @@ if __name__ == '__main__':
     parser.add_argument('--test', action='store_true')
     parser.add_argument("--n_epochs", default=1000, type=int)
     parser.add_argument("--n_action_samples", default=4, type=int)
-    parser.add_argument('--top_euclid', default=8, type=int)
+    parser.add_argument('--top_euclid', default=64, type=int)
     orl_parser = parser.add_mutually_exclusive_group(required=True)
     orl_parser.add_argument('--orl', dest='orl', action='store_true')
     orl_parser.add_argument('--no_orl', dest='orl', action='store_false')

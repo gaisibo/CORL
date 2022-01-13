@@ -1,6 +1,9 @@
+import sys
 from copy import deepcopy
 import random
+from typing_extensions import final
 import numpy as np
+from numpy.lib.utils import who
 import torch
 
 from d3rlpy.datasets import get_d4rl
@@ -20,9 +23,11 @@ def split_navigate_antmaze_large_play_v0(task_split_type, top_euclid, device):
             if len(episode) == 1:
                 continue
             position = episode[-1].observation[:2]
+            end_point_distances = []
             for end_point in end_points:
                 end_point_distance = np.linalg.norm(position, end_point)
-            min_index = np.argmin(end_point_distance)
+                end_point_distances.append(end_point_distance)
+            min_index = np.argmin(end_point_distances)
             task_datasets[min_index].append(episode)
     else:
         all_episodes = origin_dataset.episodes
@@ -30,7 +35,6 @@ def split_navigate_antmaze_large_play_v0(task_split_type, top_euclid, device):
         for episode in all_episodes:
             if len(episode) != 1:
                 episodes.append(episode)
-        # episodes = all_episodes
         random.shuffle(episodes)
         task_length = len(episodes) // task_nums
         task_mod = len(episodes) - task_nums * task_length
@@ -67,7 +71,9 @@ def split_navigate_antmaze_large_play_v0(task_split_type, top_euclid, device):
     real_action_size = 0
     real_observation_size = 0
     for dataset_num, dataset in task_datasets.items():
-        indexes_euclid = similar_euclid(torch.from_numpy(dataset.observations).cuda(), dataset_name, dataset_num)[:, :top_euclid]
+        transitions = [transition for episodes in dataset.episodes for transition in episodes]
+        observations = np.stack([transition.observation for transition in transitions], axis=0)
+        indexes_euclid = similar_euclid(torch.from_numpy(dataset.observations).cuda(), torch.from_numpy(observations).cuda(), dataset_name, dataset_num)[:, :top_euclid]
         real_action_size = dataset.actions.shape[1]
         task_id_numpy = np.eye(task_nums)[dataset_num].squeeze()
         task_id_numpy = np.broadcast_to(task_id_numpy, (dataset.observations.shape[0], task_nums))
