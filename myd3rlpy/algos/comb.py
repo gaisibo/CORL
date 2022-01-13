@@ -188,7 +188,7 @@ class COMB(COMBO):
         impl_name = 'co',
         origin = None,
         n_train_dynamics = 1,
-        topk = 4,
+        topk = 10,
         mb_generate = True,
         **kwargs: Any
     ):
@@ -1296,7 +1296,7 @@ class COMB(COMBO):
             replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_next_actions, replay_next_rewards, replay_terminals, replay_means, replay_std_logs, replay_qs)
             return replay_dataset
 
-    def generate_replay_data(self, task_id, dataset, original_observation, in_task=False, max_save_num=1000, max_export_time = 1000, max_reward=None, real_action_size=1, real_observation_size=1):
+    def generate_replay_data(self, task_id, dataset, original_observation, in_task=False, max_save_num=1000, max_export_time = 1000, max_reward=None, real_action_size=1, real_observation_size=1, low_log_prob = 0.8):
         assert self._impl is not None
         assert self._impl._policy is not None
 
@@ -1313,8 +1313,6 @@ class COMB(COMBO):
         task_id_tensor = torch.from_numpy(np.broadcast_to(task_id_tensor, (_original.shape[0], self._id_size))).to(torch.float32).to(self._impl.device)
         original_observation = torch.cat([_original, task_id_tensor], dim=1)
         original_action = self._impl._policy(original_observation)
-        replay_indexes = None
-        new_transitions = []
 
         transitions = np.array([transition for episode in dataset.episodes for transition in episode])
         transition_observations = np.stack([transition.observation for transition in transitions])
@@ -1324,7 +1322,9 @@ class COMB(COMBO):
 
         export_time = 0
         start_indexes = np.zeros(0)
-        while (start_indexes.shape[0] != 0 or original_observation is not None) and export_time < max_export_time and len(new_transitions) < max_save_num:
+        replay_indexes = []
+        orl_indexes = []
+        while (start_indexes.shape[0] != 0 or original_observation is not None) and export_time < max_export_time and len(replay_indexes) < max_save_num:
             if original_observation is not None:
                 start_observations = original_observation
                 start_actions = original_action
@@ -1352,14 +1352,13 @@ class COMB(COMBO):
             else:
                 near_indexes, _, _ = similar_mb(mus[0], logstds[0], transition_observations[:, :real_observation_size], transition_rewards, self._dynamics._impl._dynamics, topk=self._topk)
                 near_indexes_list.append(near_indexes)
-            # 第一个非空的将作为接下来衍生的起点被保留。
             near_indexes_list.reverse()
-            start_indexes = None
+            # 附近的所有点都会留下来作为orl的数据集。
             for start_indexes in near_indexes_list:
-                if replay_indexes is not None:
-                    new_start_indexes = np.setdiff1d(start_indexes, replay_indexes, True)
-                else:
-                    new_start_indexes = start_indexes
+                orl_indexes = np.union1d(start_indexes, orl_indexes)
+            # 第一个非空的将作为接下来衍生的起点被保留，同时也用作replay的数据集。
+            for start_indexes in near_indexes_list:
+                new_start_indexes = np.setdiff1d(start_indexes, replay_indexes, True)
                 if new_start_indexes.shape[0] != 0:
                     start_indexes = new_start_indexes
                 else:
@@ -1376,8 +1375,15 @@ class COMB(COMBO):
                 replay_indexes = start_indexes
             export_time += 1
 
-        new_transitions = transitions[replay_indexes].tolist()
-        prev_transitions = [transition.prev_transition for transition in new_transitions]
+        orl_transitions = transitions[orl_indexes].tolist()
+        prev_transitions = [transition.prev_transition for transition in orl_transitions]
+        if not in_task:
+            prev_observations = torch.from_numpy(np.stack([prev_transition.observation for prev_transition in prev_transitions], axis=0)).to(self._impl.device)
+            prev_actions = torch.from_numpy(np.stack([prev_transition.action for prev_transition in prev_transitions], axis=0)).to(self._impl.device)
+            prev_dists = self._impl.policy.dist(prev_observations)
+            prev_log_prob = prev_dists.log_prob(prev_actions)
+            prev_index = (prev_log_prob > low_log_prob).cpu().detach().numpy()
+            prev_transitions = prev_transitions[prev_index]
         random.shuffle(prev_transitions)
         if len(prev_transitions) > max_save_num:
             prev_transitions = prev_transitions[:max_save_num]
