@@ -1,3 +1,4 @@
+import sys
 import os
 import time
 import itertools
@@ -14,7 +15,7 @@ def compute_vector_norm(tensor1, tensor2):
     tensor2.half()
     ret = torch.linalg.vector_norm(tensor1 - tensor2, dim = 2)
     return ret.cpu()
-def similar_euclid(obs_all, dataset_name, dataset_num, input_indexes=None, eval_batch_size=10000, topk=256):
+def similar_euclid(obs_all, obs_transition, dataset_name, dataset_num, input_indexes=None, eval_batch_size=10000, topk=256):
     filename = 'near_indexes_' + dataset_name + '/near_indexes_' + dataset_name + '_' + str(dataset_num) + '.pt'
     if os.path.exists(filename):
         return torch.load(filename)
@@ -24,28 +25,28 @@ def similar_euclid(obs_all, dataset_name, dataset_num, input_indexes=None, eval_
         in_results = []
         j = 0
         if i + eval_batch_size < obs_all.shape[0]:
-            while j < obs_all.shape[0]:
-                if j + eval_batch_size < obs_all.shape[0]:
+            while j < obs_transition.shape[0]:
+                if j + eval_batch_size < obs_transition.shape[0]:
                     tensor1 = obs_all[i: i + eval_batch_size, :2].unsqueeze(dim=1).expand(-1, eval_batch_size, -1)
-                    tensor2 = obs_all[j: j + eval_batch_size, :2].unsqueeze(dim=0).expand(eval_batch_size, -1, -1)
+                    tensor2 = obs_transition[j: j + eval_batch_size, :2].unsqueeze(dim=0).expand(eval_batch_size, -1, -1)
                     siamese_distance = compute_vector_norm(tensor1, tensor2)
                     in_results.append(siamese_distance)
                 else:
-                    tensor1 = obs_all[i: i + eval_batch_size, :2].unsqueeze(dim=1).expand(-1, obs_all.shape[0] - j, -1)
-                    tensor2 = obs_all[j:, :2].unsqueeze(dim=0).expand(eval_batch_size, -1, -1)
+                    tensor1 = obs_all[i: i + eval_batch_size, :2].unsqueeze(dim=1).expand(-1, obs_transition.shape[0] - j, -1)
+                    tensor2 = obs_transition[j:, :2].unsqueeze(dim=0).expand(eval_batch_size, -1, -1)
                     siamese_distance = compute_vector_norm(tensor1, tensor2)
                     in_results.append(siamese_distance)
                 j += eval_batch_size
         else:
-            while j < obs_all.shape[0]:
-                if j + eval_batch_size < obs_all.shape[0]:
+            while j < obs_transition.shape[0]:
+                if j + eval_batch_size < obs_transition.shape[0]:
                     tensor1 = obs_all[i:, :2].unsqueeze(dim=1).expand(-1, eval_batch_size, -1)
-                    tensor2 = obs_all[j: j + eval_batch_size, :2].unsqueeze(dim=0).expand(obs_all.shape[0] - i, -1, -1)
+                    tensor2 = obs_transition[j: j + eval_batch_size, :2].unsqueeze(dim=0).expand(obs_all.shape[0] - i, -1, -1)
                     siamese_distance = compute_vector_norm(tensor1, tensor2)
                     in_results.append(siamese_distance)
                 else:
-                    tensor1 = obs_all[i:, :2].unsqueeze(dim=1).expand(-1, obs_all.shape[0] - j, -1)
-                    tensor2 = obs_all[j:, :2].unsqueeze(dim=0).expand(obs_all.shape[0] - i, -1, -1)
+                    tensor1 = obs_all[i:, :2].unsqueeze(dim=1).expand(-1, obs_transition.shape[0] - j, -1)
+                    tensor2 = obs_transition[j:, :2].unsqueeze(dim=0).expand(obs_all.shape[0] - i, -1, -1)
                     siamese_distance = compute_vector_norm(tensor1, tensor2)
                     in_results.append(siamese_distance)
                 j += eval_batch_size
@@ -127,17 +128,16 @@ def similar_phi(obs_batch, act_batch, obs_near, act_near, phi, input_indexes=Non
 
 def similar_mb(mus, logstds, observations, rewards, network, topk=4, batch_size=64, input_indexes=None):
     i = 0
-    near_distances, near_indexes = [], []
+    log_probs = []
     while i < observations.shape[0]:
         normal = Normal(mus.unsqueeze(dim=0).expand(min(i + batch_size, observations.shape[0]) - i, -1), torch.exp(logstds).unsqueeze(dim=0).expand(min(i + batch_size, observations.shape[0]) - i, -1))
-        log_prob = normal.log_prob(torch.from_numpy(np.concatenate([observations[i: min(i + batch_size, observations.shape[0])], rewards[i: min(i + batch_size, observations.shape[0])]], axis=1)).to(mus.device))
+        log_prob = normal.log_prob(torch.cat([observations[i: min(i + batch_size, observations.shape[0])], rewards[i: min(i + batch_size, observations.shape[0])].unsqueeze(dim=1)], dim=1))
         i += batch_size
-        log_prob = torch.sum(log_prob, dim=-1)
-        near_distances_, near_indexes_ = torch.topk(log_prob, topk)
-        near_distances.append(near_distances_)
-        near_indexes.append(near_indexes_)
-    near_distances = torch.cat(near_distances, dim=0).cpu().detach().numpy()
-    near_indexes = torch.cat(near_indexes, dim=0).cpu().detach().numpy()
+        log_prob = log_prob.sum(dim=1)
+        log_probs.append(log_prob)
+    log_prob = torch.cat(log_probs, dim=0)
+    near_distances, near_indexes = torch.topk(log_prob, topk)
+    near_indexes = near_indexes.cpu().detach().numpy()
     if input_indexes is not None:
         near_indexes = input_indexes[near_indexes]
     smallest_distance, smallest_index = near_distances[0], near_indexes[0]
