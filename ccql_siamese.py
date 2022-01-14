@@ -25,23 +25,23 @@ from myd3rlpy.dynamics.probabilistic_ensemble_dynamics import ProbabilisticEnsem
 
 replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'next_actions', 'next_rewards', 'terminals', 'means', 'std_logs', 'qs', 'phis', 'psis']
 # 暂时只练出来一个。
-# dynamics_path = ['d3rlpy_logs/ProbabilisticEnsembleDynamics_20220110095933/model_1407000.pt' for _ in range(7)]
-dynamics_path = [None for _ in range(4)]
 def main(args, device):
     np.set_printoptions(precision=1, suppress=True)
     if args.dataset == 'ant_maze':
         from dataset.split_navigate import split_navigate_antmaze_large_play_v0
         origin_dataset, task_datasets, taskid_task_datasets, origin_task_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums = split_navigate_antmaze_large_play_v0(args.task_split_type, args.top_euclid, device)
+        dynamics_path = ['d3rlpy_logs/ProbabilisticEnsembleDynamics_20220110095933/model_1407000.pt' for _ in range(7)]
     elif args.dataset == 'maze':
         from dataset.split_maze import split_navigate_maze_large_dense_v1
         origin_dataset, task_datasets, taskid_task_datasets, origin_task_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums = split_navigate_maze_large_dense_v1(args.task_split_type, args.top_euclid, device)
+        dynamics_path = ['d3rlpy_logs/ProbabilisticEnsembleDynamics_20220114102821/model_925054.pt' for _ in range(4)]
     else:
         assert False
 
     # prepare algorithm
     if args.algos == 'co':
         from myd3rlpy.algos.comb import COMB
-        co = COMB(use_gpu=True, batch_size=args.batch_size, n_action_samples=args.n_action_samples, cql_loss=args.cql_loss, q_bc_loss=args.q_bc_loss, td3_loss=args.td3_loss, policy_bc_loss=args.policy_bc_loss, mb_generate=args.mb_generate)
+        co = COMB(use_gpu=True, batch_size=args.batch_size, n_action_samples=args.n_action_samples, id_size=task_nums, cql_loss=args.cql_loss, q_bc_loss=args.q_bc_loss, td3_loss=args.td3_loss, policy_bc_loss=args.policy_bc_loss, mb_generate=args.mb_generate)
     else:
         raise NotImplementedError
     experiment_name = "COMB"

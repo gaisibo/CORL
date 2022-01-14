@@ -1351,6 +1351,8 @@ class COMB(COMBO):
                 original_observation = None
             else:
                 start_observations = torch.from_numpy(dataset._observations[start_indexes]).to(self._impl.device)
+                print(start_observations.shape)
+                print(start_observations[0])
                 start_actions = self._impl._policy(start_observations)
 
             mus, logstds = [], []
