@@ -8,6 +8,7 @@ from typing import (
     Optional,
     Tuple,
     Union,
+    cast,
 )
 
 import gym
@@ -189,29 +190,26 @@ class ProbabilisticEnsembleDynamics(ProbabilisticEnsembleDynamics):
             iterator yielding current epoch and metrics dict.
         """
 
+        transitions = []
         if isinstance(dataset, MDPDataset):
-            episodes = dataset.episodes
+            for episode in dataset.episodes:
+                transitions += episode.transitions
+        elif not dataset:
+            raise ValueError("empty dataset is not supported.")
+        elif isinstance(dataset[0], Episode):
+            for episode in cast(List[Episode], dataset):
+                transitions += episode.transitions
+        elif isinstance(dataset[0], Transition):
+            transitions = list(cast(List[Transition], dataset))
         else:
-            episodes = dataset
-
-        # check action space
-        if self.get_action_type() == ActionSpace.BOTH:
-            pass
-        elif len(episodes[0].actions.shape) > 1:
-            assert (
-                self.get_action_type() == ActionSpace.CONTINUOUS
-            ), CONTINUOUS_ACTION_SPACE_MISMATCH_ERROR
-        else:
-            assert (
-                self.get_action_type() == ActionSpace.DISCRETE
-            ), DISCRETE_ACTION_SPACE_MISMATCH_ERROR
+            raise ValueError(f"invalid dataset type: {type(dataset)}")
 
         iterator: TransitionIterator
         if n_epochs is None and n_steps is not None:
             assert n_steps >= n_steps_per_epoch
             n_epochs = n_steps // n_steps_per_epoch
             iterator = RandomIterator(
-                episodes,
+                transitions,
                 n_steps_per_epoch,
                 batch_size=self._batch_size,
                 n_steps=self._n_steps,
@@ -223,7 +221,7 @@ class ProbabilisticEnsembleDynamics(ProbabilisticEnsembleDynamics):
             LOG.debug("RandomIterator is selected.")
         elif n_epochs is not None and n_steps is None:
             iterator = RoundIterator(
-                episodes,
+                transitions,
                 batch_size=self._batch_size,
                 n_steps=self._n_steps,
                 gamma=self._gamma,
@@ -248,19 +246,6 @@ class ProbabilisticEnsembleDynamics(ProbabilisticEnsembleDynamics):
 
         # add reference to active logger to algo class during fit
         self._active_logger = logger
-
-        # initialize scaler
-        if self._scaler:
-            LOG.debug("Fitting scaler...", scaler=self._scaler.get_type())
-            self._scaler.fit(episodes)
-
-        # initialize action scaler
-        if self._action_scaler:
-            LOG.debug(
-                "Fitting action scaler...",
-                action_scaler=self._action_scaler.get_type(),
-            )
-            self._action_scaler.fit(episodes)
 
         # instantiate implementation
         if self._impl is None:

@@ -29,7 +29,11 @@ replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'next_
 def main(args, device):
     np.set_printoptions(precision=1, suppress=True)
     if args.dataset == 'ant_maze':
+        from dataset.split_navigate import split_navigate_antmaze_large_play_v0
         origin_dataset, task_datasets, taskid_task_datasets, origin_task_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums = split_navigate_antmaze_large_play_v0(args.task_split_type, args.top_euclid, device)
+    elif args.dataset == 'maze':
+        from dataset.split_maze import split_navigate_maze_large_dense_v1
+        origin_dataset, task_datasets, taskid_task_datasets, origin_task_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums = split_navigate_maze_large_dense_v1(args.task_split_type, args.top_euclid, device)
     else:
         assert False
 
@@ -83,9 +87,9 @@ if __name__ == '__main__':
     parser.add_argument('--algos', default='co', type=str)
     parser.add_argument('--eval', action='store_true')
     parser.add_argument('--test', action='store_true')
-    parser.add_argument("--n_epochs", default=200, type=int)
+    parser.add_argument("--n_epochs", default=1000, type=int)
     parser.add_argument("--n_action_samples", default=4, type=int)
-    parser.add_argument('--top_euclid', default=8, type=int)
+    parser.add_argument('--top_euclid', default=64, type=int)
     orl_parser = parser.add_mutually_exclusive_group(required=True)
     orl_parser.add_argument('--orl', dest='orl', action='store_true')
     orl_parser.add_argument('--no_orl', dest='orl', action='store_false')

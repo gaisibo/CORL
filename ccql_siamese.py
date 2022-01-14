@@ -37,9 +37,6 @@ def main(args, device):
         origin_dataset, task_datasets, taskid_task_datasets, origin_task_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums = split_navigate_maze_large_dense_v1(args.task_split_type, args.top_euclid, device)
     else:
         assert False
-    transitions = [transition for episodes in task_datasets[0].episodes for transition in episodes]
-    indexes_euclids = task_datasets[0].actions[:, real_action_size:]
-    max_indexes_euclids = np.max(indexes_euclids)
 
     # prepare algorithm
     if args.algos == 'co':

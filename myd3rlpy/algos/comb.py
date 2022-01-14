@@ -139,6 +139,7 @@ class COMB(COMBO):
     _rollout_horizon: int
     _rollout_batch_size: int
     _use_gpu: Optional[Device]
+    _change_reward: bool
 
     def __init__(
         self,
@@ -190,6 +191,7 @@ class COMB(COMBO):
         n_train_dynamics = 1,
         topk = 10,
         mb_generate = True,
+        change_reward = True,
         **kwargs: Any
     ):
         super().__init__(
@@ -224,6 +226,7 @@ class COMB(COMBO):
             action_scaler = action_scaler,
             reward_scaler = reward_scaler,
             impl = impl,
+            change_reward = change_reward,
             kwargs = kwargs,
         )
         self._cql_loss = cql_loss
@@ -234,16 +237,17 @@ class COMB(COMBO):
         self._replay_critic_alpha = replay_critic_alpha
         self._id_size = id_size
 
+        self._alpha_optim_factory = alpha_optim_factory
+        self._alpha_learning_rate = alpha_learning_rate
+        self._initial_alpha = initial_alpha
+        self._alpha_threshold = alpha_threshold
+
         self._impl_name = impl_name
         self._origin = origin
         self._n_train_dynamics = n_train_dynamics
         self._topk = topk
         self._use_mb_generate = mb_generate
-
-        self._alpha_optim_factory = alpha_optim_factory
-        self._alpha_learning_rate = alpha_learning_rate
-        self._initial_alpha = initial_alpha
-        self._alpha_threshold = alpha_threshold
+        self._change_reward = change_reward
 
     def _create_impl(
         self, observation_shape: Sequence[int], action_size: int
@@ -1394,11 +1398,21 @@ class COMB(COMBO):
         orl_transitions = transitions[orl_indexes].tolist()
         prev_transitions = [transition.prev_transition for transition in orl_transitions]
         if not in_task:
+            assert self._impl is not None
+            assert self._impl._policy is not None
             prev_observations = torch.from_numpy(np.stack([prev_transition.observation for prev_transition in prev_transitions], axis=0)).to(self._impl.device)
             prev_actions = torch.from_numpy(np.stack([prev_transition.action for prev_transition in prev_transitions], axis=0)).to(self._impl.device)
-            prev_dists = self._impl.policy.dist(prev_observations)
+            prev_dists = self._impl._policy.dist(prev_observations)
             prev_log_prob = prev_dists.log_prob(prev_actions)
             prev_index = (prev_log_prob > low_log_prob).cpu().detach().numpy()
+            if self._change_reward:
+                assert self._impl._q_func is not None
+                prev_next_observations = torch.from_numpy(np.stack([prev_transition.next_observation for prev_transition in prev_transitions], axis=0)).to(self._impl.device)
+                prev_next_actions = torch.from_numpy(np.stack([prev_transition.next_action for prev_transition in prev_transitions], axis=0)).to(self._impl.device)
+                prev_terminals = torch.from_numpy(np.stack([prev_transition.terminal for prev_transition in prev_transitions], axis=0)).to(self._impl.device)
+                prev_q = self._impl._q_func(prev_observations, prev_actions)
+                prev_diff_q = prev_q - self.gamma * self._impl._q_func(prev_next_observations, prev_next_actions)
+                prev_rewards = torch.where(prev_terminals == 0, prev_diff_q, prev_q)
             prev_transitions = prev_transitions[prev_index]
         random.shuffle(prev_transitions)
         if len(prev_transitions) > max_save_num:
