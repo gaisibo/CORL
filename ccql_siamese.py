@@ -40,14 +40,14 @@ def main(args, device):
 
     # prepare algorithm
     if args.algos == 'co':
-        from myd3rlpy.algos.comb import COMB
-        co = COMB(use_gpu=True, batch_size=args.batch_size, n_action_samples=args.n_action_samples, id_size=task_nums, cql_loss=args.cql_loss, q_bc_loss=args.q_bc_loss, td3_loss=args.td3_loss, policy_bc_loss=args.policy_bc_loss, mb_generate=args.mb_generate)
+        from myd3rlpy.algos.co import CO
+        co = CO(use_gpu=True, batch_size=args.batch_size, n_action_samples=args.n_action_samples, id_size=task_nums, cql_loss=args.cql_loss, q_bc_loss=args.q_bc_loss, td3_loss=args.td3_loss, policy_bc_loss=args.policy_bc_loss, generate_type=args.generate_type)
     else:
         raise NotImplementedError
     experiment_name = "COMB"
     algos_name = "_orl" if args.orl else "_noorl"
-    algos_name += "_mb_generate" if args.mb_generate else "_no_mb_generate"
-    algos_name += "_mb_replay" if args.mb_replay else "_no_mb_replay"
+    algos_name += args.generate_type
+    algos_name += args.replay_type
     algos_name += '_' + args.dataset_name
 
     if not args.eval:
@@ -84,7 +84,7 @@ def main(args, device):
                 train_dynamics=dynamics_path[task_id] is None,
             )
             if args.algos == 'co':
-                if args.mb_replay:
+                if args.replay_type:
                     replay_datasets[task_id], save_datasets[task_id] = co.generate_replay_data(task_id, task_datasets[task_id], original, in_task=False, max_save_num=args.max_save_num, real_action_size=real_action_size, real_observation_size=real_observation_size)
                     print(f"len(replay_datasets[task_id]): {len(replay_datasets[task_id])}")
                 else:
@@ -136,17 +136,12 @@ if __name__ == '__main__':
     parser.add_argument("--n_epochs", default=1000, type=int)
     parser.add_argument("--n_action_samples", default=4, type=int)
     parser.add_argument('--top_euclid', default=64, type=int)
-    orl_parser = parser.add_mutually_exclusive_group(required=True)
-    orl_parser.add_argument('--orl', dest='orl', action='store_true')
-    orl_parser.add_argument('--no_orl', dest='orl', action='store_false')
-    mb_generate_parser = parser.add_mutually_exclusive_group(required=True)
-    mb_generate_parser.add_argument('--mb_generate', dest='mb_generate', action='store_true')
-    mb_generate_parser.add_argument('--no_mb_generate', dest='mb_generate', action='store_false')
-    mb_replay_parser = parser.add_mutually_exclusive_group(required=True)
-    mb_replay_parser.add_argument('--mb_replay', dest='mb_replay', action='store_true')
-    mb_replay_parser.add_argument('--no_mb_replay', dest='mb_replay', action='store_false')
+    parser.add_argument('--orl', default='orl', choices=['orl', 'no_orl'])
+    parser.add_argument('--retrain_reduce', default='retrain_reduce', choices=['retrain_reduce', 'no_retrain_reduce'])
+    parser.add_argument('--replay_type', default='siamese', type=str, choices=['siamese', 'random', 'model_base'])
+    parser.add_argument('--generate_type', default='siamese', type=str, choices=['siamese', 'random', 'model_base'])
     args = parser.parse_args()
-    args.model_path = 'd3rlpy_mb_' + ('test' if args.test else ('train' if not args.eval else 'eval')) + '/model_'
+    args.model_path = 'd3rlpy_' + args.replay_type + '_' + args.generate_type + '_' + args.orl + '_' + args.retrain_reduce + '_' + args.dataset + ('test' if args.test else ('train' if not args.eval else 'eval')) + '/model_'
     if args.orl:
         args.cql_loss = True
         args.td3_loss = True
