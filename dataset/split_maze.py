@@ -82,5 +82,5 @@ def split_navigate_maze_large_dense_v1(task_split_type, top_euclid, device):
         origin_task_datasets[dataset_num] = MDPDataset(dataset.observations, dataset.actions, dataset.rewards, dataset.terminals, dataset.episode_terminals)
         indexes_euclids[dataset_num] = indexes_euclid
 
-    original = np.zeros([1, real_observation_size], dtype=np.float32)
+    original = 0
     return origin_dataset, changed_task_datasets, taskid_task_datasets, origin_task_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums

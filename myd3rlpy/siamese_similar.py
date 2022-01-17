@@ -118,8 +118,8 @@ def similar_phi(obs_batch, act_batch, obs_near, act_near, phi, input_indexes=Non
         near_distances.append(near_distances_)
         near_indexes.append(near_indexes_)
         i += eval_batch_size
-    near_distances = torch.cat(near_distances, dim=0)
-    near_indexes = torch.cat(near_indexes, dim=0)
+    near_distances = torch.cat(near_distances, dim=0).cpu().detach().numpy()
+    near_indexes = torch.cat(near_indexes, dim=0).cpu().detach().numpy()
     if input_indexes is not None:
         for i in range(near_indexes.shape[0]):
             near_indexes[i, :] = input_indexes[i, near_indexes[i, :]]

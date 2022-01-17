@@ -250,6 +250,30 @@ class COImpl(CQLImpl):
         return loss, replay_loss, replay_losses
 
     @train_api
+    @torch_api()
+    def update_alpha(self, batch: TorchMiniBatch) -> np.ndarray:
+        assert self._alpha_optim is not None
+        assert self._q_func is not None
+        assert self._log_alpha is not None
+
+        # Q function should be inference mode for stability
+        self._q_func.eval()
+
+        self._alpha_optim.zero_grad()
+
+        # the original implementation does scale the loss value
+        loss = -self._compute_conservative_loss(
+            batch.observations, batch.actions[:, :self._action_size], batch.next_observations
+        )
+
+        loss.backward()
+        self._alpha_optim.step()
+
+        cur_alpha = self._log_alpha().exp().cpu().detach().numpy()[0][0]
+
+        return loss.cpu().detach().numpy(), cur_alpha
+
+    @train_api
     def update_phi(self, batch: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[torch.Tensor]]]=None):
         assert self._phi_optim is not None
         self._phi.train()
@@ -293,11 +317,12 @@ class COImpl(CQLImpl):
         assert self._psi is not None
         s, a, r, sp = batch.observations.to(self.device), batch.actions[:, :self.action_size].to(self.device), batch.rewards.to(self.device), batch.next_observations.to(self.device)
         half_size = batch.observations.shape[0] // 2
-        phi = self._phi(s, a[:, :self._action_size])
+        end_size = 2 * half_size
+        phi = self._phi(s, a[:, :end_size])
         psi = self._psi(sp)
-        diff_phi = torch.linalg.vector_norm(phi[:half_size] - phi[half_size:], dim=1).mean()
-        diff_r = torch.abs(r[:half_size] - r[half_size:]).mean()
-        diff_psi = self._gamma * torch.linalg.vector_norm(psi[:half_size] - psi[half_size:], dim=1).mean()
+        diff_phi = torch.linalg.vector_norm(phi[:half_size] - phi[half_size:end_size], dim=1).mean()
+        diff_r = torch.abs(r[:half_size] - r[half_size:end_size]).mean()
+        diff_psi = self._gamma * torch.linalg.vector_norm(psi[:half_size] - psi[half_size:end_size], dim=1).mean()
         loss_phi = diff_phi + diff_r + diff_psi
         return loss_phi, diff_phi.cpu().detach().numpy(), diff_r.cpu().detach().numpy(), diff_psi.cpu().detach().numpy()
 
@@ -342,11 +367,12 @@ class COImpl(CQLImpl):
         assert self._policy is not None
         s, a = batch.observations.to(self.device), batch.actions.to(self.device)
         half_size = batch.observations.shape[0] // 2
-        psi = self._psi(s)
-        loss_psi_diff = torch.linalg.vector_norm(psi[:half_size] - psi[half_size:], dim=1).mean()
+        end_size = 2 * half_size
+        psi = self._psi(s[:, :end_size])
+        loss_psi_diff = torch.linalg.vector_norm(psi[:half_size] - psi[half_size:end_size], dim=1).mean()
         action = self._policy.dist(s)
         action1 = torch.distributions.normal.Normal(action.mean[:half_size], action.stddev[:half_size])
-        action2 = torch.distributions.normal.Normal(action.mean[half_size:], action.stddev[half_size:])
+        action2 = torch.distributions.normal.Normal(action.mean[half_size:end_size], action.stddev[half_size:end_size])
         loss_psi_kl = torch.distributions.kl.kl_divergence(action1, action2).mean()
         with torch.no_grad():
             if not pretrain:
@@ -354,7 +380,7 @@ class COImpl(CQLImpl):
             else:
                 u = torch.randn(a.shape[0], self._action_size).to(self.device)
             phi = self._phi(s, u)
-            loss_psi_u = torch.linalg.vector_norm(phi[:half_size] - phi[half_size], dim=1).mean()
+            loss_psi_u = torch.linalg.vector_norm(phi[:half_size] - phi[half_size:end_size], dim=1).mean()
         loss_psi = loss_psi_diff + loss_psi_kl - loss_psi_u
         loss_psi_diff = loss_psi_diff.cpu().detach().numpy()
         loss_psi_kl = loss_psi_kl.cpu().detach().numpy()

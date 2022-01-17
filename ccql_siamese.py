@@ -41,7 +41,7 @@ def main(args, device):
     # prepare algorithm
     if args.algos == 'co':
         from myd3rlpy.algos.co import CO
-        co = CO(use_gpu=True, batch_size=args.batch_size, n_action_samples=args.n_action_samples, id_size=task_nums, cql_loss=args.cql_loss, q_bc_loss=args.q_bc_loss, td3_loss=args.td3_loss, policy_bc_loss=args.policy_bc_loss, generate_type=args.generate_type)
+        co = CO(use_gpu=True, batch_size=args.batch_size, n_action_samples=args.n_action_samples, id_size=task_nums, cql_loss=args.cql_loss, q_bc_loss=args.q_bc_loss, td3_loss=args.td3_loss, policy_bc_loss=args.policy_bc_loss, generate_type=args.generate_type, reduce_replay=args.reduce_replay)
     else:
         raise NotImplementedError
     experiment_name = "COMB"
@@ -58,12 +58,13 @@ def main(args, device):
             eval_datasets[task_id] = dataset
             draw_path = args.model_path + algos_name + '_trajectories_' + str(task_id) + '_'
 
-            dynamics = ProbabilisticEnsembleDynamics(task_id=task_id, original=original, learning_rate=1e-4, use_gpu=True, id_size=task_nums)
-            dynamics.create_impl([real_observation_size], real_action_size)
-            if dynamics_path[task_id] is not None:
-                dynamics.load_model(dynamics_path[task_id])
+            if args.generate_type == 'model_base':
+                dynamics = ProbabilisticEnsembleDynamics(task_id=task_id, original=original, learning_rate=1e-4, use_gpu=True, id_size=task_nums)
+                dynamics.create_impl([real_observation_size], real_action_size)
+                if dynamics_path[task_id] is not None:
+                    dynamics.load_model(dynamics_path[task_id])
 # same as algorithms
-            co._dynamics = dynamics
+                co._dynamics = dynamics
             co._origin = original
             # train
             co.fit(
@@ -84,8 +85,8 @@ def main(args, device):
                 train_dynamics=dynamics_path[task_id] is None,
             )
             if args.algos == 'co':
-                if args.replay_type:
-                    replay_datasets[task_id], save_datasets[task_id] = co.generate_replay_data(task_id, task_datasets[task_id], original, in_task=False, max_save_num=args.max_save_num, real_action_size=real_action_size, real_observation_size=real_observation_size)
+                if args.replay_type == 'siamese':
+                    replay_datasets[task_id], save_datasets[task_id] = co.generate_replay_data_phi(task_id, task_datasets[task_id], original, in_task=False, max_save_num=args.max_save_num, real_action_size=real_action_size, real_observation_size=real_observation_size)
                     print(f"len(replay_datasets[task_id]): {len(replay_datasets[task_id])}")
                 else:
                     replay_datasets[task_id], save_datasets[task_id] = co.generate_replay_data_random(task_id, task_datasets[task_id], max_save_num=args.max_save_num, real_action_size=real_action_size, in_task=False)
@@ -140,6 +141,7 @@ if __name__ == '__main__':
     parser.add_argument('--retrain_reduce', default='retrain_reduce', choices=['retrain_reduce', 'no_retrain_reduce'])
     parser.add_argument('--replay_type', default='siamese', type=str, choices=['siamese', 'random', 'model_base'])
     parser.add_argument('--generate_type', default='siamese', type=str, choices=['siamese', 'random', 'model_base'])
+    parser.add_argument('--reduce_replay', default='retrain', type=str)
     args = parser.parse_args()
     args.model_path = 'd3rlpy_' + args.replay_type + '_' + args.generate_type + '_' + args.orl + '_' + args.retrain_reduce + '_' + args.dataset + ('test' if args.test else ('train' if not args.eval else 'eval')) + '/model_'
     if args.orl:
