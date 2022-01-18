@@ -163,7 +163,7 @@ class COImpl(CQLImpl):
         )
 
     @train_api
-    def update_critic_double(self, batch_1: TransitionMiniBatch, replay_batches_1: Optional[Dict[int, List[torch.Tensor]]]=None, batch_2: TransitionMiniBatch):
+    def update_critic_double(self, batch_1: TransitionMiniBatch, batch_2: TransitionMiniBatch, replay_batches_1: Optional[Dict[int, List[torch.Tensor]]]=None):
         self._q_func = self._q_func_2
         self._critic_optim = self._critic_optim_2
         self._policy = self._policy_2
@@ -172,7 +172,7 @@ class COImpl(CQLImpl):
         self._temp_optim = self._temp_optim_2
         self._log_alpha = self._log_alpha_2
         self._alpha_optim = self._alpha_optim_2
-        loss_2, replay_loss_2, replay_losses_2 = self.update_critic_single(batch_2, None)
+        loss_2, replay_loss_2, replay_losses_2 = self.update_critic(batch_2, None)
 
         self._q_func = self._q_func_1
         self._critic_optim = self._critic_optim_1
@@ -182,7 +182,7 @@ class COImpl(CQLImpl):
         self._temp_optim = self._temp_optim_1
         self._log_alpha = self._log_alpha_1
         self._alpha_optim = self._alpha_optim_1
-        loss_1, replay_loss_1, replay_losses_1 = self.update_critic_single(batch_1, replay_batches_1)
+        loss_1, replay_loss_1, replay_losses_1 = self.update_critic(batch_1, replay_batches_1)
         return loss_1, replay_loss_1, replay_loss_1, loss_2, replay_loss_2, replay_losses_2
 
     @train_api
@@ -257,7 +257,7 @@ class COImpl(CQLImpl):
         return loss + conservative_loss
 
     @train_api
-    def update_actor_double(self, batch_1: TransitionMiniBatch, replay_batches_1: Optional[Dict[int, List[torch.Tensor]]]=None, batch_2: TransitionMiniBatch):
+    def update_actor_double(self, batch_1: TransitionMiniBatch, batch_2: TransitionMiniBatch, replay_batches_1: Optional[Dict[int, List[torch.Tensor]]]=None):
         self._q_func = self._q_func_2
         self._critic_optim = self._critic_optim_2
         self._policy = self._policy_2
@@ -472,7 +472,7 @@ class COImpl(CQLImpl):
         psi = self._psi(sp)
         diff_phi = torch.linalg.vector_norm(phi[:half_size] - phi[half_size:end_size], dim=1).mean()
         diff_r = torch.abs(r[:half_size] - r[half_size:end_size]).mean()
-        diff_kl = torch.distributions.kl.kl_divergence(self._policy.dist(s[:half_size]), self._policy_dist(s[half_size:end_size]))
+        diff_kl = torch.distributions.kl.kl_divergence(self._policy.dist(s[:half_size]), self._policy.dist(s[half_size:end_size]))
         diff_psi = self._gamma * torch.linalg.vector_norm(psi[:half_size] - psi[half_size:end_size], dim=1).mean()
         loss_phi = diff_phi + diff_r + diff_psi
         return loss_phi, diff_phi.cpu().detach().numpy(), diff_r.cpu().detach().numpy(), diff_psi.cpu().detach().numpy()

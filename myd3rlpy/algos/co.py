@@ -446,7 +446,7 @@ class CO(CQL):
         show_progress: bool = True,
         tensorboard_dir: Optional[str] = None,
         eval_episodess: Optional[Dict[int, List[Episode]]] = None,
-        save_interval: int = 100,
+        save_interval: int = 1,
         discount: float = 0.99,
         start_timesteps : int = int(25e3),
         expl_noise: float = 1,

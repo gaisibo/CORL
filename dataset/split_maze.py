@@ -66,7 +66,7 @@ def split_navigate_maze_large_dense_v1(task_split_type, top_euclid, device):
         observations = np.concatenate([np.flip(episode.observations, axis=0) for episode in episodes], axis=0)
         actions = np.concatenate([np.flip(episode.actions, axis=0) for episode in episodes], axis=0)
         rewards = np.concatenate([np.ones_like(episode.rewards) for episode in episodes])
-        rewards_times = np.random.randn(rewards.shape) * 0.1
+        rewards_times = np.random.randn(*rewards.shape) * 0.1
         rewards += rewards_times
         terminals = [np.zeros(episode.observations.shape[0]) for episode in episodes]
         for terminal in terminals:
@@ -96,4 +96,4 @@ def split_navigate_maze_large_dense_v1(task_split_type, top_euclid, device):
         indexes_euclids[dataset_num] = indexes_euclid
 
     original = 0
-    return origin_dataset, changed_task_datasets, taskid_task_datasets, origin_task_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums
+    return origin_dataset, changed_task_datasets, taskid_task_datasets, origin_task_datasets, reverse_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums
