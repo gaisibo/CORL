@@ -352,7 +352,7 @@ class COMB(COMBO):
         with_timestamp: bool = True,
         logdir: str = "d3rlpy_logs",
         verbose: bool = True,
-        show_progress: bool = True,
+        show_progress: bool = False,
         tensorboard_dir: Optional[str] = None,
         eval_episodess: Optional[Dict[int, List[Episode]]] = None,
         save_interval: int = 100,

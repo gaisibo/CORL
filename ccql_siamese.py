@@ -125,8 +125,8 @@ if __name__ == '__main__':
     parser.add_argument('--siamese_hidden_size', default=100, type=int)
     parser.add_argument('--near_threshold', default=1, type=float)
     parser.add_argument('--siamese_threshold', default=1, type=float)
-    parser.add_argument('--eval_batch_size', default=256, type=int)
-    parser.add_argument('--batch_size', default=256, type=int)
+    parser.add_argument('--eval_batch_size', default=128, type=int)
+    parser.add_argument('--batch_size', default=128, type=int)
     parser.add_argument('--topk', default=4, type=int)
     parser.add_argument('--max_save_num', default=1000, type=int)
     parser.add_argument('--task_split_type', default='undirected', type=str)
@@ -138,12 +138,11 @@ if __name__ == '__main__':
     parser.add_argument("--n_action_samples", default=4, type=int)
     parser.add_argument('--top_euclid', default=64, type=int)
     parser.add_argument('--orl', default='orl', choices=['orl', 'no_orl'])
-    parser.add_argument('--retrain_reduce', default='retrain_reduce', choices=['retrain_reduce', 'no_retrain_reduce'])
     parser.add_argument('--replay_type', default='siamese', type=str, choices=['siamese', 'random', 'model_base'])
     parser.add_argument('--generate_type', default='siamese', type=str, choices=['siamese', 'random', 'model_base'])
-    parser.add_argument('--reduce_replay', default='retrain', type=str)
+    parser.add_argument('--reduce_replay', default='retrain', type=str, choices=['retrain', 'no_retrain'])
     args = parser.parse_args()
-    args.model_path = 'd3rlpy_' + args.replay_type + '_' + args.generate_type + '_' + args.orl + '_' + args.retrain_reduce + '_' + args.dataset + ('test' if args.test else ('train' if not args.eval else 'eval')) + '/model_'
+    args.model_path = 'd3rlpy_' + args.replay_type + '_' + args.generate_type + '_' + args.orl + '_' + args.reduce_replay + '_' + args.dataset + ('test' if args.test else ('train' if not args.eval else 'eval')) + '/model_'
     if args.orl:
         args.cql_loss = True
         args.td3_loss = True

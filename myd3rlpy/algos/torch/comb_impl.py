@@ -183,6 +183,7 @@ class COMBImpl(COMBOImpl):
             q_tp1=q_tpn,
             ter_tp1=batch.terminals,
             gamma=self._gamma ** batch.n_steps,
+            use_independent_target=self._target_reduction_type == "none",
         )
         conservative_loss = self._compute_conservative_loss(
             batch.observations, batch.actions[:, :self._action_size], batch.next_observations
