@@ -22,7 +22,7 @@ do
                                 do
                                         for n in "${!double_data[@]}"
                                         do
-                                                ~/run_gpu_task -g gpu:rtx2080:1 -c 1 -j "${short_gene[$i]}${short_replay[$j]}${short_orl[$k]}${short_dataset[$l]}${short_reduce[$m]}${double_data[$n]}" -o output_${gene[$i]}_${replay[$j]}_${orl[$k]}_${dataset[$l]}_${reduce[$m]}_${short_double_data[$n]}.txt -i "compute1:5000/comrl:v13" -v "/home/gaisibo/Continual-Offline/CCQL:/work" "cd /work; /root/miniconda3/bin/python3.7 ccql_siamese.py --generate_type ${gene[$i]} --replay_type ${replay[$j]} --orl ${orl[$k]} --reduce_replay ${reduce[$m]} --double_data ${double_data[$n]} --n_epochs 1000 --dataset ${dataset[$l]}"
+                                                ~/run_gpu_task -g gpu:rtx2080:1 -c 1 -j "${short_gene[$i]}${short_replay[$j]}${short_orl[$k]}${short_dataset[$l]}${short_reduce[$m]}${short_double_data[$n]}" -o output_${gene[$i]}_${replay[$j]}_${orl[$k]}_${dataset[$l]}_${reduce[$m]}_${short_double_data[$n]}.txt -i "compute1:5000/comrl:v13" -v "/home/gaisibo/Continual-Offline/CCQL:/work" "cd /work; /root/miniconda3/bin/python3.7 ccql_siamese.py --generate_type ${gene[$i]} --replay_type ${replay[$j]} --orl ${orl[$k]} --reduce_replay ${reduce[$m]} --double_data ${double_data[$n]} --n_epochs 1000 --dataset ${dataset[$l]}"
                                         done
                                 done
                         done
