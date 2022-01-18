@@ -1550,7 +1550,10 @@ class CO(CQL):
 
             near_indexes_list = []
             if start_indexes.shape[0] > 0:
-                near_indexes, _, _ = similar_phi(start_observations, start_actions[:, :real_action_size], near_observations, near_actions, self._impl._phi, indexes_euclid, topk=self._phi_topk)
+                if self._reduce_replay == 'retrain' and not in_task:
+                    near_indexes, _, _ = similar_phi(start_observations, start_actions[:, :real_action_size], near_observations, near_actions, self._impl._phi, indexes_euclid, topk=self._phi_topk)
+                else:
+                    near_indexes, _, _ = similar_phi(start_observations, start_actions[:, :real_action_size], near_observations, near_actions, self._impl._phi, indexes_euclid, topk=self._retrain_topk)
                 for i in range(near_indexes.shape[0]):
                     near_indexes_list.append(near_indexes[i])
             near_indexes_list.reverse()
@@ -1641,6 +1644,8 @@ class CO(CQL):
         assert self._impl is not None
         assert self._impl._policy is not None
         assert self._impl._q_func is not None
+        assert self._dynamics is not None
+        assert self._dynamics._impl is not None
 
         if in_task:
             if not self._is_generating_new_data():
@@ -1679,10 +1684,16 @@ class CO(CQL):
             if start_indexes.shape[0] > 0:
                 for i in range(len(start_indexes)):
                     line_indexes = dataset._actions[start_indexes[i], real_action_size:].astype(np.int64)
-                    near_indexes, _, _ = similar_mb(mus[i], logstds[i], transition_observations[line_indexes, :real_observation_size], transition_rewards, self._dynamics._impl._dynamics, topk=self._phi_topk, input_indexes=line_indexes)
+                    if self._reduce_replay == 'retrain' and not in_task:
+                        near_indexes, _, _ = similar_mb(mus[i], logstds[i], transition_observations[line_indexes, :real_observation_size], transition_rewards, self._dynamics._impl._dynamics, topk=self._phi_topk, input_indexes=line_indexes)
+                    else:
+                        near_indexes, _, _ = similar_mb(mus[i], logstds[i], transition_observations[line_indexes, :real_observation_size], transition_rewards, self._dynamics._impl._dynamics, topk=self._retrain_topk, input_indexes=line_indexes)
                     near_indexes_list.append(near_indexes)
             else:
-                near_indexes, _, _ = similar_mb(mus[0], logstds[0], transition_observations[:, :real_observation_size], transition_rewards, self._dynamics._impl._dynamics, topk=self._phi_topk)
+                if self._reduce_replay == 'retrain' and not in_task:
+                    near_indexes, _, _ = similar_mb(mus[0], logstds[0], transition_observations[:, :real_observation_size], transition_rewards, self._dynamics._impl._dynamics, topk=self._phi_topk)
+                else:
+                    near_indexes, _, _ = similar_mb(mus[0], logstds[0], transition_observations[:, :real_observation_size], transition_rewards, self._dynamics._impl._dynamics, topk=self._retrain_topk)
                 near_indexes_list.append(near_indexes)
             near_indexes_list.reverse()
             # 附近的所有点都会留下来作为orl的数据集。
