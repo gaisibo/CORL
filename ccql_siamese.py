@@ -29,11 +29,11 @@ def main(args, device):
     np.set_printoptions(precision=1, suppress=True)
     if args.dataset == 'ant_maze':
         from dataset.split_navigate import split_navigate_antmaze_large_play_v0
-        origin_dataset, task_datasets, taskid_task_datasets, origin_task_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums = split_navigate_antmaze_large_play_v0(args.task_split_type, args.top_euclid, device)
+        origin_dataset, task_datasets, taskid_task_datasets, origin_task_datasets, reverse_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums = split_navigate_antmaze_large_play_v0(args.task_split_type, args.top_euclid, device)
         dynamics_path = ['d3rlpy_logs/ProbabilisticEnsembleDynamics_20220110095933/model_1407000.pt' for _ in range(7)]
     elif args.dataset == 'maze':
         from dataset.split_maze import split_navigate_maze_large_dense_v1
-        origin_dataset, task_datasets, taskid_task_datasets, origin_task_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums = split_navigate_maze_large_dense_v1(args.task_split_type, args.top_euclid, device)
+        origin_dataset, task_datasets, taskid_task_datasets, origin_task_datasets, reverse_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums = split_navigate_maze_large_dense_v1(args.task_split_type, args.top_euclid, device)
         dynamics_path = ['d3rlpy_logs/ProbabilisticEnsembleDynamics_20220114102821/model_925054.pt' for _ in range(4)]
     else:
         assert False
@@ -44,11 +44,11 @@ def main(args, device):
         co = CO(use_gpu=True, batch_size=args.batch_size, n_action_samples=args.n_action_samples, id_size=task_nums, cql_loss=args.cql_loss, q_bc_loss=args.q_bc_loss, td3_loss=args.td3_loss, policy_bc_loss=args.policy_bc_loss, generate_type=args.generate_type, reduce_replay=args.reduce_replay)
     else:
         raise NotImplementedError
-    experiment_name = "COMB"
+    experiment_name = "CO"
     algos_name = "_orl" if args.orl else "_noorl"
-    algos_name += args.generate_type
-    algos_name += args.replay_type
-    algos_name += '_' + args.dataset_name
+    algos_name += "_" + args.generate_type
+    algos_name += "_" + args.replay_type
+    algos_name += '_' + args.dataset
 
     if not args.eval:
         replay_datasets = dict()
@@ -70,6 +70,7 @@ def main(args, device):
             co.fit(
                 task_id,
                 dataset,
+                dataset2,
                 origin_task_datasets[task_id],
                 replay_datasets,
                 original = original,
@@ -130,7 +131,6 @@ if __name__ == '__main__':
     parser.add_argument('--topk', default=4, type=int)
     parser.add_argument('--max_save_num', default=1000, type=int)
     parser.add_argument('--task_split_type', default='undirected', type=str)
-    parser.add_argument('--dataset_name', default='antmaze-large-play-v0', type=str)
     parser.add_argument('--algos', default='co', type=str)
     parser.add_argument('--eval', action='store_true')
     parser.add_argument('--test', action='store_true')

@@ -47,20 +47,33 @@ def split_navigate_maze_large_dense_v1(task_split_type, top_euclid, device):
                 i += task_length
     task_datasets_ = {}
     envs = {}
-    for task_index, task_episodes in task_datasets.items():
-        envs[task_index] = deepcopy(env)
-        envs[task_index]._goal = end_points[task_index]
-        envs[task_index].target_goal = end_points[task_index]
-        observations = np.concatenate([episode.observations for episode in task_episodes], axis=0)
-        actions = np.concatenate([episode.actions for episode in task_episodes], axis=0)
-        rewards = np.where(np.linalg.norm(observations[:, :2] - end_points[task_index], axis=1) < 0.5, 1, 0)
-        terminals = [np.zeros(task_episode.observations.shape[0]) for task_episode in task_episodes]
+    for index, episodes in task_datasets.items():
+        envs[index] = deepcopy(env)
+        envs[index]._goal = end_points[index]
+        envs[index].target_goal = end_points[index]
+        observations = np.concatenate([episode.observations for episode in episodes], axis=0)
+        actions = np.concatenate([episode.actions for episode in episodes], axis=0)
+        rewards = np.where(np.linalg.norm(observations[:, :2] - end_points[index], axis=1) < 0.5, 1, 0)
+        terminals = [np.zeros(episode.observations.shape[0]) for episode in episodes]
         for terminal in terminals:
             terminal[-1] = 1
         terminals = np.concatenate(terminals, axis=0)
-        terminals += rewards
-        task_datasets_[task_index] = MDPDataset(observations, actions, rewards, terminals)
+        task_datasets_[index] = MDPDataset(observations, actions, rewards, terminals)
     task_datasets = task_datasets_
+
+    reverse_datasets_ = {}
+    for index, episodes in task_datasets.items():
+        observations = np.concatenate([np.flip(episode.observations, axis=0) for episode in episodes], axis=0)
+        actions = np.concatenate([np.flip(episode.actions, axis=0) for episode in episodes], axis=0)
+        rewards = np.concatenate([np.ones_like(episode.rewards) for episode in episodes])
+        rewards_times = np.random.randn(rewards.shape) * 0.1
+        rewards += rewards_times
+        terminals = [np.zeros(episode.observations.shape[0]) for episode in episodes]
+        for terminal in terminals:
+            terminal[-1] = 1
+        terminals = np.concatenate(terminals, axis=0)
+        reverse_datasets_[index] = MDPDataset(observations, actions, rewards, terminals)
+    reverse_datasets = reverse_datasets_
 
     changed_task_datasets = dict()
     taskid_task_datasets = dict()

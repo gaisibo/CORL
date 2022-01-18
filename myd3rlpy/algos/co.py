@@ -213,6 +213,7 @@ class CO(CQL):
         generate_type = True,
         change_reward = True,
         reduce_replay = True,
+        double_data = False,
         **kwargs: Any
     ):
         super().__init__(
@@ -272,6 +273,7 @@ class CO(CQL):
         self._train_phi = train_phi
         self._replay_phi_alpha = replay_phi_alpha
         self._replay_psi_alpha = replay_psi_alpha
+        self._double_data = double_data
 
         self._impl_name = impl_name
         self._origin = origin
@@ -330,18 +332,64 @@ class CO(CQL):
             action_scaler=self._action_scaler,
             reward_scaler=self._reward_scaler,
         )
-        self._impl.build()
+        if self._double_data:
+            self._impl.build()
+        else:
+            self._impl.build_double()
 
-    def update(self, batch: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[Tensor]]]) -> Dict[int, float]:
+    def update(self, batch: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[Tensor]]], batch2: TransitionMiniBatch = None) -> Dict[int, float]:
         """Update parameters with mini-batch of data.
         Args:
             batch: mini-batch data.
         Returns:
             dictionary of metrics.
         """
-        loss = self._update(batch, replay_batches)
+        if self._double_data:
+            loss = self._update(batch, replay_batches)
+        else:
+            loss = self._update_double(batch, batch2, replay_batches)
         self._grad_step += 1
         return loss
+
+    # 注意欧氏距离最近邻被塞到actions后面了。
+    def _update_double(self, batch1: TransitionMiniBatch, batch2: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[Tensor]]]) -> Dict[int, float]:
+        assert self._impl is not None, IMPL_NOT_INITIALIZED_ERROR
+        metrics = {}
+
+        if self._temp_learning_rate > 0:
+            temp_loss1, temp1, temp_loss2, temp2 = self._impl.update_temp_double(batch1, batch2)
+            metrics.update({"temp_loss1": temp_loss1, "temp1": temp1})
+            metrics.update({"temp_loss2": temp_loss2, "temp2": temp2})
+
+        if self._alpha_learning_rate > 0:
+            alpha_loss1, alpha1, alpha_loss2, alpha2 = self._impl.update_alpha_double(batch1, batch2)
+            metrics.update({"alpha_loss1": alpha_loss1, "alpha1": alpha1})
+            metrics.update({"alpha_loss2": alpha_loss2, "alpha2": alpha2})
+
+        critic_loss1, replay_critic_loss1, _, critic_loss2, replay_critic_loss2, _ = self._impl.update_critic_double(batch1, replay_batches, batch2)
+        metrics.update({"critic_loss1": critic_loss1})
+        metrics.update({"replay_critic_loss1": replay_critic_loss1})
+        metrics.update({"critic_loss2": critic_loss2})
+        metrics.update({"replay_critic_loss2": replay_critic_loss2})
+
+        actor_loss1, replay_actor_loss1, _, actor_loss2, replay_actor_loss2, _ = self._impl.update_actor_double(batch1, replay_batches, batch2)
+        metrics.update({"actor_loss1": actor_loss1})
+        metrics.update({"replay_actor_loss1": replay_actor_loss1})
+        metrics.update({"actor_loss2": actor_loss2})
+        metrics.update({"replay_actor_loss2": replay_actor_loss2})
+
+        self._impl.update_critic_target_double()
+        self._impl.update_actor_target_double()
+
+        if self._train_phi:
+            phi_loss, phi_diff_phi, phi_diff_r, phi_diff_psi = self._impl.update_phi(batch1)
+            metrics.update({"phi_loss": phi_loss})
+            psi_loss, psi_diff_loss, psi_kl_loss, psi_u_loss = self._impl.update_psi(batch1, pretrain=False)
+            metrics.update({"psi_loss": psi_loss})
+            self._impl.update_phi_target()
+            self._impl.update_psi_target()
+
+        return metrics
 
     # 注意欧氏距离最近邻被塞到actions后面了。
     def _update(self, batch: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[Tensor]]]) -> Dict[int, float]:
@@ -368,12 +416,10 @@ class CO(CQL):
         self._impl.update_actor_target()
 
         if self._train_phi:
-            phi_loss, phi_policy_loss, phi_diff_phi, phi_diff_r, phi_diff_psi, phi_replay_loss = self._impl.update_phi(batch, replay_batches=replay_batches)
+            phi_loss, phi_diff_phi, phi_diff_r, phi_diff_psi = self._impl.update_phi(batch)
             metrics.update({"phi_loss": phi_loss})
-            metrics.update({"phi_replay_loss": phi_replay_loss})
-            psi_loss, psi_policy_loss, psi_diff_loss, psi_kl_loss, psi_u_loss, psi_replay_loss = self._impl.update_psi(batch, replay_batches=replay_batches, pretrain=False)
+            psi_loss, psi_diff_loss, psi_kl_loss, psi_u_loss = self._impl.update_psi(batch, pretrain=False)
             metrics.update({"psi_loss": psi_loss})
-            metrics.update({"psi_replay_loss": psi_replay_loss})
             self._impl.update_critic_target()
             self._impl.update_actor_target()
 
@@ -383,6 +429,7 @@ class CO(CQL):
         self,
         task_id: int,
         dataset: Optional[Union[List[Episode], MDPDataset]] = None,
+        dataset2: Optional[Union[List[Episode], MDPDataset]] = None,
         origin_dataset: Optional[Union[List[Episode], MDPDataset]] = None,
         replay_datasets: Optional[Union[Dict[int, TensorDataset], Dict[int, List[Transition]]]] = None,
         env: gym.envs = None,
@@ -452,6 +499,7 @@ class CO(CQL):
             self.fitter(
                 task_id,
                 dataset,
+                dataset2,
                 origin_dataset,
                 replay_datasets,
                 env,
@@ -489,6 +537,7 @@ class CO(CQL):
         self,
         task_id: int,
         dataset: Optional[Union[List[Episode], MDPDataset]] = None,
+        dataset2: Optional[Union[List[Episode], MDPDataset]] = None,
         origin_dataset: Optional[Union[List[Episode], MDPDataset]] = None,
         replay_datasets: Optional[Union[Dict[int, TensorDataset], Dict[int, List[Transition]]]] = None,
         env: gym.envs = None,
@@ -652,9 +701,10 @@ class CO(CQL):
         iterator: TransitionIterator
         if env is None:
 
+            assert dataset is not None
             transitions = []
             if isinstance(dataset, MDPDataset):
-                for episode in dataset.episodes:
+                for episode in cast(MDPDataset, dataset).episodes:
                     transitions += episode.transitions
             elif not dataset:
                 raise ValueError("empty dataset is not supported.")
@@ -666,25 +716,46 @@ class CO(CQL):
             else:
                 raise ValueError(f"invalid dataset type: {type(dataset)}")
 
-            origin_transitions = []
-            if isinstance(origin_dataset, MDPDataset):
-                for episode in origin_dataset.episodes:
-                    origin_transitions += episode.transitions
-            elif not origin_dataset:
-                raise ValueError("empty origin_dataset is not supported.")
-            elif isinstance(origin_dataset[0], Episode):
-                for episode in cast(List[Episode], dataset):
-                    origin_transitions += episode.transitions
-            elif isinstance(origin_dataset[0], Transition):
-                origin_transitions = list(cast(List[Transition], dataset))
+            if self._double_data:
+                assert dataset2 is not None
+                transitions2 = []
+                if isinstance(dataset2, MDPDataset):
+                    for episode in cast(MDPDataset, dataset2).episodes:
+                        transitions2 += episode.transitions
+                elif not dataset2:
+                    raise ValueError("empty dataset2 is not supported for double update.")
+                elif isinstance(dataset2[0], Episode):
+                    for episode in cast(List[Episode], dataset2):
+                        transitions2 += episode.transitions
+                elif isinstance(dataset2[0], Transition):
+                    transitions2 = list(cast(List[Transition], dataset2))
+                else:
+                    raise ValueError(f"invalid dataset type: {type(dataset2)}")
+
+            if self._generate_type == 'model_base':
+                assert origin_dataset is not None
+                origin_transitions = []
+                if isinstance(origin_dataset, MDPDataset):
+                    for episode in cast(MDPDataset, origin_dataset).episodes:
+                        origin_transitions += episode.transitions
+                elif not dataset:
+                    raise ValueError("empty origin_dataset is not supported.")
+                elif isinstance(origin_dataset[0], Episode):
+                    for episode in cast(List[Episode], origin_dataset):
+                        origin_transitions += episode.transitions
+                elif isinstance(origin_dataset[0], Transition):
+                    origin_transitions = list(cast(List[Transition], origin_dataset))
+                else:
+                    raise ValueError(f"invalid origin_dataset type: {type(origin_dataset)}")
             else:
-                raise ValueError(f"invalid origin_dataset type: {type(dataset)}")
+                origin_transitions = None
 
             if self._generate_type == 'model_base':
                 assert self._dynamics is not None
+                assert origin_transitions is not None
                 if train_dynamics:
                     self._dynamics.fit(
-                        origin_dataset,
+                        origin_transitions,
                         n_epochs=1,
                         scorers={
                            'observation_error': dynamics_observation_prediction_error_scorer,
@@ -707,10 +778,30 @@ class CO(CQL):
                     real_ratio=self._real_ratio,
                     generated_maxlen=self._generated_maxlen,
                 )
+                iterator2 = RandomIterator(
+                    transitions2,
+                    n_steps_per_epoch,
+                    batch_size=self._batch_size,
+                    n_steps=self._n_steps,
+                    gamma=self._gamma,
+                    n_frames=self._n_frames,
+                    real_ratio=self._real_ratio,
+                    generated_maxlen=self._generated_maxlen,
+                )
                 LOG.debug("RandomIterator is selected.")
             elif n_epochs is not None and n_steps is None:
                 iterator = RoundIterator(
                     transitions,
+                    batch_size=self._batch_size,
+                    n_steps=self._n_steps,
+                    gamma=self._gamma,
+                    n_frames=self._n_frames,
+                    real_ratio=self._real_ratio,
+                    generated_maxlen=self._generated_maxlen,
+                    shuffle=shuffle,
+                )
+                iterator2 = RoundIterator(
+                    transitions2,
                     batch_size=self._batch_size,
                     n_steps=self._n_steps,
                     gamma=self._gamma,
@@ -725,13 +816,15 @@ class CO(CQL):
 
             total_step = 0
             if self._generate_type == 'model_base':
+                assert self._dynamics is not None
                 self._dynamics._network = self
             for epoch in range(1, n_epochs + 1):
 
                 if self._generate_type == 'model_base':
+                    assert self._dynamics is not None
                     if self._n_train_dynamics % epoch == 0:
                         self._dynamics.fit(
-                            origin_episodes,
+                            origin_transitions,
                             n_epochs=1,
                             scorers={
                                'observation_error': dynamics_observation_prediction_error_scorer,
@@ -751,6 +844,7 @@ class CO(CQL):
                 )
 
                 iterator.reset()
+                iterator2.reset()
                 if replay_dataloaders is not None:
                     replay_iterators = dict()
                     for replay_num, replay_dataloader in replay_dataloaders.items():
@@ -798,6 +892,12 @@ class CO(CQL):
                             real_transitions=len(iterator.transitions),
                             fake_transitions=len(iterator.generated_transitions),
                         )
+                        iterator2.add_generated_transitions(new_transitions)
+                        LOG.debug(
+                            f"{len(new_transitions)} transitions are generated.",
+                            real_transitions=len(iterator2.transitions),
+                            fake_transitions=len(iterator2.generated_transitions),
+                        )
 
                     # if new_transitions:
                     #     print(f'real_transitions: {len(iterator.transitions)}')
@@ -811,6 +911,7 @@ class CO(CQL):
                         # pick transitions
                         with logger.measure_time("sample_batch"):
                             batch = next(iterator)
+                            batch2 = next(iterator2)
                             if replay_iterators is not None:
                                 assert replay_dataloaders is not None
                                 replay_batches = dict()
@@ -825,7 +926,7 @@ class CO(CQL):
 
                         # update parameters
                         with logger.measure_time("algorithm_update"):
-                            loss = self.update(batch, replay_batches)
+                            loss = self.update(batch, replay_batches, batch2=batch2)
                             # self._impl.increase_siamese_alpha(epoch - n_epochs, itr / len(iterator))
 
                         # record metrics
@@ -1691,13 +1792,13 @@ class CO(CQL):
                 )
             )
 
-            replay_observations = torch.stack([torch.from_numpy(transition.observation) for transition in new_transitions], dim=0)
-            replay_actions = torch.stack([torch.from_numpy(transition.action) for transition in new_transitions], dim=0)
-            replay_rewards = torch.stack([torch.from_numpy(np.array([transition.reward])) for transition in new_transitions], dim=0)
-            replay_next_observations = torch.stack([torch.from_numpy(transition.next_observation) for transition in new_transitions], dim=0)
-            replay_next_actions = torch.stack([torch.from_numpy(transition.next_action) for transition in new_transitions], dim=0)
-            replay_next_rewards = torch.stack([torch.from_numpy(np.array([transition.next_reward])) for transition in new_transitions], dim=0)
-            replay_terminals = torch.stack([torch.from_numpy(np.array([transition.terminal])) for transition in new_transitions], dim=0)
+        replay_observations = torch.stack([torch.from_numpy(transition.observation) for transition in new_transitions], dim=0)
+        replay_actions = torch.stack([torch.from_numpy(transition.action) for transition in new_transitions], dim=0)
+        replay_rewards = torch.stack([torch.from_numpy(np.array([transition.reward])) for transition in new_transitions], dim=0)
+        replay_next_observations = torch.stack([torch.from_numpy(transition.next_observation) for transition in new_transitions], dim=0)
+        replay_next_actions = torch.stack([torch.from_numpy(transition.next_action) for transition in new_transitions], dim=0)
+        replay_next_rewards = torch.stack([torch.from_numpy(np.array([transition.next_reward])) for transition in new_transitions], dim=0)
+        replay_terminals = torch.stack([torch.from_numpy(np.array([transition.terminal])) for transition in new_transitions], dim=0)
         if self._td3_loss or in_task:
             replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_next_actions, replay_next_rewards, replay_terminals)
             return new_transitions, replay_dataset
@@ -1709,8 +1810,6 @@ class CO(CQL):
             replay_psis = self._impl._psis(replay_observations)
             replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_next_actions, replay_next_rewards, replay_terminals, replay_means, replay_std_logs, replay_qs, replay_phis, replay_psis)
             return replay_dataset, replay_dataset
-        else:
-            raise NotImplementedError
 
     def _is_generating_new_data(self) -> bool:
         return self._grad_step % self._rollout_interval == 0

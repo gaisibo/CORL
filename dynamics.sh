@@ -1,1 +1,0 @@
-~/run_gpu_task -g gpu:v100:1 -c 1 -j dyconn -o dynamics_siamese_update_replay.txt -i "compute1:5000/comrl:v11" -v "/home/gaisibo/Continual-Offline/CCQL:/app" "cd /app; /root/miniconda3/bin/python3.7 pretrain_dynamics.py --mb_generate --mb_replay --n_epochs 200 --test --orl"
