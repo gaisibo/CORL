@@ -213,7 +213,7 @@ class CO(CQL):
         generate_type = True,
         change_reward = True,
         reduce_replay = True,
-        double_data = False,
+        double_data = 'double_data',
         **kwargs: Any
     ):
         super().__init__(
@@ -332,7 +332,7 @@ class CO(CQL):
             action_scaler=self._action_scaler,
             reward_scaler=self._reward_scaler,
         )
-        if self._double_data:
+        if self._double_data == 'double_data':
             self._impl.build()
         else:
             self._impl.build_double()
@@ -344,7 +344,7 @@ class CO(CQL):
         Returns:
             dictionary of metrics.
         """
-        if self._double_data:
+        if self._double_data == 'double_data':
             loss = self._update(batch, replay_batches)
         else:
             loss = self._update_double(batch, batch2, replay_batches)
@@ -716,7 +716,7 @@ class CO(CQL):
             else:
                 raise ValueError(f"invalid dataset type: {type(dataset)}")
 
-            if self._double_data:
+            if self._double_data == 'double_data':
                 assert dataset2 is not None
                 transitions2 = []
                 if isinstance(dataset2, MDPDataset):

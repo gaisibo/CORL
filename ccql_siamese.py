@@ -41,7 +41,7 @@ def main(args, device):
     # prepare algorithm
     if args.algos == 'co':
         from myd3rlpy.algos.co import CO
-        co = CO(use_gpu=True, batch_size=args.batch_size, n_action_samples=args.n_action_samples, id_size=task_nums, cql_loss=args.cql_loss, q_bc_loss=args.q_bc_loss, td3_loss=args.td3_loss, policy_bc_loss=args.policy_bc_loss, generate_type=args.generate_type, reduce_replay=args.reduce_replay)
+        co = CO(use_gpu=True, batch_size=args.batch_size, n_action_samples=args.n_action_samples, id_size=task_nums, cql_loss=args.cql_loss, q_bc_loss=args.q_bc_loss, td3_loss=args.td3_loss, policy_bc_loss=args.policy_bc_loss, generate_type=args.generate_type, reduce_replay=args.reduce_replay, double_data=args.double_data)
     else:
         raise NotImplementedError
     experiment_name = "CO"
@@ -55,6 +55,7 @@ def main(args, device):
         save_datasets = dict()
         eval_datasets = dict()
         for task_id, dataset in task_datasets.items():
+            dataset2 = reverse_datasets[task_id]
             eval_datasets[task_id] = dataset
             draw_path = args.model_path + algos_name + '_trajectories_' + str(task_id) + '_'
 
@@ -141,6 +142,7 @@ if __name__ == '__main__':
     parser.add_argument('--replay_type', default='siamese', type=str, choices=['siamese', 'random', 'model_base'])
     parser.add_argument('--generate_type', default='siamese', type=str, choices=['siamese', 'random', 'model_base'])
     parser.add_argument('--reduce_replay', default='retrain', type=str, choices=['retrain', 'no_retrain'])
+    parser.add_argument('--double_data', default='double_data', type=str)
     args = parser.parse_args()
     args.model_path = 'd3rlpy_' + args.replay_type + '_' + args.generate_type + '_' + args.orl + '_' + args.reduce_replay + '_' + args.dataset + ('test' if args.test else ('train' if not args.eval else 'eval')) + '/model_'
     if args.orl:
