@@ -53,7 +53,8 @@ def split_navigate_maze_large_dense_v1(task_split_type, top_euclid, device):
         envs[index].target_goal = end_points[index]
         observations = np.concatenate([episode.observations for episode in episodes], axis=0)
         actions = np.concatenate([episode.actions for episode in episodes], axis=0)
-        rewards = np.where(np.linalg.norm(observations[:, :2] - end_points[index], axis=1) < 0.5, 1, 0)
+        rewards = np.concatenate([episode.rewards for episode in episodes], axis=0)
+        # rewards = np.where(np.linalg.norm(observations[:, :2] - end_points[index], axis=1) < 0.5, 1, 0)
         terminals = [np.zeros(episode.observations.shape[0]) for episode in episodes]
         for terminal in terminals:
             terminal[-1] = 1
@@ -104,4 +105,4 @@ def split_navigate_maze_large_dense_v1(task_split_type, top_euclid, device):
         reverse_task_datasets[dataset_num] = MDPDataset(np.concatenate([dataset.observations, task_id_numpy], axis=1), dataset.actions, dataset.rewards, dataset.terminals, dataset.episode_terminals)
 
     original = 0
-    return origin_dataset, changed_task_datasets, taskid_task_datasets, origin_task_datasets, reverse_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums
+    return origin_dataset, changed_task_datasets, taskid_task_datasets, origin_task_datasets, reverse_task_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums

@@ -366,13 +366,13 @@ class CO(CQL):
             metrics.update({"alpha_loss1": alpha_loss1, "alpha1": alpha1})
             metrics.update({"alpha_loss2": alpha_loss2, "alpha2": alpha2})
 
-        critic_loss1, replay_critic_loss1, _, critic_loss2, replay_critic_loss2, _ = self._impl.update_critic_double(batch1, replay_batches, batch2)
+        critic_loss1, replay_critic_loss1, _, critic_loss2, replay_critic_loss2, _ = self._impl.update_critic_double(batch1, batch2, replay_batches)
         metrics.update({"critic_loss1": critic_loss1})
         metrics.update({"replay_critic_loss1": replay_critic_loss1})
         metrics.update({"critic_loss2": critic_loss2})
         metrics.update({"replay_critic_loss2": replay_critic_loss2})
 
-        actor_loss1, replay_actor_loss1, _, actor_loss2, replay_actor_loss2, _ = self._impl.update_actor_double(batch1, replay_batches, batch2)
+        actor_loss1, replay_actor_loss1, _, actor_loss2, replay_actor_loss2, _ = self._impl.update_actor_double(batch1, batch2, replay_batches)
         metrics.update({"actor_loss1": actor_loss1})
         metrics.update({"replay_actor_loss1": replay_actor_loss1})
         metrics.update({"actor_loss2": actor_loss2})
