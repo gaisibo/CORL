@@ -333,9 +333,9 @@ class CO(CQL):
             reward_scaler=self._reward_scaler,
         )
         if self._double_data == 'double_data':
-            self._impl.build()
-        else:
             self._impl.build_double()
+        else:
+            self._impl.build()
 
     def update(self, batch: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[Tensor]]], batch2: TransitionMiniBatch = None) -> Dict[int, float]:
         """Update parameters with mini-batch of data.
@@ -345,9 +345,9 @@ class CO(CQL):
             dictionary of metrics.
         """
         if self._double_data == 'double_data':
-            loss = self._update(batch, replay_batches)
-        else:
             loss = self._update_double(batch, batch2, replay_batches)
+        else:
+            loss = self._update(batch, replay_batches)
         self._grad_step += 1
         return loss
 
@@ -778,17 +778,18 @@ class CO(CQL):
                     real_ratio=self._real_ratio,
                     generated_maxlen=self._generated_maxlen,
                 )
-                iterator2 = RandomIterator(
-                    transitions2,
-                    n_steps_per_epoch,
-                    batch_size=self._batch_size,
-                    n_steps=self._n_steps,
-                    gamma=self._gamma,
-                    n_frames=self._n_frames,
-                    real_ratio=self._real_ratio,
-                    generated_maxlen=self._generated_maxlen,
-                )
-                LOG.debug("RandomIterator is selected.")
+                if self._double_data == 'double_data':
+                    iterator2 = RandomIterator(
+                        transitions2,
+                        n_steps_per_epoch,
+                        batch_size=self._batch_size,
+                        n_steps=self._n_steps,
+                        gamma=self._gamma,
+                        n_frames=self._n_frames,
+                        real_ratio=self._real_ratio,
+                        generated_maxlen=self._generated_maxlen,
+                    )
+                    LOG.debug("RandomIterator is selected.")
             elif n_epochs is not None and n_steps is None:
                 iterator = RoundIterator(
                     transitions,
@@ -800,17 +801,18 @@ class CO(CQL):
                     generated_maxlen=self._generated_maxlen,
                     shuffle=shuffle,
                 )
-                iterator2 = RoundIterator(
-                    transitions2,
-                    batch_size=self._batch_size,
-                    n_steps=self._n_steps,
-                    gamma=self._gamma,
-                    n_frames=self._n_frames,
-                    real_ratio=self._real_ratio,
-                    generated_maxlen=self._generated_maxlen,
-                    shuffle=shuffle,
-                )
-                LOG.debug("RoundIterator is selected.")
+                if self._double_data == 'double_data':
+                    iterator2 = RoundIterator(
+                        transitions2,
+                        batch_size=self._batch_size,
+                        n_steps=self._n_steps,
+                        gamma=self._gamma,
+                        n_frames=self._n_frames,
+                        real_ratio=self._real_ratio,
+                        generated_maxlen=self._generated_maxlen,
+                        shuffle=shuffle,
+                    )
+                    LOG.debug("RoundIterator is selected.")
             else:
                 raise ValueError("Either of n_epochs or n_steps must be given.")
 
@@ -844,7 +846,8 @@ class CO(CQL):
                 )
 
                 iterator.reset()
-                iterator2.reset()
+                if self._double_data == 'double_data':
+                    iterator2.reset()
                 if replay_dataloaders is not None:
                     replay_iterators = dict()
                     for replay_num, replay_dataloader in replay_dataloaders.items():
@@ -892,12 +895,13 @@ class CO(CQL):
                             real_transitions=len(iterator.transitions),
                             fake_transitions=len(iterator.generated_transitions),
                         )
-                        iterator2.add_generated_transitions(new_transitions)
-                        LOG.debug(
-                            f"{len(new_transitions)} transitions are generated.",
-                            real_transitions=len(iterator2.transitions),
-                            fake_transitions=len(iterator2.generated_transitions),
-                        )
+                        if self._double_data == 'double_data':
+                            iterator2.add_generated_transitions(new_transitions)
+                            LOG.debug(
+                                f"{len(new_transitions)} transitions are generated.",
+                                real_transitions=len(iterator2.transitions),
+                                fake_transitions=len(iterator2.generated_transitions),
+                            )
 
                     # if new_transitions:
                     #     print(f'real_transitions: {len(iterator.transitions)}')
@@ -911,7 +915,8 @@ class CO(CQL):
                         # pick transitions
                         with logger.measure_time("sample_batch"):
                             batch = next(iterator)
-                            batch2 = next(iterator2)
+                            if self._double_data == 'double_data':
+                                batch2 = next(iterator2)
                             if replay_iterators is not None:
                                 assert replay_dataloaders is not None
                                 replay_batches = dict()
@@ -926,7 +931,10 @@ class CO(CQL):
 
                         # update parameters
                         with logger.measure_time("algorithm_update"):
-                            loss = self.update(batch, replay_batches, batch2=batch2)
+                            if self._double_data == 'double_data':
+                                loss = self.update(batch, replay_batches, batch2=batch2)
+                            else:
+                                loss = self.update(batch, replay_batches)
                             # self._impl.increase_siamese_alpha(epoch - n_epochs, itr / len(iterator))
 
                         # record metrics

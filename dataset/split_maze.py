@@ -95,5 +95,13 @@ def split_navigate_maze_large_dense_v1(task_split_type, top_euclid, device):
         origin_task_datasets[dataset_num] = MDPDataset(dataset.observations, dataset.actions, dataset.rewards, dataset.terminals, dataset.episode_terminals)
         indexes_euclids[dataset_num] = indexes_euclid
 
+    reverse_task_datasets = dict()
+    for dataset_num, dataset in task_datasets.items():
+        task_id_numpy = np.eye(task_nums)[dataset_num].squeeze()
+        task_id_numpy = np.broadcast_to(task_id_numpy, (dataset.observations.shape[0], task_nums))
+        real_observation_size = dataset.observations.shape[1]
+        # 用action保存一下indexes_euclid，用state保存一下task_id
+        reverse_task_datasets[dataset_num] = MDPDataset(np.concatenate([dataset.observations, task_id_numpy], axis=1), dataset.actions, dataset.rewards, dataset.terminals, dataset.episode_terminals)
+
     original = 0
     return origin_dataset, changed_task_datasets, taskid_task_datasets, origin_task_datasets, reverse_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums
