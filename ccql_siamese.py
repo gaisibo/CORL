@@ -1,3 +1,4 @@
+import os
 import sys
 import argparse
 import json
@@ -57,7 +58,7 @@ def main(args, device):
         for task_id, dataset in task_datasets.items():
             dataset2 = reverse_datasets[task_id]
             eval_datasets[task_id] = dataset
-            draw_path = args.model_path + algos_name + '_trajectories_' + str(task_id) + '_'
+            draw_path = args.model_path + algos_name + '_trajectories_' + str(task_id)
 
             if args.generate_type == 'model_base':
                 dynamics = ProbabilisticEnsembleDynamics(task_id=task_id, original=original, learning_rate=1e-4, use_gpu=True, id_size=task_nums)
@@ -144,7 +145,10 @@ if __name__ == '__main__':
     parser.add_argument('--reduce_replay', default='retrain', type=str, choices=['retrain', 'no_retrain'])
     parser.add_argument('--double_data', default='double_data', type=str)
     args = parser.parse_args()
-    args.model_path = 'd3rlpy_' + args.replay_type + '_' + args.generate_type + '_' + args.orl + '_' + args.reduce_replay + '_' + args.dataset + ('test' if args.test else ('train' if not args.eval else 'eval')) + '/model_'
+    args.model_path = 'd3rlpy_' + args.replay_type + '_' + args.generate_type + '_' + args.orl + '_' + args.reduce_replay + '_' + args.dataset + '_' + ('test' if args.test else ('train' if not args.eval else 'eval'))
+    if not os.path.exists(args.model_path):
+        os.makedirs(args.model_path)
+    args.model_path +=  '/model_'
     if args.orl:
         args.cql_loss = True
         args.td3_loss = True
