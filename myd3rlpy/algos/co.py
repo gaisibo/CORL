@@ -37,7 +37,8 @@ from d3rlpy.constants import (
     DYNAMICS_NOT_GIVEN_ERROR,
     ActionSpace,
 )
-from d3rlpy.base import TransitionIterator, TransitionMiniBatch, LearnableBase
+from d3rlpy.base import LearnableBase
+from d3rlpy.iterators import TransitionIterator
 from d3rlpy.models.encoders import EncoderFactory
 from d3rlpy.metrics.scorer import dynamics_observation_prediction_error_scorer, dynamics_reward_prediction_error_scorer, dynamics_prediction_variance_scorer
 from d3rlpy.iterators.random_iterator import RandomIterator
@@ -344,46 +345,6 @@ class CO(CQL):
         return loss
 
     # 注意欧氏距离最近邻被塞到actions后面了。
-    def _update_double(self, batch1: TransitionMiniBatch, batch2: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[Tensor]]]) -> Dict[int, float]:
-        assert self._impl is not None, IMPL_NOT_INITIALIZED_ERROR
-        metrics = {}
-
-        if self._temp_learning_rate > 0:
-            temp_loss1, temp1, temp_loss2, temp2 = self._impl.update_temp_double(batch1, batch2)
-            metrics.update({"temp_loss1": temp_loss1, "temp1": temp1})
-            metrics.update({"temp_loss2": temp_loss2, "temp2": temp2})
-
-        if self._alpha_learning_rate > 0:
-            alpha_loss1, alpha1, alpha_loss2, alpha2 = self._impl.update_alpha_double(batch1, batch2)
-            metrics.update({"alpha_loss1": alpha_loss1, "alpha1": alpha1})
-            metrics.update({"alpha_loss2": alpha_loss2, "alpha2": alpha2})
-
-        critic_loss1, replay_critic_loss1, _, critic_loss2, replay_critic_loss2, _ = self._impl.update_critic_double(batch1, batch2, replay_batches)
-        metrics.update({"critic_loss1": critic_loss1})
-        metrics.update({"replay_critic_loss1": replay_critic_loss1})
-        metrics.update({"critic_loss2": critic_loss2})
-        metrics.update({"replay_critic_loss2": replay_critic_loss2})
-
-        actor_loss1, replay_actor_loss1, _, actor_loss2, replay_actor_loss2, _ = self._impl.update_actor_double(batch1, batch2, replay_batches)
-        metrics.update({"actor_loss1": actor_loss1})
-        metrics.update({"replay_actor_loss1": replay_actor_loss1})
-        metrics.update({"actor_loss2": actor_loss2})
-        metrics.update({"replay_actor_loss2": replay_actor_loss2})
-
-        self._impl.update_critic_target_double()
-        self._impl.update_actor_target_double()
-
-        if self._train_phi:
-            phi_loss, phi_diff_phi, phi_diff_r, phi_diff_psi = self._impl.update_phi(batch1)
-            metrics.update({"phi_loss": phi_loss})
-            psi_loss, psi_diff_loss, psi_kl_loss, psi_u_loss = self._impl.update_psi(batch1, pretrain=False)
-            metrics.update({"psi_loss": psi_loss})
-            self._impl.update_phi_target()
-            self._impl.update_psi_target()
-
-        return metrics
-
-    # 注意欧氏距离最近邻被塞到actions后面了。
     def _update(self, batch: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[Tensor]]]) -> Dict[int, float]:
         assert self._impl is not None, IMPL_NOT_INITIALIZED_ERROR
         metrics = {}
@@ -407,13 +368,19 @@ class CO(CQL):
         self._impl.update_critic_target()
         self._impl.update_actor_target()
 
-        if self._train_phi:
-            phi_loss, phi_diff_phi, phi_diff_r, phi_diff_psi = self._impl.update_phi(batch)
-            metrics.update({"phi_loss": phi_loss})
-            psi_loss, psi_diff_loss, psi_kl_loss, psi_u_loss = self._impl.update_psi(batch, pretrain=False)
-            metrics.update({"psi_loss": psi_loss})
-            self._impl.update_critic_target()
-            self._impl.update_actor_target()
+        return metrics
+
+    def _update_phi(self, batch: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[Tensor]]]):
+        assert self._impl is not None, IMPL_NOT_INITIALIZED_ERROR
+        metrics = {}
+
+        # if self._train_phi:
+        phi_loss, phi_diff_phi, phi_diff_r, phi_diff_kl, phi_diff_psi = self._impl.update_phi(batch)
+        metrics.update({"phi_loss": phi_loss})
+        psi_loss, psi_diff_loss, psi_u_loss = self._impl.update_psi(batch, pretrain=False)
+        metrics.update({"psi_loss": psi_loss})
+        self._impl.update_critic_target()
+        self._impl.update_actor_target()
 
         return metrics
 
@@ -1294,8 +1261,6 @@ class CO(CQL):
                     action=actions[i],
                     reward=float(rewards[i][0]),
                     next_observation=next_observations[i],
-                    next_action=next_actions[i],
-                    next_reward=float(next_rewards[i][0]),
                     terminal=0.0,
                 )
 
@@ -1357,15 +1322,11 @@ class CO(CQL):
                     action = start_actions[i].cpu().detach().numpy(),
                     reward = start_rewards[i],
                     next_observation = next_x[i].cpu().detach().numpy(),
-                    next_action = next_action[i].cpu().detach().numpy(),
-                    next_reward = next_reward[i].cpu().detach().numpy(),
+                    next_action = next_action,
+                    next_reward = next_reward,
                     terminal = 0,
-                    next_transition=None,
-                    prev_transition=prev_transition,
                 )
                 new_transitions.append(transition)
-                if i == 0:
-                    prev_transition = transition
 
             if start_indexes.shape[0] > 0:
                 line_indexes = dataset._actions[start_indexes[0], real_action_size:].astype(np.int64)
@@ -1425,12 +1386,11 @@ class CO(CQL):
                             action_size=transitions[i].get_action_size(),
                             observation=transitions[i].observation,
                             action=transitions[i].action,
-                            reward=-1000000,
+                            reward=-10000,
                             next_observation=transitions[i].next_observation,
-                            next_action=transitions[i].next_action,
-                            next_reward=transitions[i].next_reward,
+                            next_action = transitions[i].next_action,
+                            next_reward = transitions[i].next_reward,
                             terminal=transitions[i].terminal,
-                            prev_transition=transitions[i].prev_transition
                         )
                         reduce_transitions.append(transitions[i])
                         reduce_transitions.append(reduce_transition)
@@ -1515,16 +1475,19 @@ class CO(CQL):
 
         # 用log_prob缩小范围。
         orl_indexes_ = []
-        for indexes, transitions in zip(orl_indexes, orl_transitions):
-            transition_batch = TransitionMiniBatch(transitions.tolist())
+        for log_prob_indexes, log_prob_transitions in zip(orl_indexes, orl_transitions):
+            transition_batch = TransitionMiniBatch(log_prob_transitions.tolist())
             transition_dist = self._impl._policy.dist(torch.from_numpy(transition_batch.observations).to(self._impl.device))
-            transition_log_prob = torch.mean(transition_dist.log_prob(transition_batch.actions[:, :real_action_size].to(self._impl.device)))
+            transition_log_prob = torch.mean(transition_dist.log_prob(torch.from_numpy(transition_batch.actions[:, :real_action_size]).to(self._impl.device)), dim=1)
             if self._reduce_replay == 'retrain' and not in_task:
-                choosed_sample_index = indexes[torch.topk(transition_log_prob, k=self._log_prob_topk).cpu().detach().numpy()]
+                _, choosed_sample_index = torch.topk(transition_log_prob, k=self._log_prob_topk)
+                choosed_sample_index = log_prob_indexes[choosed_sample_index.cpu().detach().numpy()]
             else:
-                choosed_sample_index = indexes[torch.topk(transition_log_prob, k=self._retrain_topk).cpu().detach().numpy()]
+                _, choosed_sample_index = torch.topk(transition_log_prob, k=self._retrain_topk)
+                choosed_sample_index = log_prob_indexes[choosed_sample_index.cpu().detach().numpy()]
             orl_indexes_.append(choosed_sample_index)
         orl_indexes = orl_indexes_
+        orl_transitions = [transitions[orl_index] for orl_index in orl_indexes]
 
         if self._reduce_replay == 'retrain' and not in_task:
             orl_indexes = self.generate_replay_data_reduce(orl_indexes, orl_transitions, real_action_size)
@@ -1538,11 +1501,16 @@ class CO(CQL):
             if self._change_reward == 'change':
                 assert self._impl._q_func is not None
                 orl_transitions_ = []
+                orl_observations = torch.from_numpy(np.stack([orl_transition.observation for orl_transition in orl_transitions], axis=0)).to(self._impl.device)
+                orl_actions = torch.from_numpy(np.stack([orl_transition.action for orl_transition in orl_transitions], axis=0)).to(self._impl.device)
                 orl_next_observations = torch.from_numpy(np.stack([orl_transition.next_observation for orl_transition in orl_transitions], axis=0)).to(self._impl.device)
                 orl_next_actions = torch.from_numpy(np.stack([orl_transition.next_action for orl_transition in orl_transitions], axis=0)).to(self._impl.device)
                 orl_terminals = torch.from_numpy(np.stack([orl_transition.terminal for orl_transition in orl_transitions], axis=0)).to(self._impl.device)
-                orl_q = self._impl._q_func(orl_observations, orl_actions)
-                orl_diff_q = orl_q - self.gamma * self._impl._q_func(orl_next_observations, orl_next_actions)
+                orl_q = self._impl._q_func(orl_observations, orl_actions[:, :real_action_size]).squeeze()
+                orl_diff_q = orl_q - self.gamma * self._impl._q_func(orl_next_observations, orl_next_actions[:, :real_action_size]).squeeze()
+                print(f'orl_terminals: {orl_terminals.shape}')
+                print(f'orl_diff_q: {orl_diff_q.shape}')
+                print(f'orl_q: {orl_q.shape}')
                 orl_rewards = torch.where(orl_terminals == 0, orl_diff_q, orl_q)
                 for i, transition in enumerate(orl_transitions):
                     orl_transition = Transition(
@@ -1552,10 +1520,9 @@ class CO(CQL):
                         action=transition.action,
                         reward=orl_rewards[i].cpu().detach().numpy(),
                         next_observation=transition.next_observation,
-                        next_action=transition.next_action,
-                        next_reward=transition.next_reward,
+                        next_action = transition.next_action,
+                        next_reward = transition.next_reward,
                         terminal=transition.terminal,
-                        prev_transition=transition.prev_transition
                     )
                     orl_transitions_.append(orl_transition)
                 orl_transitions = orl_transitions_
@@ -1591,6 +1558,7 @@ class CO(CQL):
         assert self._impl._q_func is not None
         assert self._dynamics is not None
         assert self._dynamics._impl is not None
+        assert self._dynamics._impl._dynamics is not None
 
         if in_task:
             if not self._is_generating_new_data():
@@ -1686,11 +1654,13 @@ class CO(CQL):
             if self._change_reward == 'change':
                 assert self._impl._q_func is not None
                 orl_transitions_ = []
+                orl_observations = torch.from_numpy(np.stack([orl_transition.observation for orl_transition in orl_transitions], axis=0)).to(self._impl.device)
+                orl_actions = torch.from_numpy(np.stack([orl_transition.action for orl_transition in orl_transitions], axis=0)).to(self._impl.device)
                 orl_next_observations = torch.from_numpy(np.stack([orl_transition.next_observation for orl_transition in orl_transitions], axis=0)).to(self._impl.device)
                 orl_next_actions = torch.from_numpy(np.stack([orl_transition.next_action for orl_transition in orl_transitions], axis=0)).to(self._impl.device)
                 orl_terminals = torch.from_numpy(np.stack([orl_transition.terminal for orl_transition in orl_transitions], axis=0)).to(self._impl.device)
-                orl_q = self._impl._q_func(orl_observations, orl_actions)
-                orl_diff_q = orl_q - self.gamma * self._impl._q_func(orl_next_observations, orl_next_actions)
+                orl_q = self._impl._q_func(orl_observations, orl_actions[:, :real_action_size])
+                orl_diff_q = orl_q - self.gamma * self._impl._q_func(orl_next_observations, orl_next_actions[:, :real_action_size])
                 orl_rewards = torch.where(orl_terminals == 0, orl_diff_q, orl_q)
                 for i, transition in enumerate(orl_transitions):
                     orl_transition = Transition(
@@ -1700,10 +1670,9 @@ class CO(CQL):
                         action=transition.action,
                         reward=orl_rewards[i].cpu().detach().numpy(),
                         next_observation=transition.next_observation,
-                        next_action=transition.next_action,
-                        next_reward=transition.next_reward,
+                        next_action = transition.next_action,
+                        next_reward = transition.next_reward,
                         terminal=transition.terminal,
-                        prev_transition=transition.prev_transition
                     )
                     orl_transitions_.append(orl_transition)
                 orl_transitions = orl_transitions_
@@ -1748,17 +1717,7 @@ class CO(CQL):
         new_transitions = []
         for transition in transitions:
             new_transitions.append(
-                Transition(
-                    observation_shape = self._impl.observation_shape,
-                    action_size = self._impl.action_size,
-                    observation=transition.observation,
-                    action = transition.action,
-                    reward = transition.reward,
-                    next_observation=transition.next_observation,
-                    next_action = transition.next_action,
-                    next_reward = transition.next_reward,
-                    terminal = transition.terminal,
-                )
+                transition
             )
 
         replay_observations = torch.stack([torch.from_numpy(transition.observation) for transition in new_transitions], dim=0)

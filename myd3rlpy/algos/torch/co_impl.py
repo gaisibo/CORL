@@ -15,7 +15,7 @@ from d3rlpy.models.optimizers import OptimizerFactory
 from d3rlpy.models.torch import Policy
 from d3rlpy.models.q_functions import QFunctionFactory
 from d3rlpy.preprocessing import ActionScaler, RewardScaler, Scaler
-from d3rlpy.torch_utility import TorchMiniBatch, soft_sync, train_api, eval_api, torch_api, torch_api
+from d3rlpy.torch_utility import TorchMiniBatch, soft_sync, train_api, eval_api, torch_api
 from d3rlpy.dataset import MDPDataset, TransitionMiniBatch
 from d3rlpy.algos.base import AlgoBase
 from d3rlpy.algos.torch.base import TorchImplBase
@@ -276,7 +276,7 @@ class COImpl(CQLImpl):
         return loss.cpu().detach().numpy(), cur_alpha
 
     @train_api
-    @torch_api
+    @torch_api()
     def update_phi(self, batch: TorchMiniBatch):
         assert self._phi_optim is not None
         self._phi.train()
@@ -286,30 +286,36 @@ class COImpl(CQLImpl):
 
         self._phi_optim.zero_grad()
 
-        loss, diff_phi, diff_r, diff_psi = self.compute_phi_loss(batch)
+        loss, diff_phi, diff_r, diff_kl, diff_psi = self.compute_phi_loss(batch)
 
         loss.backward()
         self._phi_optim.step()
 
-        return loss.cpu().detach().numpy(), diff_phi, diff_r, diff_psi
+        return loss.cpu().detach().numpy(), diff_phi, diff_r, diff_kl, diff_psi
 
     def compute_phi_loss(self, batch: TorchMiniBatch):
         assert self._phi is not None
         assert self._psi is not None
-        s, a, r, sp = batch.observations.to(self.device), batch.actions[:, :self.action_size].to(self.device), batch.rewards.to(self.device), batch.next_observations.to(self.device)
+        assert self._policy is not None
+        assert self._q_func is not None
+        s, a, r, sp, ap = batch.observations.to(self.device), batch.actions[:, :self.action_size].to(self.device), batch.rewards.to(self.device), batch.next_observations.to(self.device), batch.next_actions.to(self.device)
         half_size = batch.observations.shape[0] // 2
         end_size = 2 * half_size
         phi = self._phi(s, a[:, :end_size])
         psi = self._psi(sp)
         diff_phi = torch.linalg.vector_norm(phi[:half_size] - phi[half_size:end_size], dim=1).mean()
+
+        q = self._q_func(s, a)
+        qp = self._q_func(sp, ap)
+        r = q - self._gamma * qp
         diff_r = torch.abs(r[:half_size] - r[half_size:end_size]).mean()
-        diff_kl = torch.distributions.kl.kl_divergence(self._policy.dist(s[:half_size]), self._policy.dist(s[half_size:end_size]))
+        diff_kl = torch.distributions.kl.kl_divergence(self._policy.dist(s[:half_size]), self._policy.dist(s[half_size:end_size])).mean()
         diff_psi = self._gamma * torch.linalg.vector_norm(psi[:half_size] - psi[half_size:end_size], dim=1).mean()
-        loss_phi = diff_phi + diff_r + diff_psi
-        return loss_phi, diff_phi.cpu().detach().numpy(), diff_r.cpu().detach().numpy(), diff_psi.cpu().detach().numpy()
+        loss_phi = diff_phi + diff_r + diff_kl + diff_psi
+        return loss_phi, diff_phi.cpu().detach().numpy(), diff_r.cpu().detach().numpy(), diff_kl.cpu().detach().numpy(), diff_psi.cpu().detach().numpy()
 
     @train_api
-    @torch_api
+    @torch_api()
     def update_psi(self, batch: TorchMiniBatch, pretrain=False):
         assert self._psi_optim is not None
         self._phi.eval()
@@ -319,11 +325,11 @@ class COImpl(CQLImpl):
 
         self._psi_optim.zero_grad()
 
-        loss, loss_psi_diff, loss_psi_kl, loss_psi_u = self.compute_psi_loss(batch, pretrain)
+        loss, loss_psi_diff, loss_psi_u = self.compute_psi_loss(batch, pretrain)
         loss.backward()
         self._psi_optim.step()
 
-        return loss.cpu().detach().numpy(), loss_psi_diff, loss_psi_kl, loss_psi_u
+        return loss.cpu().detach().numpy(), loss_psi_diff, loss_psi_u
 
     def compute_psi_loss(self, batch: TorchMiniBatch, pretrain: bool = False):
         assert self._phi is not None
@@ -337,16 +343,14 @@ class COImpl(CQLImpl):
         action = self._policy.dist(s)
         action1 = torch.distributions.normal.Normal(action.mean[:half_size], action.stddev[:half_size])
         action2 = torch.distributions.normal.Normal(action.mean[half_size:end_size], action.stddev[half_size:end_size])
-        loss_psi_kl = torch.distributions.kl.kl_divergence(action1, action2).mean()
         with torch.no_grad():
             u, _ = self._policy.sample_with_log_prob(s)
             phi = self._phi(s, u)
             loss_psi_u = torch.linalg.vector_norm(phi[:half_size] - phi[half_size:end_size], dim=1).mean()
-        loss_psi = loss_psi_diff + loss_psi_kl - loss_psi_u
+        loss_psi = loss_psi_diff - loss_psi_u
         loss_psi_diff = loss_psi_diff.cpu().detach().numpy()
-        loss_psi_kl = loss_psi_kl.cpu().detach().numpy()
         loss_psi_u = loss_psi_u.cpu().detach().numpy()
-        return loss_psi, loss_psi_diff, loss_psi_kl, loss_psi_u
+        return loss_psi, loss_psi_diff, loss_psi_u
 
     def update_phi_target(self) -> None:
         assert self._phi is not None
