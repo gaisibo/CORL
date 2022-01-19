@@ -114,41 +114,6 @@ class COImpl(CQLImpl):
 
         # initialized in build
 
-    def build_double(self):
-        self._phi = create_phi(self._observation_shape, self._action_size, self._critic_encoder_factory)
-        self._psi = create_psi(self._observation_shape, self._actor_encoder_factory)
-        self._targ_phi = copy.deepcopy(self._phi)
-        self._targ_psi = copy.deepcopy(self._psi)
-        super().build()
-        self._q_func_2 = self._q_func
-        self._policy_2 = self._policy
-        self._targ_q_func_2 = self._targ_q_func
-        self._targ_policy_2 = self._targ_policy
-        self._critic_optim_2 = self._critic_optim
-        self._actor_optim_2 = self._actor_optim
-        self._log_alpha_2 = self._log_alpha
-        self._alpha_optim_2 = self._alpha_optim
-        self._log_temp_2 = self._log_temp
-        self._temp_optim_2 = self._temp_optim
-        # _1和原名表示一种东西，方便其他文件使用。
-        super().build()
-        self._q_func_1 = self._q_func
-        self._policy_1 = self._policy
-        self._targ_q_func_1 = self._targ_q_func
-        self._targ_policy_1 = self._targ_policy
-        self._critic_optim_1 = self._critic_optim
-        self._actor_optim_1 = self._actor_optim
-        self._log_alpha_1 = self._log_alpha
-        self._alpha_optim_1 = self._alpha_optim
-        self._log_temp_1 = self._log_temp
-        self._temp_optim_1 = self._temp_optim
-        self._phi_optim = self._phi_optim_factory.create(
-            self._phi.parameters(), lr=self._phi_learning_rate
-        )
-        self._psi_optim = self._psi_optim_factory.create(
-            self._psi.parameters(), lr=self._psi_learning_rate
-        )
-
     def build(self):
         self._phi = create_phi(self._observation_shape, self._action_size, self._critic_encoder_factory)
         self._psi = create_psi(self._observation_shape, self._actor_encoder_factory)
@@ -163,32 +128,9 @@ class COImpl(CQLImpl):
         )
 
     @train_api
-    def update_critic_double(self, batch_1: TransitionMiniBatch, batch_2: TransitionMiniBatch, replay_batches_1: Optional[Dict[int, List[torch.Tensor]]]=None):
-        self._q_func = self._q_func_2
-        self._critic_optim = self._critic_optim_2
-        self._policy = self._policy_2
-        self._actor_optim = self._actor_optim_2
-        self._log_temp = self._log_temp_2
-        self._temp_optim = self._temp_optim_2
-        self._log_alpha = self._log_alpha_2
-        self._alpha_optim = self._alpha_optim_2
-        loss_2, replay_loss_2, replay_losses_2 = self.update_critic(batch_2, None)
-
-        self._q_func = self._q_func_1
-        self._critic_optim = self._critic_optim_1
-        self._policy = self._policy_1
-        self._actor_optim = self._actor_optim_1
-        self._log_temp = self._log_temp_1
-        self._temp_optim = self._temp_optim_1
-        self._log_alpha = self._log_alpha_1
-        self._alpha_optim = self._alpha_optim_1
-        loss_1, replay_loss_1, replay_losses_1 = self.update_critic(batch_1, replay_batches_1)
-        return loss_1, replay_loss_1, replay_loss_1, loss_2, replay_loss_2, replay_losses_2
-
-    @train_api
-    def update_critic(self, batch: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[torch.Tensor]]]=None):
+    def update_critic(self, batch_tran: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[torch.Tensor]]]=None):
         batch = TorchMiniBatch(
-            batch,
+            batch_tran,
             self.device,
             scaler=self.scaler,
             action_scaler=self.action_scaler,
@@ -215,6 +157,7 @@ class COImpl(CQLImpl):
                 if self._cql_loss:
                     replay_batch.n_steps = 1
                     replay_batch.masks = None
+                    replay_batch = cast(TorchMiniBatch, replay_batch)
                     q_tpn = self.compute_target(replay_batch)
                     replay_cql_loss = self.compute_critic_loss(replay_batch, q_tpn)
                     replay_losses.append(replay_cql_loss.cpu().detach().numpy())
@@ -257,35 +200,12 @@ class COImpl(CQLImpl):
         return loss + conservative_loss
 
     @train_api
-    def update_actor_double(self, batch_1: TransitionMiniBatch, batch_2: TransitionMiniBatch, replay_batches_1: Optional[Dict[int, List[torch.Tensor]]]=None):
-        self._q_func = self._q_func_2
-        self._critic_optim = self._critic_optim_2
-        self._policy = self._policy_2
-        self._actor_optim = self._actor_optim_2
-        self._log_temp = self._log_temp_2
-        self._temp_optim = self._temp_optim_2
-        self._log_alpha = self._log_alpha_2
-        self._alpha_optim = self._alpha_optim_2
-        loss_2, replay_loss_2, replay_losses_2 = self.update_actor(batch_2, None)
-
-        self._q_func = self._q_func_1
-        self._critic_optim = self._critic_optim_1
-        self._policy = self._policy_1
-        self._actor_optim = self._actor_optim_1
-        self._log_temp = self._log_temp_1
-        self._temp_optim = self._temp_optim_1
-        self._log_alpha = self._log_alpha_1
-        self._alpha_optim = self._alpha_optim_1
-        loss_1, replay_loss_1, replay_losses_1 = self.update_actor(batch_1, replay_batches_1)
-        return loss_1, replay_loss_1, replay_loss_1, loss_2, replay_loss_2, replay_losses_2
-
-    @train_api
-    def update_actor(self, batch: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[torch.Tensor]]]=None) -> np.ndarray:
+    def update_actor(self, batch_tran: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[torch.Tensor]]]=None) -> np.ndarray:
         assert self._q_func is not None
         assert self._policy is not None
         assert self._actor_optim is not None
         batch = TorchMiniBatch(
-            batch,
+            batch_tran,
             self.device,
             scaler=self.scaler,
             action_scaler=self.action_scaler,
@@ -303,10 +223,11 @@ class COImpl(CQLImpl):
         replay_losses = []
         if replay_batches is not None and len(replay_batches) != 0:
             for i, replay_batch in replay_batches.items():
-                replay_batch_s = dict(zip(replay_name, replay_batch))
-                replay_batch_s = Struct(**replay_batch_s)
+                replay_batch = dict(zip(replay_name, replay_batch))
+                replay_batch = Struct(**replay_batch)
                 if self._td3_loss:
-                    replay_loss_ = self.compute_actor_loss(replay_batch_s, all_data=None) / len(replay_batches)
+                    replay_batch = cast(TorchMiniBatch, replay_batch)
+                    replay_loss_ = self.compute_actor_loss(replay_batch) / len(replay_batches)
                     replay_loss += replay_loss_
                     replay_losses.append(replay_loss_.cpu().detach().numpy())
                 if self._policy_bc_loss:
@@ -329,29 +250,6 @@ class COImpl(CQLImpl):
         loss = loss.cpu().detach().numpy()
 
         return loss, replay_loss, replay_losses
-
-    @train_api
-    def update_alpha_double(self, batch_1: TransitionMiniBatch, batch_2: TransitionMiniBatch):
-        self._q_func = self._q_func_2
-        self._critic_optim = self._critic_optim_2
-        self._policy = self._policy_2
-        self._actor_optim = self._actor_optim_2
-        self._log_temp = self._log_temp_2
-        self._temp_optim = self._temp_optim_2
-        self._log_alpha = self._log_alpha_2
-        self._alpha_optim = self._alpha_optim_2
-        loss_2, curr_alpha_2 = self.update_alpha(batch_2)
-
-        self._q_func = self._q_func_1
-        self._critic_optim = self._critic_optim_1
-        self._policy = self._policy_1
-        self._actor_optim = self._actor_optim_1
-        self._log_temp = self._log_temp_1
-        self._temp_optim = self._temp_optim_1
-        self._log_alpha = self._log_alpha_1
-        self._alpha_optim = self._alpha_optim_1
-        loss_1, curr_alpha_1 = self.update_alpha(batch_1)
-        return loss_1, curr_alpha_1, loss_2, curr_alpha_2
 
     @train_api
     @torch_api()
@@ -378,80 +276,13 @@ class COImpl(CQLImpl):
         return loss.cpu().detach().numpy(), cur_alpha
 
     @train_api
-    def update_temp_double(self, batch_1: TransitionMiniBatch, batch_2: TransitionMiniBatch):
-        self._q_func = self._q_func_2
-        self._critic_optim = self._critic_optim_2
-        self._policy = self._policy_2
-        self._actor_optim = self._actor_optim_2
-        self._log_temp = self._log_temp_2
-        self._temp_optim = self._temp_optim_2
-        self._log_alpha = self._log_alpha_2
-        self._alpha_optim = self._alpha_optim_2
-        loss_2, curr_temp_2 = self.update_temp(batch_2)
-
-        self._q_func = self._q_func_1
-        self._critic_optim = self._critic_optim_1
-        self._policy = self._policy_1
-        self._actor_optim = self._actor_optim_1
-        self._log_temp = self._log_temp_1
-        self._temp_optim = self._temp_optim_1
-        self._log_alpha = self._log_alpha_1
-        self._alpha_optim = self._alpha_optim_1
-        loss_1, curr_temp_1 = self.update_temp(batch_1)
-        return loss_1, curr_temp_1, loss_2, curr_temp_2
-
-    @train_api
-    def update_phi_double(self, batch_1: TransitionMiniBatch, batch_2: TransitionMiniBatch):
-        self._phi.train()
-        self._psi.eval()
-        self._q_func.eval()
-        self._policy.eval()
-        batch_1 = TorchMiniBatch(
-            batch_1,
-            self.device,
-            scaler=self.scaler,
-            action_scaler=self.action_scaler,
-            reward_scaler=self.reward_scaler,
-        )
-        batch_2 = TorchMiniBatch(
-            batch_2,
-            self.device,
-            scaler=self.scaler,
-            action_scaler=self.action_scaler,
-            reward_scaler=self.reward_scaler,
-        )
-
-        self._phi_optim.zero_grad()
-
-        loss, diff_phi_1, diff_r_1, diff_psi_1, diff_phi_2, diff_r_2, diff_psi_2 = self.compute_phi_loss_double(batch_1, batch_2)
-
-        loss.backward()
-        self._phi_optim.step()
-
-        return loss.cpu().detach().numpy(), diff_phi_1, diff_r_1, diff_psi_1, diff_phi_2, diff_r_2, diff_psi_2
-
-    def compute_phi_loss_double(self, batch_1: TorchMiniBatch, batch_2: TorchMiniBatch):
-        assert self._phi is not None
-        assert self._psi is not None
-        loss_phi_1, diff_phi_1, diff_r_1, diff_psi_1 = self.compute_phi_loss(batch_1)
-        loss_phi_2, diff_phi_2, diff_r_2, diff_psi_2 = self.compute_phi_loss(batch_2)
-        loss_phi = loss_phi_1 + loss_phi_2
-        return loss_phi, diff_phi_1.cpu().detach().numpy(), diff_r_1.cpu().detach().numpy(), diff_psi_1.cpu().detach().numpy(), diff_phi_2.cpu().detach().numpy(), diff_r_2.cpu().detach().numpy(), diff_psi_2.cpu().detach().numpy()
-
-    @train_api
-    def update_phi(self, batch: TransitionMiniBatch):
+    @torch_api
+    def update_phi(self, batch: TorchMiniBatch):
         assert self._phi_optim is not None
         self._phi.train()
         self._psi.eval()
         self._q_func.eval()
         self._policy.eval()
-        batch = TorchMiniBatch(
-            batch,
-            self.device,
-            scaler=self.scaler,
-            action_scaler=self.action_scaler,
-            reward_scaler=self.reward_scaler,
-        )
 
         self._phi_optim.zero_grad()
 
@@ -478,72 +309,13 @@ class COImpl(CQLImpl):
         return loss_phi, diff_phi.cpu().detach().numpy(), diff_r.cpu().detach().numpy(), diff_psi.cpu().detach().numpy()
 
     @train_api
-    def update_psi_double(self, batch_1: TransitionMiniBatch, batch_2: TransitionMiniBatch):
+    @torch_api
+    def update_psi(self, batch: TorchMiniBatch, pretrain=False):
         assert self._psi_optim is not None
         self._phi.eval()
         self._psi.train()
         self._q_func.eval()
         self._policy.eval()
-        batch_1 = TorchMiniBatch(
-            batch_1,
-            self.device,
-            scaler=self.scaler,
-            action_scaler=self.action_scaler,
-            reward_scaler=self.reward_scaler,
-        )
-        batch_2 = TorchMiniBatch(
-            batch_2,
-            self.device,
-            scaler=self.scaler,
-            action_scaler=self.action_scaler,
-            reward_scaler=self.reward_scaler,
-        )
-
-        self._psi_optim.zero_grad()
-
-        loss_1, loss_psi_diff_1, loss_psi_u_1 = self.compute_psi_loss_double(batch_1)
-        loss_2, loss_psi_diff_2, loss_psi_u_2 = self.compute_psi_loss_double(batch_2)
-        loss = loss_1 + loss_2
-        loss.backward()
-        self._psi_optim.step()
-
-        return loss.cpu().detach().numpy(), loss_psi_diff_1, loss_psi_u_1, loss_psi_diff_2, loss_psi_u_2
-
-    def compute_psi_loss_double(self, batch: TorchMiniBatch, pretrain: bool = False):
-        assert self._phi is not None
-        assert self._psi is not None
-        assert self._policy is not None
-        s, a = batch.observations.to(self.device), batch.actions.to(self.device)
-        half_size = batch.observations.shape[0] // 2
-        end_size = 2 * half_size
-        psi = self._psi(s[:, :end_size])
-        loss_psi_diff = torch.linalg.vector_norm(psi[:half_size] - psi[half_size:end_size], dim=1).mean()
-        action = self._policy.dist(s)
-        action1 = torch.distributions.normal.Normal(action.mean[:half_size], action.stddev[:half_size])
-        action2 = torch.distributions.normal.Normal(action.mean[half_size:end_size], action.stddev[half_size:end_size])
-        with torch.no_grad():
-            u, _ = self._policy.sample_with_log_prob(s)
-            phi = self._phi(s, u)
-            loss_psi_u = torch.linalg.vector_norm(phi[:half_size] - phi[half_size:end_size], dim=1).mean()
-        loss_psi = loss_psi_diff - loss_psi_u
-        loss_psi_diff = loss_psi_diff.cpu().detach().numpy()
-        loss_psi_u = loss_psi_u.cpu().detach().numpy()
-        return loss_psi, loss_psi_diff, loss_psi_u
-
-    @train_api
-    def update_psi(self, batch: TransitionMiniBatch, pretrain=False):
-        assert self._psi_optim is not None
-        self._phi.eval()
-        self._psi.train()
-        self._q_func.eval()
-        self._policy.eval()
-        batch = TorchMiniBatch(
-            batch,
-            self.device,
-            scaler=self.scaler,
-            action_scaler=self.action_scaler,
-            reward_scaler=self.reward_scaler,
-        )
 
         self._psi_optim.zero_grad()
 
@@ -576,22 +348,6 @@ class COImpl(CQLImpl):
         loss_psi_u = loss_psi_u.cpu().detach().numpy()
         return loss_psi, loss_psi_diff, loss_psi_kl, loss_psi_u
 
-    def update_critic_target_double(self) -> None:
-        assert self._q_func_1 is not None
-        assert self._targ_q_func_1 is not None
-        assert self._q_func_2 is not None
-        assert self._targ_q_func_2 is not None
-        soft_sync(self._targ_q_func_1, self._q_func_1, self._tau)
-        soft_sync(self._targ_q_func_2, self._q_func_2, self._tau)
-
-    def update_actor_target_double(self) -> None:
-        assert self._policy_1 is not None
-        assert self._targ_policy_1 is not None
-        assert self._policy_2 is not None
-        assert self._targ_policy_2 is not None
-        soft_sync(self._targ_policy_1, self._policy_1, self._tau)
-        soft_sync(self._targ_policy_2, self._policy_2, self._tau)
-
     def update_phi_target(self) -> None:
         assert self._phi is not None
         assert self._targ_phi is not None
@@ -601,32 +357,6 @@ class COImpl(CQLImpl):
         assert self._psi is not None
         assert self._targ_psi is not None
         soft_sync(self._targ_psi, self._psi, self._tau)
-
-    def copy_weight_double(self):
-        state_dicts = [self._q_func_1.state_dict(), self._q_func_2.state_dict(), self._policy_1.state_dict(), self._policy_2.state_dict(), self._log_alpha_1.state_dict(), self._log_alpha_2.state_dict(), self._log_temp_1.state_dict(), self._log_temp_2.state_dict(), self._phi.state_dict(), self._psi.state_dict(), self._critic_optim_1.state_dict(), self._critic_optim_2.state_dict(), self._actor_optim_1.state_dict(), self._actor_optim_2.state_dict(), self._alpha_optim_1.state_dict(), self._alpha_optim_2.state_dict(), self._temp_optim_1.state_dict(), self._temp_optim_2.state_dict(), self._phi_optim.state_dict(), self._psi_optim.state_dict()]
-        return state_dicts
-
-    def reload_weight_double(self, state_dicts):
-        self._q_func_1.load_state_dict(state_dicts[0])
-        self._q_func_2.load_state_dict(state_dicts[1])
-        self._policy_1.load_state_dict(state_dicts[2])
-        self._policy_2.load_state_dict(state_dicts[3])
-        self._log_alpha_1.load_state_dict(state_dicts[4])
-        self._log_alpha_2.load_state_dict(state_dicts[5])
-        self._log_temp_1.load_state_dict(state_dicts[6])
-        self._log_temp_2.load_state_dict(state_dicts[7])
-        self._phi.load_state_dict(state_dicts[8])
-        self._psi.load_state_dict(state_dicts[9])
-        self._critic_optim_1.load_state_dict(state_dicts[10])
-        self._critic_optim_2.load_state_dict(state_dicts[11])
-        self._actor_optim_1.load_state_dict(state_dicts[12])
-        self._actor_optim_2.load_state_dict(state_dicts[13])
-        self._alpha_optim_1.load_state_dict(state_dicts[14])
-        self._alpha_optim_2.load_state_dict(state_dicts[15])
-        self._temp_optim_1.load_state_dict(state_dicts[16])
-        self._temp_optim_2.load_state_dict(state_dicts[17])
-        self._phi_optim.load_state_dict(state_dicts[18])
-        self._psi_optim.load_state_dict(state_dicts[19])
 
     def copy_weight(self):
         state_dicts = [self._q_func.state_dict(), self._policy.state_dict(), self._log_alpha.state_dict(), self._log_temp.state_dict(), self._phi.state_dict(), self._psi.state_dict(), self._critic_optim.state_dict(), self._actor_optim.state_dict(), self._alpha_optim.state_dict(), self._temp_optim.state_dict(), self._phi_optim.state_dict(), self._psi_optim.state_dict()]
