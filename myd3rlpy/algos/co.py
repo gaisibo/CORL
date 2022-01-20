@@ -388,7 +388,6 @@ class CO(CQL):
         self,
         task_id: int,
         dataset: Optional[Union[List[Episode], MDPDataset]] = None,
-        origin_dataset: Optional[Union[List[Episode], MDPDataset]] = None,
         replay_datasets: Optional[Union[Dict[int, TensorDataset], Dict[int, List[Transition]]]] = None,
         env: gym.envs = None,
         original = None,
@@ -457,7 +456,6 @@ class CO(CQL):
             self.fitter(
                 task_id,
                 dataset,
-                origin_dataset,
                 replay_datasets,
                 env,
                 original,
@@ -494,7 +492,6 @@ class CO(CQL):
         self,
         task_id: int,
         dataset: Optional[Union[List[Episode], MDPDataset]] = None,
-        origin_dataset: Optional[Union[List[Episode], MDPDataset]] = None,
         replay_datasets: Optional[Union[Dict[int, TensorDataset], Dict[int, List[Transition]]]] = None,
         env: gym.envs = None,
         original = None,
@@ -671,24 +668,6 @@ class CO(CQL):
                 transitions = list(cast(List[Transition], dataset))
             else:
                 raise ValueError(f"invalid dataset type: {type(dataset)}")
-
-            if self._generate_type == 'model_base':
-                assert origin_dataset is not None
-                origin_transitions = []
-                if isinstance(origin_dataset, MDPDataset):
-                    for episode in cast(MDPDataset, origin_dataset).episodes:
-                        origin_transitions += episode.transitions
-                elif not dataset:
-                    raise ValueError("empty origin_dataset is not supported.")
-                elif isinstance(origin_dataset[0], Episode):
-                    for episode in cast(List[Episode], origin_dataset):
-                        origin_transitions += episode.transitions
-                elif isinstance(origin_dataset[0], Transition):
-                    origin_transitions = list(cast(List[Transition], origin_dataset))
-                else:
-                    raise ValueError(f"invalid origin_dataset type: {type(origin_dataset)}")
-            else:
-                origin_transitions = None
 
             if self._generate_type == 'model_base':
                 assert self._dynamics is not None
@@ -1404,12 +1383,12 @@ class CO(CQL):
         return choosed_samples
 
     def generate_replay_data_phi(self, task_id, dataset, original_index, max_save_num=1000, max_export_time=1000, max_reward=None, real_action_size=1, real_observation_size=1, low_log_prob=0.8, in_task=False):
-        if in_task:
-            if not self._is_generating_new_data():
-                return None
         assert self._impl is not None
         assert self._impl._policy is not None
         assert self._impl._q_func is not None
+        if in_task:
+            if not self._is_generating_new_data():
+                return None
 
         if isinstance(dataset, MDPDataset):
             episodes = dataset.episodes
@@ -1499,7 +1478,7 @@ class CO(CQL):
                 orl_observations = torch.from_numpy(np.stack([orl_transition.observation for orl_transition in orl_transitions], axis=0)).to(self._impl.device)
                 orl_actions = torch.from_numpy(np.stack([orl_transition.action for orl_transition in orl_transitions], axis=0)).to(self._impl.device)
                 orl_next_observations = torch.from_numpy(np.stack([orl_transition.next_observation for orl_transition in orl_transitions], axis=0)).to(self._impl.device)
-                orl_next_actions = torch.from_numpy(np.stack([orl_transition.next_action for orl_transition in orl_transitions], axis=0)).to(self._impl.device)
+                orl_next_actions = self._impl._policy(orl_next_observations)
                 orl_terminals = torch.from_numpy(np.stack([orl_transition.terminal for orl_transition in orl_transitions], axis=0)).to(self._impl.device)
                 orl_q = self._impl._q_func(orl_observations, orl_actions[:, :real_action_size]).squeeze()
                 orl_diff_q = orl_q - self.gamma * self._impl._q_func(orl_next_observations, orl_next_actions[:, :real_action_size]).squeeze()
@@ -1532,11 +1511,9 @@ class CO(CQL):
         replay_actions = torch.stack([torch.from_numpy(transition.action) for transition in orl_transitions], dim=0)
         replay_rewards = torch.stack([torch.from_numpy(np.array([transition.reward])) for transition in orl_transitions], dim=0)
         replay_next_observations = torch.stack([torch.from_numpy(transition.next_observation) for transition in orl_transitions], dim=0)
-        replay_next_actions = torch.stack([torch.from_numpy(transition.next_action) for transition in orl_transitions], dim=0)
-        replay_next_rewards = torch.stack([torch.from_numpy(np.array([transition.next_reward])) for transition in orl_transitions], dim=0)
         replay_terminals = torch.stack([torch.from_numpy(np.array([transition.terminal])) for transition in orl_transitions], dim=0)
         if self._td3_loss or in_task:
-            replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_next_actions, replay_next_rewards, replay_terminals)
+            replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals)
             return orl_transitions, replay_dataset
         elif self._policy_bc_loss and not in_task:
             replay_dists = self._impl._policy.dist(replay_observations)
@@ -1544,7 +1521,7 @@ class CO(CQL):
             replay_qs = self._impl._q_func(replay_observations, replay_actions)
             replay_phis = self._impl._phi(replay_observations, replay_actions)
             replay_psis = self._impl._psi(replay_observations)
-            replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_next_actions, replay_next_rewards, replay_terminals, replay_means, replay_std_logs, replay_qs, replay_phis, replay_psis)
+            replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals, replay_means, replay_std_logs, replay_qs, replay_phis, replay_psis)
             return replay_dataset, replay_dataset
 
     def generate_replay_data(self, task_id, dataset, original_index, in_task=False, max_save_num=1000, max_export_time = 1000, max_reward=None, real_action_size=1, real_observation_size=1, low_log_prob = 0.8):
@@ -1652,7 +1629,7 @@ class CO(CQL):
                 orl_observations = torch.from_numpy(np.stack([orl_transition.observation for orl_transition in orl_transitions], axis=0)).to(self._impl.device)
                 orl_actions = torch.from_numpy(np.stack([orl_transition.action for orl_transition in orl_transitions], axis=0)).to(self._impl.device)
                 orl_next_observations = torch.from_numpy(np.stack([orl_transition.next_observation for orl_transition in orl_transitions], axis=0)).to(self._impl.device)
-                orl_next_actions = torch.from_numpy(np.stack([orl_transition.next_action for orl_transition in orl_transitions], axis=0)).to(self._impl.device)
+                orl_next_actions = self._impl._policy(orl_next_observations)
                 orl_terminals = torch.from_numpy(np.stack([orl_transition.terminal for orl_transition in orl_transitions], axis=0)).to(self._impl.device)
                 orl_q = self._impl._q_func(orl_observations, orl_actions[:, :real_action_size])
                 orl_diff_q = orl_q - self.gamma * self._impl._q_func(orl_next_observations, orl_next_actions[:, :real_action_size])
@@ -1682,11 +1659,9 @@ class CO(CQL):
         replay_actions = torch.stack([torch.from_numpy(transition.action) for transition in orl_transitions], dim=0)
         replay_rewards = torch.stack([torch.from_numpy(np.array([transition.reward])) for transition in orl_transitions], dim=0)
         replay_next_observations = torch.stack([torch.from_numpy(transition.next_observation) for transition in orl_transitions], dim=0)
-        replay_next_actions = torch.stack([torch.from_numpy(transition.next_action) for transition in orl_transitions], dim=0)
-        replay_next_rewards = torch.stack([torch.from_numpy(np.array([transition.next_reward])) for transition in orl_transitions], dim=0)
         replay_terminals = torch.stack([torch.from_numpy(np.array([transition.terminal])) for transition in orl_transitions], dim=0)
         if self._td3_loss or in_task:
-            replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_next_actions, replay_next_rewards, replay_terminals)
+            replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals)
             return orl_transitions, replay_dataset
         elif self._policy_bc_loss and not in_task:
             replay_dists = self._impl._policy.dist(replay_observations)
@@ -1694,7 +1669,7 @@ class CO(CQL):
             replay_qs = self._impl._q_func(replay_observations, replay_actions)
             replay_phis = self._impl._phi(replay_observations, replay_actions)
             replay_psis = self._impl._psi(replay_observations)
-            replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_next_actions, replay_next_rewards, replay_terminals, replay_means, replay_std_logs, replay_qs, replay_phis, replay_psis)
+            replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals, replay_means, replay_std_logs, replay_qs, replay_phis, replay_psis)
             return replay_dataset, replay_dataset
 
     def generate_replay_data_random(self, task_id, dataset, in_task=False, max_save_num=1000, real_action_size=1):
@@ -1708,7 +1683,6 @@ class CO(CQL):
         if in_task:
             if not self._is_generating_new_data():
                 return None
-            return transitions, None
         new_transitions = []
         for transition in transitions:
             new_transitions.append(
@@ -1719,11 +1693,9 @@ class CO(CQL):
         replay_actions = torch.stack([torch.from_numpy(transition.action) for transition in new_transitions], dim=0)
         replay_rewards = torch.stack([torch.from_numpy(np.array([transition.reward])) for transition in new_transitions], dim=0)
         replay_next_observations = torch.stack([torch.from_numpy(transition.next_observation) for transition in new_transitions], dim=0)
-        replay_next_actions = torch.stack([torch.from_numpy(transition.next_action) for transition in new_transitions], dim=0)
-        replay_next_rewards = torch.stack([torch.from_numpy(np.array([transition.next_reward])) for transition in new_transitions], dim=0)
         replay_terminals = torch.stack([torch.from_numpy(np.array([transition.terminal])) for transition in new_transitions], dim=0)
         if self._td3_loss or in_task:
-            replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_next_actions, replay_next_rewards, replay_terminals)
+            replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals)
             return new_transitions, replay_dataset
         elif self._policy_bc_loss and not in_task:
             replay_dists = self._impl._policy.dist(replay_observations)
@@ -1731,7 +1703,7 @@ class CO(CQL):
             replay_qs = self._impl._q_func(replay_observations, replay_actions)
             replay_phis = self._impl._phis(replay_observations, replay_actions)
             replay_psis = self._impl._psis(replay_observations)
-            replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_next_actions, replay_next_rewards, replay_terminals, replay_means, replay_std_logs, replay_qs, replay_phis, replay_psis)
+            replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals, replay_means, replay_std_logs, replay_qs, replay_phis, replay_psis)
             return replay_dataset, replay_dataset
 
     def _is_generating_new_data(self) -> bool:

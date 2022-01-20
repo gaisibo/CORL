@@ -165,8 +165,8 @@ class COImpl(CQLImpl):
                 if self._q_bc_loss:
                     with torch.no_grad():
                         replay_observations = replay_batch.observations.to(self.device)
-                        replay_actions = replay_batch.policy_actions.to(self.device)
                         replay_qs = replay_batch.qs.to(self.device)
+                    replay_actions = self._policy(replay_observations)
                     q = self._q_func(replay_observations, replay_actions)
                     replay_bc_loss = F.mse_loss(replay_qs, q) / len(replay_batches)
                     replay_losses.append(replay_bc_loss.cpu().detach().numpy())
@@ -299,11 +299,7 @@ class COImpl(CQLImpl):
         assert self._policy is not None
         assert self._q_func is not None
         s, a, r, sp = batch.observations.to(self.device), batch.actions[:, :self.action_size].to(self.device), batch.rewards.to(self.device), batch.next_observations.to(self.device)
-        if 'next_actions' in batch.__dict__:
-            ap = batch.next_actions.to(self.device)
-        else:
-            next_batch = TransitionMiniBatch([transition.next_transition for transition in batch.transitions])
-            ap = next_batch.next_actions.to(self.device)
+        ap = self._policy(sp)
         half_size = batch.observations.shape[0] // 2
         end_size = 2 * half_size
         phi = self._phi(s, a[:, :end_size])

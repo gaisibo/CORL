@@ -10,34 +10,34 @@ from myd3rlpy.siamese_similar import similar_euclid
 from dataset.split_antmaze import split_antmaze
 
 
-def split_navigate_maze_open_v0(task_split_type, top_euclid, device, dense):
-    origin_dataset, env = get_d4rl('maze-open-v0')
-    dataset_name = 'maze-open-v0'
-    task_nums = 7
+def split_navigate_maze2d_open_v0(task_split_type, top_euclid, device, dense):
+    origin_dataset, env = get_d4rl('maze2d-open-dense-v0')
+    dataset_name = 'maze2d-open-dense-v0'
     dense = dense == 'dense'
-    end_points = [np.array([32.41604, 24.43354]), np.array([21.3771, 17.4113]), np.array([20.8545, 25.0958]), np.array([4.5582, 17.7067]), np.array([18.1493, 8.9290]), np.array([0.1346, 13.3144]), np.array([37.0817, 12.0133])]
+    task_nums = 3
+    end_points = [np.array(x) for x in [[1, 4], [3, 1], [3, 4]]]
     return split_antmaze(origin_dataset, env, dataset_name, task_nums, end_points, task_split_type, top_euclid, device, dense)
 
-def split_navigate_maze_umaze_v1(task_split_type, top_euclid, device, dense):
-    origin_dataset, env = get_d4rl('maze-umaze-v1')
-    dataset_name = 'maze-umaze-v1'
-    task_nums = 7
+def split_navigate_maze2d_umaze_v1(task_split_type, top_euclid, device, dense):
+    origin_dataset, env = get_d4rl('maze2d-umaze-dense-v1')
+    dataset_name = 'maze2d-umaze-dense-v1'
     dense = dense == 'dense'
-    end_points = [np.array([32.41604, 24.43354]), np.array([21.3771, 17.4113]), np.array([20.8545, 25.0958]), np.array([4.5582, 17.7067]), np.array([18.1493, 8.9290]), np.array([0.1346, 13.3144]), np.array([37.0817, 12.0133])]
+    task_nums = 3
+    end_points = [np.array(x) for x in [[1, 3], [3, 1], [3, 3]]]
     return split_antmaze(origin_dataset, env, dataset_name, task_nums, end_points, task_split_type, top_euclid, device, dense)
 
-def split_navigate_maze_medium_v1(task_split_type, top_euclid, device, dense):
-    origin_dataset, env = get_d4rl('maze-medium-v1')
-    dataset_name = 'maze-medium-v1'
-    task_nums = 7
+def split_navigate_maze2d_medium_v1(task_split_type, top_euclid, device, dense):
+    origin_dataset, env = get_d4rl('maze2d-medium-dense-v1')
+    dataset_name = 'maze2d-medium-dense-v1'
     dense = dense == 'dense'
-    end_points = [np.array([32.41604, 24.43354]), np.array([21.3771, 17.4113]), np.array([20.8545, 25.0958]), np.array([4.5582, 17.7067]), np.array([18.1493, 8.9290]), np.array([0.1346, 13.3144]), np.array([37.0817, 12.0133])]
+    task_nums = 3
+    end_points = [np.array(x) for x in [[6, 1], [1, 6], [6, 6]]]
     return split_antmaze(origin_dataset, env, dataset_name, task_nums, end_points, task_split_type, top_euclid, device, dense)
 
-def split_navigate_maze_large_v1(task_split_type, top_euclid, device, dense):
-    origin_dataset, env = get_d4rl('maze-large-v1')
-    dataset_name = 'maze-large-v1'
-    task_nums = 7
+def split_navigate_maze2d_large_v1(task_split_type, top_euclid, device, dense):
+    origin_dataset, env = get_d4rl('maze2d-large-dense-v1')
+    dataset_name = 'maze2d-large-dense-v1'
     dense = dense == 'dense'
-    end_points = [np.array([32.41604, 24.43354]), np.array([21.3771, 17.4113]), np.array([20.8545, 25.0958]), np.array([4.5582, 17.7067]), np.array([18.1493, 8.9290]), np.array([0.1346, 13.3144]), np.array([37.0817, 12.0133])]
+    task_nums = 3
+    end_points = [np.array(x) for x in [[7, 10], [1.1, 1], [7, 1.1]]]
     return split_antmaze(origin_dataset, env, dataset_name, task_nums, end_points, task_split_type, top_euclid, device, dense)
