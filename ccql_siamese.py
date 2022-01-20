@@ -28,14 +28,34 @@ replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'next_
 # 暂时只练出来一个。
 def main(args, device):
     np.set_printoptions(precision=1, suppress=True)
-    if args.dataset == 'ant_maze':
-        from dataset.split_navigate import split_navigate_antmaze_large_play_v0
-        origin_dataset, task_datasets, taskid_task_datasets, origin_task_datasets, reverse_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums = split_navigate_antmaze_large_play_v0(args.task_split_type, args.top_euclid, device)
+    if args.dataset == 'antmaze_umaze':
+        from dataset.split_antmaze import split_navigate_antmaze_umaze_v2
+        origin_dataset, task_datasets, taskid_task_datasets, origin_task_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums = split_navigate_antmaze_umaze_v2(args.task_split_type, args.top_euclid, device, args.dense)
         dynamics_path = ['d3rlpy_logs/ProbabilisticEnsembleDynamics_20220110095933/model_1407000.pt' for _ in range(7)]
-    elif args.dataset == 'maze':
-        from dataset.split_maze import split_navigate_maze_large_dense_v1
-        origin_dataset, task_datasets, taskid_task_datasets, origin_task_datasets, reverse_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums = split_navigate_maze_large_dense_v1(args.task_split_type, args.top_euclid, device)
-        dynamics_path = ['d3rlpy_logs/ProbabilisticEnsembleDynamics_20220114102821/model_925054.pt' for _ in range(4)]
+    elif args.dataset == 'antumaze_medium':
+        from dataset.split_antmaze import split_navigate_antmaze_medium_v2
+        origin_dataset, task_datasets, taskid_task_datasets, origin_task_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums = split_navigate_antmaze_medium_v2(args.task_split_type, args.top_euclid, device, args.dense)
+        dynamics_path = ['d3rlpy_logs/ProbabilisticEnsembleDynamics_20220110095933/model_1407000.pt' for _ in range(7)]
+    elif args.dataset == 'antmaze_large':
+        from dataset.split_antmaze import split_navigate_antmaze_large_v2
+        origin_dataset, task_datasets, taskid_task_datasets, origin_task_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums = split_navigate_antmaze_large_v2(args.task_split_type, args.top_euclid, device, args.dense)
+        dynamics_path = ['d3rlpy_logs/ProbabilisticEnsembleDynamics_20220110095933/model_1407000.pt' for _ in range(7)]
+    if args.dataset == 'maze_open':
+        from dataset.split_maze import split_navigate_maze_open_v0
+        origin_dataset, task_datasets, taskid_task_datasets, origin_task_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums = split_navigate_maze_open_v0(args.task_split_type, args.top_euclid, device, args.dense)
+        dynamics_path = ['d3rlpy_logs/ProbabilisticEnsembleDynamics_20220110095933/model_1407000.pt' for _ in range(7)]
+    elif args.dataset == 'maze_umaze':
+        from dataset.split_maze import split_navigate_maze_umaze_v1
+        origin_dataset, task_datasets, taskid_task_datasets, origin_task_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums = split_navigate_maze_umaze_v1(args.task_split_type, args.top_euclid, device, args.dense)
+        dynamics_path = ['d3rlpy_logs/ProbabilisticEnsembleDynamics_20220110095933/model_1407000.pt' for _ in range(7)]
+    elif args.dataset == 'maze_medium':
+        from dataset.split_maze import split_navigate_maze_medium_v1
+        origin_dataset, task_datasets, taskid_task_datasets, origin_task_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums = split_navigate_maze_medium_v1(args.task_split_type, args.top_euclid, device, args.dense)
+        dynamics_path = ['d3rlpy_logs/ProbabilisticEnsembleDynamics_20220110095933/model_1407000.pt' for _ in range(7)]
+    elif args.dataset == 'maze_large':
+        from dataset.split_maze import split_navigate_maze_large_v1
+        origin_dataset, task_datasets, taskid_task_datasets, origin_task_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums = split_navigate_maze_large_v1(args.task_split_type, args.top_euclid, device, args.dense)
+        dynamics_path = ['d3rlpy_logs/ProbabilisticEnsembleDynamics_20220110095933/model_1407000.pt' for _ in range(7)]
     else:
         assert False
 
@@ -56,7 +76,6 @@ def main(args, device):
         save_datasets = dict()
         eval_datasets = dict()
         for task_id, dataset in task_datasets.items():
-            dataset2 = reverse_datasets[task_id]
             eval_datasets[task_id] = dataset
             draw_path = args.model_path + algos_name + '_trajectories_' + str(task_id)
 
@@ -72,7 +91,6 @@ def main(args, device):
             co.fit(
                 task_id,
                 dataset,
-                dataset2,
                 origin_task_datasets[task_id],
                 replay_datasets,
                 original = original,
@@ -145,6 +163,7 @@ if __name__ == '__main__':
     parser.add_argument('--reduce_replay', default='retrain', type=str, choices=['retrain', 'no_retrain'])
     parser.add_argument('--double_data', default='double_data', type=str)
     parser.add_argument('--change_reward', default='change', type=str)
+    parser.add_argument('--dense', default='dense', type=str)
     args = parser.parse_args()
     args.model_path = 'd3rlpy_' + args.replay_type + '_' + args.generate_type + '_' + args.orl + '_' + args.reduce_replay + '_' + args.dataset + '_' + ('test' if args.test else ('train' if not args.eval else 'eval'))
     if not os.path.exists(args.model_path):

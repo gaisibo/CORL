@@ -388,7 +388,6 @@ class CO(CQL):
         self,
         task_id: int,
         dataset: Optional[Union[List[Episode], MDPDataset]] = None,
-        dataset2: Optional[Union[List[Episode], MDPDataset]] = None,
         origin_dataset: Optional[Union[List[Episode], MDPDataset]] = None,
         replay_datasets: Optional[Union[Dict[int, TensorDataset], Dict[int, List[Transition]]]] = None,
         env: gym.envs = None,
@@ -458,7 +457,6 @@ class CO(CQL):
             self.fitter(
                 task_id,
                 dataset,
-                dataset2,
                 origin_dataset,
                 replay_datasets,
                 env,
@@ -496,7 +494,6 @@ class CO(CQL):
         self,
         task_id: int,
         dataset: Optional[Union[List[Episode], MDPDataset]] = None,
-        dataset2: Optional[Union[List[Episode], MDPDataset]] = None,
         origin_dataset: Optional[Union[List[Episode], MDPDataset]] = None,
         replay_datasets: Optional[Union[Dict[int, TensorDataset], Dict[int, List[Transition]]]] = None,
         env: gym.envs = None,

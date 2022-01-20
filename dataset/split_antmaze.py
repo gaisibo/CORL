@@ -11,12 +11,31 @@ from d3rlpy.dataset import MDPDataset
 from myd3rlpy.siamese_similar import similar_euclid
 
 
-def split_navigate_antmaze_large_play_v0(task_split_type, top_euclid, device):
-    origin_dataset, env = get_d4rl('antmaze-large-play-v0')
-    dataset_name = 'antmaze-large-play-v0'
+def split_navigate_antmaze_umaze_v2(task_split_type, top_euclid, device, dense):
+    origin_dataset, env = get_d4rl('antmaze-umaze-v2')
+    dataset_name = 'antmaze-umaze-v2'
     task_nums = 7
+    dense = dense == 'dense'
     end_points = [np.array([32.41604, 24.43354]), np.array([21.3771, 17.4113]), np.array([20.8545, 25.0958]), np.array([4.5582, 17.7067]), np.array([18.1493, 8.9290]), np.array([0.1346, 13.3144]), np.array([37.0817, 12.0133])]
+    return split_antmaze(origin_dataset, env, dataset_name, task_nums, end_points, task_split_type, top_euclid, device, dense)
 
+def split_navigate_antmaze_medium_v2(task_split_type, top_euclid, device, dense):
+    origin_dataset, env = get_d4rl('antmaze-medium-play-v2')
+    dataset_name = 'antmaze-medium-play-v2'
+    task_nums = 7
+    dense = dense == 'dense'
+    end_points = [np.array([32.41604, 24.43354]), np.array([21.3771, 17.4113]), np.array([20.8545, 25.0958]), np.array([4.5582, 17.7067]), np.array([18.1493, 8.9290]), np.array([0.1346, 13.3144]), np.array([37.0817, 12.0133])]
+    return split_antmaze(origin_dataset, env, dataset_name, task_nums, end_points, task_split_type, top_euclid, device, dense)
+
+def split_navigate_antmaze_large_v2(task_split_type, top_euclid, device, dense):
+    origin_dataset, env = get_d4rl('antmaze-large-play-v2')
+    dataset_name = 'antmaze-large-play-v2'
+    task_nums = 7
+    dense = dense == 'dense'
+    end_points = [np.array([32.41604, 24.43354]), np.array([21.3771, 17.4113]), np.array([20.8545, 25.0958]), np.array([4.5582, 17.7067]), np.array([18.1493, 8.9290]), np.array([0.1346, 13.3144]), np.array([37.0817, 12.0133])]
+    return split_antmaze(origin_dataset, env, dataset_name, task_nums, end_points, task_split_type, top_euclid, device, dense)
+
+def split_antmaze(origin_dataset, env, dataset_name, task_nums, end_points, task_split_type, top_euclid, device, dense):
     task_datasets = {k: [] for k in range(task_nums)}
     if task_split_type == 'directed':
         for episode in origin_dataset.episodes:
@@ -54,9 +73,10 @@ def split_navigate_antmaze_large_play_v0(task_split_type, top_euclid, device):
         envs[task_index].target_goal = end_points[task_index]
         observations = np.concatenate([episode.observations for episode in task_episodes], axis=0)
         actions = np.concatenate([episode.actions for episode in task_episodes], axis=0)
-        obs = torch.from_numpy(observations).cuda()
-        end_point = torch.from_numpy(end_points[task_index]).unsqueeze(0).expand(obs.shape[0], -1).cuda()
-        rewards = - torch.linalg.vector_norm(obs[:, :2] - end_point, dim=1).cpu().numpy()
+        if dense:
+            rewards = - np.linalg.norm(observations[:, :2] - end_points[task_index], axis=1)
+        else:
+            rewards = np.where(np.linalg.norm(observations[:, :2] - end_points[task_index], axis=1) < 0.5, 1, 0)
         terminals = [np.zeros(task_episode.observations.shape[0]) for task_episode in task_episodes]
         for terminal in terminals:
             terminal[-1] = 1
