@@ -1,5 +1,5 @@
 import os
-from typing import List, cast, Callable, Any, Dict, Tuple
+from typing import List, cast, Callable, Any, Dict, Tuple, Optional
 import matplotlib.pyplot as plt
 from typing_extensions import Protocol
 import gym
@@ -70,14 +70,17 @@ def td_error_scorer(real_action_size: int) -> Callable[..., Callable[...,float]]
     return id_scorer
 
 def evaluate_on_environment(
-        envs: Dict[int, gym.Env], end_points: List[Tuple[float, float]], task_nums: int, draw_path: str, n_trials: int = 10, epsilon: float = 0.0, render: bool = False,
+        envs: Dict[int, gym.Env], end_points: Optional[List[Tuple[float, float]]], task_nums: int, draw_path: str, n_trials: int = 10, epsilon: float = 0.0, render: bool = False,
 ) -> Callable[..., Callable[..., float]]:
 
     # for image observation
 
     def id_scorer(id: int, epoch: int):
         env = envs[id]
-        end_point = end_points[id]
+        if end_points is not None:
+            end_point = end_points[id]
+        else:
+            end_point = None
         observation_shape = env.observation_space.shape
         is_image = len(observation_shape) == 3
         def scorer(algo: AlgoProtocol, *args: Any) -> float:
@@ -87,7 +90,8 @@ def evaluate_on_environment(
                 for i, trajectory in enumerate(trajectories):
                     x, y = list(map(list, zip(*trajectory)))
                     plt.plot(x, y)
-                plt.plot(end_point[0], end_point[1], 'o', markersize=4)
+                if end_point is not None:
+                    plt.plot(end_point[0], end_point[1], 'o', markersize=4)
                 plt.savefig(draw_path + '_' + str(id) + '_' + str(epoch) + '.png')
                 plt.close('all')
             if is_image:

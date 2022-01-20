@@ -28,36 +28,36 @@ replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'termi
 # 暂时只练出来一个。
 def main(args, device):
     np.set_printoptions(precision=1, suppress=True)
-    if args.dataset == 'antmaze_umaze':
-        from dataset.split_antmaze import split_navigate_antmaze_umaze_v2
-        task_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums = split_navigate_antmaze_umaze_v2(args.task_split_type, args.top_euclid, device, args.dense)
-        dynamics_path = ['d3rlpy_logs/ProbabilisticEnsembleDynamics_20220110095933/model_1407000.pt' for _ in range(7)]
-    elif args.dataset == 'antmaze_medium':
-        from dataset.split_antmaze import split_navigate_antmaze_medium_v2
-        task_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums = split_navigate_antmaze_medium_v2(args.task_split_type, args.top_euclid, device, args.dense)
-        dynamics_path = ['d3rlpy_logs/ProbabilisticEnsembleDynamics_20220110095933/model_1407000.pt' for _ in range(7)]
-    elif args.dataset == 'antmaze_large':
-        from dataset.split_antmaze import split_navigate_antmaze_large_v2
-        task_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums = split_navigate_antmaze_large_v2(args.task_split_type, args.top_euclid, device, args.dense)
-        dynamics_path = ['d3rlpy_logs/ProbabilisticEnsembleDynamics_20220110095933/model_1407000.pt' for _ in range(7)]
-    if args.dataset == 'maze2d_open':
-        from dataset.split_maze import split_navigate_maze2d_open_v0
-        task_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums = split_navigate_maze2d_open_v0(args.task_split_type, args.top_euclid, device, args.dense)
-        dynamics_path = ['d3rlpy_logs/ProbabilisticEnsembleDynamics_20220110095933/model_1407000.pt' for _ in range(7)]
-    elif args.dataset == 'maze2d_umaze':
-        from dataset.split_maze import split_navigate_maze2d_umaze_v1
-        task_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums = split_navigate_maze2d_umaze_v1(args.task_split_type, args.top_euclid, device, args.dense)
-        dynamics_path = ['d3rlpy_logs/ProbabilisticEnsembleDynamics_20220110095933/model_1407000.pt' for _ in range(7)]
-    elif args.dataset == 'maze2d_medium':
-        from dataset.split_maze import split_navigate_maze2d_medium_v1
-        task_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums = split_navigate_maze2d_medium_v1(args.task_split_type, args.top_euclid, device, args.dense)
-        dynamics_path = ['d3rlpy_logs/ProbabilisticEnsembleDynamics_20220110095933/model_1407000.pt' for _ in range(7)]
-    elif args.dataset == 'maze2d_large':
-        from dataset.split_maze import split_navigate_maze2d_large_v1
-        task_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums = split_navigate_maze2d_large_v1(args.task_split_type, args.top_euclid, device, args.dense)
-        dynamics_path = ['d3rlpy_logs/ProbabilisticEnsembleDynamics_20220110095933/model_1407000.pt' for _ in range(7)]
+    if args.dataset in ['antmaze_umaze', 'antmaze_medium', 'antmaze_large', 'maze2d_open', 'maze2d_umaze', 'maze2d_medium', 'maze2d_large']:
+        if args.dataset == 'antmaze_umaze':
+            from dataset.split_antmaze import split_navigate_antmaze_umaze_v2 as split_navigate
+        elif args.dataset == 'antmaze_medium':
+            from dataset.split_antmaze import split_navigate_antmaze_medium_v2 as split_navigate
+        elif args.dataset == 'antmaze_large':
+            from dataset.split_antmaze import split_navigate_antmaze_large_v2 as split_navigate
+        if args.dataset == 'maze2d_open':
+            from dataset.split_maze import split_navigate_maze2d_open_v0 as split_navigate
+        elif args.dataset == 'maze2d_umaze':
+            from dataset.split_maze import split_navigate_maze2d_umaze_v1 as split_navigate
+        elif args.dataset == 'maze2d_medium':
+            from dataset.split_maze import split_navigate_maze2d_medium_v1 as split_navigate
+        elif args.dataset == 'maze2d_large':
+            from dataset.split_maze import split_navigate_maze2d_large_v1 as split_navigate
+        else:
+            raise NotImplementedError
+        task_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums = split_navigate(args.task_split_type, args.top_euclid, device, args.dense)
+    elif args.dataset in ['hopper_expert_v0', 'hopper_medium_v0', 'hopper_medium_expert_v0', 'hopper_medium_replay_v0', 'hopper_random_v0', 'halfcheetah_expert_v0', 'halfcheetah_medium_v0', 'halfcheetah_medium_expert_v0', 'halfcheetah_medium_replay_v0', 'halfcheetah_random_v0', 'walker2d_expert_v0', 'walker2d_medium_v0', 'walker2d_medium_expert_v0', 'walker2d_medium_replay_v0', 'walker2d_random_v0']:
+        if args.dataset in ['hopper_expert_v0', 'hopper_medium_v0', 'hopper_medium_expert_v0', 'hopper_medium_replay_v0', 'hopper_random_v0']:
+            from dataset.split_gym import split_hopper as split_gym
+        elif args.dataset in ['halfcheetah_expert_v0', 'halfcheetah_medium_v0', 'halfcheetah_medium_expert_v0', 'halfcheetah_medium_replay_v0', 'halfcheetah_random_v0']:
+            from dataset.split_gym import split_cheetah as split_gym
+        elif args.dataset in ['walker2d_expert_v0', 'walker2d_medium_v0', 'walker2d_medium_expert_v0', 'walker2d_medium_replay_v0', 'walker2d_random_v0']:
+            from dataset.split_gym import split_walker as split_gym
+        else:
+            raise NotImplementedError
+        task_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums = split_gym(args.top_euclid, args.dataset.replace('_', '-'))
     else:
-        assert False
+        raise NotImplementedError
 
     # prepare algorithm
     if args.algos == 'co':
@@ -79,13 +79,6 @@ def main(args, device):
             eval_datasets[task_id] = dataset
             draw_path = args.model_path + algos_name + '_trajectories_' + str(task_id)
 
-            if args.generate_type == 'model_base':
-                dynamics = ProbabilisticEnsembleDynamics(task_id=task_id, original=original, learning_rate=1e-4, use_gpu=True, id_size=task_nums)
-                dynamics.create_impl([real_observation_size], real_action_size)
-                if dynamics_path[task_id] is not None:
-                    dynamics.load_model(dynamics_path[task_id])
-# same as algorithms
-                co._dynamics = dynamics
             co._origin = original
             # train
             co.fit(
@@ -102,7 +95,6 @@ def main(args, device):
                     "real_env": evaluate_on_environment(envs, end_points, task_nums, draw_path),
                 },
                 test=args.test,
-                train_dynamics=dynamics_path[task_id] is None,
             )
             if args.algos == 'co':
                 if args.replay_type == 'siamese':
@@ -139,7 +131,7 @@ def main(args, device):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Experimental evaluation of lifelong PG learning')
-    parser.add_argument("--dataset", default='ant_maze', type=str, choices=["antmaze_umaze", "antmaze_medium", "antmaze_large", "maze2d_open", "maze2d_umaze", "maze2d_medium", "maze2d_large"])
+    parser.add_argument("--dataset", default='ant_maze', type=str, choices=["antmaze_umaze", "antmaze_medium", "antmaze_large", "maze2d_open", "maze2d_umaze", "maze2d_medium", "maze2d_large", 'hopper_expert_v0', 'hopper_medium_v0', 'hopper_medium_expert_v0', 'hopper_medium_replay_v0', 'hopper_random_v0', 'halfcheetah_expert_v0', 'halfcheetah_medium_v0', 'halfcheetah_medium_expert_v0', 'halfcheetah_medium_replay_v0', 'halfcheetah_random_v0', 'walker2d_expert_v0', 'walker2d_medium_v0', 'walker2d_medium_expert_v0', 'walker2d_medium_replay_v0', 'walker2d_random_v0'])
     parser.add_argument('--inner_buffer_size', default=-1, type=int)
     parser.add_argument('--task_config', default='task_config/cheetah_dir.json', type=str)
     parser.add_argument('--siamese_hidden_size', default=100, type=int)

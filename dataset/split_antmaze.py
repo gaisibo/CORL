@@ -2,9 +2,7 @@ import matplotlib.pyplot as plt
 import sys
 from copy import deepcopy
 import random
-from typing_extensions import final
 import numpy as np
-from numpy.lib.utils import who
 import torch
 
 from d3rlpy.datasets import get_d4rl
@@ -112,7 +110,7 @@ def split_antmaze(origin_dataset, env, dataset_name, task_nums, end_points, task
         taskid_task_datasets[dataset_num] = MDPDataset(np.concatenate([dataset.observations, task_id_numpy], axis=1), dataset.actions, dataset.rewards, dataset.terminals, dataset.episode_terminals)
         origin_task_datasets[dataset_num] = MDPDataset(dataset.observations, dataset.actions, dataset.rewards, dataset.terminals, dataset.episode_terminals)
         indexes_euclids[dataset_num] = indexes_euclid
-    torch.save(dataset_name + '_' + task_split_type + '.pt', task_datasets)
+    torch.save(task_datasets, dataset_name + '_' + task_split_type + '.pt')
 
     original = 0
-    return origin_dataset, changed_task_datasets, taskid_task_datasets, origin_task_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums
+    return changed_task_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums
