@@ -1319,8 +1319,6 @@ class CO(CQL):
                     action = start_actions[i].cpu().detach().numpy(),
                     reward = start_rewards[i],
                     next_observation = next_x[i].cpu().detach().numpy(),
-                    next_action = next_action,
-                    next_reward = next_reward,
                     terminal = 0,
                 )
                 new_transitions.append(transition)
@@ -1385,9 +1383,9 @@ class CO(CQL):
                             action=transitions[i].action,
                             reward=-10000,
                             next_observation=transitions[i].next_observation,
-                            next_action = transitions[i].next_action,
-                            next_reward = transitions[i].next_reward,
                             terminal=transitions[i].terminal,
+                            next_transition = transitions[i].next_transition,
+                            prev_transition = transitions[i].prev_transition,
                         )
                         reduce_transitions.append(transitions[i])
                         reduce_transitions.append(reduce_transition)
@@ -1517,8 +1515,8 @@ class CO(CQL):
                         action=transition.action,
                         reward=orl_rewards[i].cpu().detach().numpy(),
                         next_observation=transition.next_observation,
-                        next_action = transition.next_action,
-                        next_reward = transition.next_reward,
+                        next_transition = transitions[i].next_transition,
+                        prev_transition = transitions[i].prev_transition,
                         terminal=transition.terminal,
                     )
                     orl_transitions_.append(orl_transition)
@@ -1667,8 +1665,8 @@ class CO(CQL):
                         action=transition.action,
                         reward=orl_rewards[i].cpu().detach().numpy(),
                         next_observation=transition.next_observation,
-                        next_action = transition.next_action,
-                        next_reward = transition.next_reward,
+                        next_transition = transitions[i].next_transition,
+                        prev_transition = transitions[i].prev_transition,
                         terminal=transition.terminal,
                     )
                     orl_transitions_.append(orl_transition)

@@ -59,6 +59,8 @@ def main(args, device):
     else:
         assert False
 
+    assert False
+
     # prepare algorithm
     if args.algos == 'co':
         from myd3rlpy.algos.co import CO

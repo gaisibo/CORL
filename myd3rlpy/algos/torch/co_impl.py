@@ -298,7 +298,12 @@ class COImpl(CQLImpl):
         assert self._psi is not None
         assert self._policy is not None
         assert self._q_func is not None
-        s, a, r, sp, ap = batch.observations.to(self.device), batch.actions[:, :self.action_size].to(self.device), batch.rewards.to(self.device), batch.next_observations.to(self.device), batch.next_actions.to(self.device)
+        s, a, r, sp = batch.observations.to(self.device), batch.actions[:, :self.action_size].to(self.device), batch.rewards.to(self.device), batch.next_observations.to(self.device)
+        if 'next_actions' in batch.__dict__:
+            ap = batch.next_actions.to(self.device)
+        else:
+            next_batch = TransitionMiniBatch([transition.next_transition for transition in batch.transitions])
+            ap = next_batch.next_actions.to(self.device)
         half_size = batch.observations.shape[0] // 2
         end_size = 2 * half_size
         phi = self._phi(s, a[:, :end_size])
