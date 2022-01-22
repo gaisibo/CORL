@@ -11,3 +11,4 @@ test_*.txt
 *.pt
 *.png
 *.json
+*.log

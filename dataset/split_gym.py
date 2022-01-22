@@ -45,7 +45,10 @@ def get_dataset(h5path, observation_space, action_space):
 
 def split_cheetah(top_euclid, dataset_name):
     origin_dataset, env = get_d4rl(dataset_name)
+    print(dataset_name)
     names = dataset_name.split('_', num=1)
+    print(names)
+    assert False
     dataset_path = '~/.d4rl/datasets/' + names[0] + '_bach_' + names[1][:-3] + '-v0'
     origin_dataset_back = get_dataset(dataset_path, env.observation_space, env.action_space)
     from mygym.envs.halfcheetah_back import HalfCheetahEnvBack
@@ -54,7 +57,10 @@ def split_cheetah(top_euclid, dataset_name):
 
 def split_hopper(top_euclid, dataset_name):
     origin_dataset, env = get_d4rl(dataset_name)
+    print(dataset_name)
     names = dataset_name.split('_', num=1)
+    print(names)
+    assert False
     dataset_path = '~/.d4rl/datasets/' + names[0] + '_bach_' + names[1][:-3] + '-v0'
     origin_dataset_back = get_dataset(dataset_path, env.observation_space, env.action_space)
     dataset_name = dataset_name + '-v0'
@@ -64,7 +70,10 @@ def split_hopper(top_euclid, dataset_name):
 
 def split_walker(top_euclid, dataset_name):
     origin_dataset, env = get_d4rl(dataset_name)
+    print(dataset_name)
     names = dataset_name.split('_', num=1)
+    print(names)
+    assert False
     dataset_path = '~/.d4rl/datasets/' + names[0] + '_bach_' + names[1][:-3] + '-v0'
     origin_dataset_back = get_dataset(dataset_path, env.observation_space, env.action_space)
     dataset_name = dataset_name + '-v0'

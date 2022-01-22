@@ -158,7 +158,7 @@ class CO(CQL):
         actor_learning_rate: float = 1e-4,
         critic_learning_rate: float = 3e-4,
         temp_learning_rate: float = 1e-4,
-        alpha_learning_rate: float = 1e-4,
+        alpha_learning_rate: float = 3e-4,
         phi_learning_rate: float = 1e-4,
         psi_learning_rate: float = 1e-4,
         actor_optim_factory: OptimizerFactory = AdamFactory(),
@@ -174,10 +174,7 @@ class CO(CQL):
         replay_critic_alpha = 1,
         replay_phi_alpha = 1,
         replay_psi_alpha = 1,
-        cql_loss=False,
-        q_bc_loss=True,
-        td3_loss=False,
-        policy_bc_loss=True,
+        replay_type='orl',
         phi_bc_loss=True,
         psi_bc_loss=True,
         train_phi=True,
@@ -186,12 +183,14 @@ class CO(CQL):
         n_frames: int = 1,
         n_steps: int = 1,
         gamma: float = 0.99,
+        gem_gamma: float = 1,
+        agem_alpha: float = 1,
         tau: float = 0.005,
         n_critics: int = 2,
         update_actor_interval: int = 1,
         initial_temperature: float = 1.0,
         initial_alpha: float = 1.0,
-        alpha_threshold: float = 10.0,
+        alpha_threshold: float = 5.0,
         conservative_weight: float = 1.0,
         n_action_samples: int = 10,
         soft_q_backup: bool =False,
@@ -250,10 +249,7 @@ class CO(CQL):
             impl = impl,
             kwargs = kwargs,
         )
-        self._cql_loss = cql_loss
-        self._q_bc_loss = q_bc_loss
-        self._td3_loss = td3_loss
-        self._policy_bc_loss = policy_bc_loss
+        self._replay_type = replay_type
         self._replay_actor_alpha = replay_actor_alpha
         self._replay_critic_alpha = replay_critic_alpha
         self._id_size = id_size
@@ -262,6 +258,8 @@ class CO(CQL):
         self._alpha_learning_rate = alpha_learning_rate
         self._initial_alpha = initial_alpha
         self._alpha_threshold = alpha_threshold
+        self._gem_gamma = gem_gamma
+        self._agem_alpha = agem_alpha
 
         self._phi_optim_factory = phi_optim_factory
         self._psi_optim_factory = psi_optim_factory
@@ -313,11 +311,10 @@ class CO(CQL):
             q_func_factory=self._q_func_factory,
             replay_critic_alpha=self._replay_critic_alpha,
             replay_actor_alpha=self._replay_actor_alpha,
-            cql_loss=self._cql_loss,
-            q_bc_loss=self._q_bc_loss,
-            td3_loss=self._td3_loss,
-            policy_bc_loss=self._policy_bc_loss,
+            replay_type=self._replay_type,
             gamma=self._gamma,
+            gem_gamma=self._gem_gamma,
+            agem_alpha=self._agem_alpha,
             tau=self._tau,
             n_critics=self._n_critics,
             initial_alpha=self._initial_alpha,
@@ -717,7 +714,7 @@ class CO(CQL):
             #     self._dynamics._network = self
             for epoch in range(1, n_epochs + 1):
 
-                if self._generate_type == 'model_base':
+                # if self._generate_type == 'model_base':
                     # assert self._dynamics is not None
                     # if self._n_train_dynamics % epoch == 0:
                     #     self._dynamics.fit(
@@ -861,6 +858,13 @@ class CO(CQL):
             # drop reference to active logger since out of fit there is no active
             # logger
             self._active_logger = None
+
+            # for EWC
+            if self._replay_type == 'agem':
+                self._impl.agem_post_train_process(iterator)
+            elif self._replay_type == 'gem':
+                self._impl.gem_post_train_process()
+
         else:
             replay_buffer = ReplayBuffer(real_observation_size, real_action_size)
             # Evaluate untrained policy
