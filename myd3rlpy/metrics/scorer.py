@@ -70,7 +70,7 @@ def td_error_scorer(real_action_size: int) -> Callable[..., Callable[...,float]]
     return id_scorer
 
 def evaluate_on_environment(
-        envs: Dict[int, gym.Env], end_points: Optional[List[Tuple[float, float]]], task_nums: int, draw_path: str, n_trials: int = 10, epsilon: float = 0.0, render: bool = False,
+        envs: Dict[int, gym.Env], end_points: Optional[List[Tuple[float, float]]], task_nums: int, draw_path: str, n_trials: int = 10, epsilon: float = 0.0, render: bool = False, sum: bool=False
 ) -> Callable[..., Callable[..., float]]:
 
     # for image observation
@@ -101,13 +101,14 @@ def evaluate_on_environment(
 
             trajectories = []
 
+            rewards = []
             episode_rewards = []
             for _ in range(n_trials):
                 trajectory = []
+                episode_reward = 0
                 observation = env.reset()
                 task_id_numpy = np.eye(task_nums)[id].squeeze()
                 observation = np.concatenate([observation, task_id_numpy], axis=0)
-                episode_reward = 0.0
 
                 # frame stacking
                 if is_image:
@@ -139,9 +140,13 @@ def evaluate_on_environment(
                     if done:
                         break
                 trajectories.append(trajectory)
+                rewards.append(reward)
                 episode_rewards.append(episode_reward)
             draw(trajectories)
-            return float(np.mean(episode_rewards))
+            if not sum:
+                return float(np.mean(rewards))
+            else:
+                return float(np.mean(episode_rewards))
         return scorer
 
     return id_scorer

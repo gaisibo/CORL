@@ -15,7 +15,7 @@ def compute_vector_norm(tensor1, tensor2):
     tensor2.half()
     ret = torch.linalg.vector_norm(tensor1 - tensor2, dim = 2)
     return ret.cpu()
-def similar_euclid(obs_all, obs_transition, dataset_name, dataset_num, input_indexes=None, eval_batch_size=1000, topk=256):
+def similar_euclid(obs_all, obs_transition, dataset_name, dataset_num, input_indexes=None, eval_batch_size=1000, topk=256, compare_dim=2):
     filename = 'near_indexes_' + dataset_name + '/near_indexes_' + dataset_name + '_' + str(dataset_num) + '.pt'
     if os.path.exists(filename):
         return torch.load(filename)
@@ -27,26 +27,26 @@ def similar_euclid(obs_all, obs_transition, dataset_name, dataset_num, input_ind
         if i + eval_batch_size < obs_all.shape[0]:
             while j < obs_transition.shape[0]:
                 if j + eval_batch_size < obs_transition.shape[0]:
-                    tensor1 = obs_all[i: i + eval_batch_size, :2].unsqueeze(dim=1).expand(-1, eval_batch_size, -1)
-                    tensor2 = obs_transition[j: j + eval_batch_size, :2].unsqueeze(dim=0).expand(eval_batch_size, -1, -1)
+                    tensor1 = obs_all[i: i + eval_batch_size, :compare_dim].unsqueeze(dim=1).expand(-1, eval_batch_size, -1)
+                    tensor2 = obs_transition[j: j + eval_batch_size, :compare_dim].unsqueeze(dim=0).expand(eval_batch_size, -1, -1)
                     siamese_distance = compute_vector_norm(tensor1, tensor2)
                     in_results.append(siamese_distance)
                 else:
-                    tensor1 = obs_all[i: i + eval_batch_size, :2].unsqueeze(dim=1).expand(-1, obs_transition.shape[0] - j, -1)
-                    tensor2 = obs_transition[j:, :2].unsqueeze(dim=0).expand(eval_batch_size, -1, -1)
+                    tensor1 = obs_all[i: i + eval_batch_size, :compare_dim].unsqueeze(dim=1).expand(-1, obs_transition.shape[0] - j, -1)
+                    tensor2 = obs_transition[j:, :compare_dim].unsqueeze(dim=0).expand(eval_batch_size, -1, -1)
                     siamese_distance = compute_vector_norm(tensor1, tensor2)
                     in_results.append(siamese_distance)
                 j += eval_batch_size
         else:
             while j < obs_transition.shape[0]:
                 if j + eval_batch_size < obs_transition.shape[0]:
-                    tensor1 = obs_all[i:, :2].unsqueeze(dim=1).expand(-1, eval_batch_size, -1)
-                    tensor2 = obs_transition[j: j + eval_batch_size, :2].unsqueeze(dim=0).expand(obs_all.shape[0] - i, -1, -1)
+                    tensor1 = obs_all[i:, :compare_dim].unsqueeze(dim=1).expand(-1, eval_batch_size, -1)
+                    tensor2 = obs_transition[j: j + eval_batch_size, :compare_dim].unsqueeze(dim=0).expand(obs_all.shape[0] - i, -1, -1)
                     siamese_distance = compute_vector_norm(tensor1, tensor2)
                     in_results.append(siamese_distance)
                 else:
-                    tensor1 = obs_all[i:, :2].unsqueeze(dim=1).expand(-1, obs_transition.shape[0] - j, -1)
-                    tensor2 = obs_transition[j:, :2].unsqueeze(dim=0).expand(obs_all.shape[0] - i, -1, -1)
+                    tensor1 = obs_all[i:, :compare_dim].unsqueeze(dim=1).expand(-1, obs_transition.shape[0] - j, -1)
+                    tensor2 = obs_transition[j:, :compare_dim].unsqueeze(dim=0).expand(obs_all.shape[0] - i, -1, -1)
                     siamese_distance = compute_vector_norm(tensor1, tensor2)
                     in_results.append(siamese_distance)
                 j += eval_batch_size
@@ -57,6 +57,8 @@ def similar_euclid(obs_all, obs_transition, dataset_name, dataset_num, input_ind
     near_indexes = torch.cat(results, dim=0)
     if input_indexes is not None:
         near_indexes = input_indexes[near_indexes]
+    if not os.path.exists('near_indexes_' + dataset_name):
+        os.makedirs('near_indexes_' + dataset_name)
     torch.save(near_indexes, filename)
     return near_indexes
 

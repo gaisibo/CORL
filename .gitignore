@@ -11,3 +11,5 @@ test_*.txt
 *.pt
 *.png
 *.json
+output_*.txt
+*.hdf5

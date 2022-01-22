@@ -717,7 +717,7 @@ class CO(CQL):
             #     self._dynamics._network = self
             for epoch in range(1, n_epochs + 1):
 
-                if self._generate_type == 'model_base':
+                # if self._generate_type == 'model_base':
                     # assert self._dynamics is not None
                     # if self._n_train_dynamics % epoch == 0:
                     #     self._dynamics.fit(

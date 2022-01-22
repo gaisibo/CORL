@@ -100,7 +100,7 @@ def split_antmaze(origin_dataset, env, dataset_name, task_nums, end_points, task
     for dataset_num, dataset in task_datasets.items():
         transitions = [transition for episode in dataset.episodes for transition in episode]
         observations = np.stack([transition.observation for transition in transitions], axis=0)
-        indexes_euclid = similar_euclid(torch.from_numpy(dataset.observations).cuda(), torch.from_numpy(observations).cuda(), dataset_name, dataset_num)[:, :top_euclid]
+        indexes_euclid = similar_euclid(torch.from_numpy(dataset.observations).cuda(), torch.from_numpy(observations).cuda(), dataset_name, dataset_num, compare_dim=2)[:, :top_euclid]
         real_action_size = dataset.actions.shape[1]
         task_id_numpy = np.eye(task_nums)[dataset_num].squeeze()
         task_id_numpy = np.broadcast_to(task_id_numpy, (dataset.observations.shape[0], task_nums))
@@ -110,7 +110,7 @@ def split_antmaze(origin_dataset, env, dataset_name, task_nums, end_points, task
         taskid_task_datasets[dataset_num] = MDPDataset(np.concatenate([dataset.observations, task_id_numpy], axis=1), dataset.actions, dataset.rewards, dataset.terminals, dataset.episode_terminals)
         origin_task_datasets[dataset_num] = MDPDataset(dataset.observations, dataset.actions, dataset.rewards, dataset.terminals, dataset.episode_terminals)
         indexes_euclids[dataset_num] = indexes_euclid
-    torch.save(task_datasets, dataset_name + '_' + task_split_type + '.pt')
+    # torch.save(task_datasets, dataset_name + '_' + task_split_type + '.pt')
 
     original = 0
     return changed_task_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums

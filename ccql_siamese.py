@@ -35,7 +35,7 @@ def main(args, device):
             from dataset.split_antmaze import split_navigate_antmaze_medium_v2 as split_navigate
         elif args.dataset == 'antmaze_large':
             from dataset.split_antmaze import split_navigate_antmaze_large_v2 as split_navigate
-        if args.dataset == 'maze2d_open':
+        elif args.dataset == 'maze2d_open':
             from dataset.split_maze import split_navigate_maze2d_open_v0 as split_navigate
         elif args.dataset == 'maze2d_umaze':
             from dataset.split_maze import split_navigate_maze2d_umaze_v1 as split_navigate
@@ -62,7 +62,7 @@ def main(args, device):
     # prepare algorithm
     if args.algos == 'co':
         from myd3rlpy.algos.co import CO
-        co = CO(use_gpu=True, batch_size=args.batch_size, n_action_samples=args.n_action_samples, id_size=task_nums, cql_loss=args.cql_loss, q_bc_loss=args.q_bc_loss, td3_loss=args.td3_loss, policy_bc_loss=args.policy_bc_loss, generate_type=args.generate_type, reduce_replay=args.reduce_replay, double_data=args.double_data, change_reward=args.change_reward)
+        co = CO(use_gpu=True, batch_size=args.batch_size, n_action_samples=args.n_action_samples, id_size=task_nums, cql_loss=args.cql_loss, q_bc_loss=args.q_bc_loss, td3_loss=args.td3_loss, policy_bc_loss=args.policy_bc_loss, generate_type=args.generate_type, reduce_replay=args.reduce_replay, double_data=args.double_data, change_reward=args.change_reward, alpha_learning_rate=args.alpha_lr)
     else:
         raise NotImplementedError
     experiment_name = "CO"
@@ -102,7 +102,7 @@ def main(args, device):
                     print(f"len(replay_datasets[task_id]): {len(replay_datasets[task_id])}")
                 else:
                     replay_datasets[task_id], save_datasets[task_id] = co.generate_replay_data_random(task_id, task_datasets[task_id], max_save_num=args.max_save_num, real_action_size=real_action_size, in_task=False)
-                    print(f"replay_datasets[task_id].shape[0]: {replay_datasets[task_id].shape[0]}")
+                    print(f"len(replay_datasets[task_id]): {len(replay_datasets[task_id])}")
             else:
                 raise NotImplementedError
             co.save_model(args.model_path + algos_name + '_' + str(task_id) + '.pt')
@@ -155,6 +155,8 @@ if __name__ == '__main__':
     parser.add_argument('--double_data', default='double_data', type=str)
     parser.add_argument('--change_reward', default='change', type=str)
     parser.add_argument('--dense', default='dense', type=str)
+
+    parser.add_argument("--alpha_lr", default=3e-4, type=float)
     args = parser.parse_args()
     args.model_path = 'd3rlpy_' + args.replay_type + '_' + args.generate_type + '_' + args.orl + '_' + args.reduce_replay + '_' + args.dataset + '_' + ('test' if args.test else ('train' if not args.eval else 'eval'))
     if not os.path.exists(args.model_path):
