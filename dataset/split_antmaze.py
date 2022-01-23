@@ -35,15 +35,6 @@ def split_navigate_antmaze_large_v2(task_split_type, top_euclid, device, dense):
     return split_antmaze(origin_dataset, env, dataset_name, task_nums, end_points, task_split_type, top_euclid, device, dense)
 
 def split_antmaze(origin_dataset, env, dataset_name, task_nums, end_points, task_split_type, top_euclid, device, dense):
-    fig = plt.figure()
-    obs = env.reset()
-    for episode in origin_dataset.episodes:
-        x = episode.observations[:, 0]
-        y = episode.observations[:, 1]
-        plt.plot(x, y)
-    plt.plot(obs[0], obs[1], 'o', markersize=4)
-    plt.savefig('try_' + dataset_name + '.png')
-    plt.close('all')
     task_datasets = {k: [] for k in range(task_nums)}
     if task_split_type == 'directed':
         for episode in origin_dataset.episodes:
@@ -76,6 +67,7 @@ def split_antmaze(origin_dataset, env, dataset_name, task_nums, end_points, task
                 i += task_length
     task_datasets_ = {}
     envs = {}
+    have_reward = 0
     for index, episodes in task_datasets.items():
         envs[index] = deepcopy(env)
         envs[index]._goal = end_points[index]
@@ -83,13 +75,32 @@ def split_antmaze(origin_dataset, env, dataset_name, task_nums, end_points, task
         observations = np.concatenate([episode.observations for episode in episodes], axis=0)
         actions = np.concatenate([episode.actions for episode in episodes], axis=0)
         # rewards = np.concatenate([episode.rewards for episode in episodes], axis=0)
-        rewards = np.where(np.linalg.norm(observations[:, :2] - end_points[index], axis=1) < 0.5, 1, 0)
+        if not dense:
+            rewards = np.where(np.linalg.norm(observations[:, :2] - end_points[index], axis=1) < 0.2, 1, 0)
+        else:
+            rewards = - np.linalg.norm(observations[:, :2] - end_points[index], axis=1)
         terminals = [np.zeros(episode.observations.shape[0]) for episode in episodes]
         for terminal in terminals:
             terminal[-1] = 1
         terminals = np.concatenate(terminals, axis=0)
         task_datasets_[index] = MDPDataset(observations, actions, rewards, terminals)
     task_datasets = task_datasets_
+
+    # for i in range(task_nums):
+    #     dataset = task_datasets[i]
+    #     end_point = end_points[i]
+    #     fig = plt.figure()
+    #     for episode in dataset.episodes:
+    #         if np.linalg.norm(episode[-1].observation[:2] - end_point) < 0.2:
+    #             x = episode.observations[:, 0]
+    #             y = episode.observations[:, 1]
+    #             plt.plot(x, y)
+    #     for j in range(100):
+    #         obs = env.reset()
+    #         plt.plot(obs[0], obs[1], 'o', markersize=8)
+    #     plt.plot(end_point[0], end_point[1], 'o', markersize=4)
+    #     plt.savefig('to_final_' + dataset_name + '_' + str(i) + '.png')
+    #     plt.close('all')
 
     changed_task_datasets = dict()
     taskid_task_datasets = dict()
@@ -111,6 +122,7 @@ def split_antmaze(origin_dataset, env, dataset_name, task_nums, end_points, task
         origin_task_datasets[dataset_num] = MDPDataset(dataset.observations, dataset.actions, dataset.rewards, dataset.terminals, dataset.episode_terminals)
         indexes_euclids[dataset_num] = indexes_euclid
     # torch.save(task_datasets, dataset_name + '_' + task_split_type + '.pt')
+
 
     original = 0
     return changed_task_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums

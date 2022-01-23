@@ -62,13 +62,13 @@ def main(args, device):
     # prepare algorithm
     if args.algos == 'co':
         from myd3rlpy.algos.co import CO
-        co = CO(use_gpu=True, batch_size=args.batch_size, n_action_samples=args.n_action_samples, id_size=task_nums, cql_loss=args.cql_loss, q_bc_loss=args.q_bc_loss, td3_loss=args.td3_loss, policy_bc_loss=args.policy_bc_loss, generate_type=args.generate_type, reduce_replay=args.reduce_replay, double_data=args.double_data, change_reward=args.change_reward, alpha_learning_rate=args.alpha_lr)
+        co = CO(use_gpu=True, batch_size=args.batch_size, n_action_samples=args.n_action_samples, id_size=task_nums, replay_type=args.replay_type, generate_type=args.generate_type, reduce_replay=args.reduce_replay, change_reward=args.change_reward, alpha_learning_rate=args.alpha_lr)
     else:
         raise NotImplementedError
     experiment_name = "CO"
-    algos_name = "_orl" if args.orl else "_noorl"
+    algos_name = "_" + args.replay_type
     algos_name += "_" + args.generate_type
-    algos_name += "_" + args.replay_type
+    algos_name += "_" + args.experience_type
     algos_name += '_' + args.dataset
 
     if not args.eval:
@@ -79,13 +79,12 @@ def main(args, device):
             eval_datasets[task_id] = dataset
             draw_path = args.model_path + algos_name + '_trajectories_' + str(task_id)
 
-            co._origin = original
             # train
             co.fit(
                 task_id,
                 dataset,
                 replay_datasets,
-                original = original,
+                original = original[task_id],
                 real_action_size = real_action_size,
                 real_observation_size = real_observation_size,
                 eval_episodess=eval_datasets,
@@ -97,7 +96,7 @@ def main(args, device):
                 test=args.test,
             )
             if args.algos == 'co':
-                if args.replay_type == 'siamese':
+                if args.experience_type == 'siamese':
                     replay_datasets[task_id], save_datasets[task_id] = co.generate_replay_data_phi(task_id, task_datasets[task_id], original, in_task=False, max_save_num=args.max_save_num, real_action_size=real_action_size, real_observation_size=real_observation_size)
                     print(f"len(replay_datasets[task_id]): {len(replay_datasets[task_id])}")
                 else:
@@ -118,9 +117,7 @@ def main(args, device):
             draw_path = args.model_path + algos_name + '_trajectories_' + str(task_id) + '_'
             eval_datasets[task_id] = dataset
             co.load_model(args.model_path + algos_name + '_' + str(task_id) + '.pt')
-            replay_datasets = torch.load(args.model_path + algos_name + '_datasets.pt')
             co.test(
-                replay_datasets,
                 eval_episodess=eval_datasets,
                 scorers={
                     # 'environment': evaluate_on_environment(env),
@@ -148,30 +145,18 @@ if __name__ == '__main__':
     parser.add_argument("--n_epochs", default=1000, type=int)
     parser.add_argument("--n_action_samples", default=4, type=int)
     parser.add_argument('--top_euclid', default=64, type=int)
-    parser.add_argument('--orl', default='orl', choices=['orl', 'no_orl'])
-    parser.add_argument('--replay_type', default='siamese', type=str, choices=['siamese', 'random'])
+    parser.add_argument('--replay_type', default='orl', type=str, choices=['orl', 'bc', 'ewc', 'gem', 'agem'])
+    parser.add_argument('--experience_type', default='siamese', type=str, choices=['siamese', 'random'])
     parser.add_argument('--generate_type', default='siamese', type=str, choices=['siamese', 'random'])
     parser.add_argument('--reduce_replay', default='retrain', type=str, choices=['retrain', 'no_retrain'])
-    parser.add_argument('--double_data', default='double_data', type=str)
-    parser.add_argument('--change_reward', default='change', type=str)
+    parser.add_argument('--change_reward', default='change', type=str, choices=['change', 'no_change'])
     parser.add_argument('--dense', default='dense', type=str)
-
-    parser.add_argument("--alpha_lr", default=3e-4, type=float)
+    parser.add_argument("--alpha_lr", default=1e-4, type=float)
     args = parser.parse_args()
-    args.model_path = 'd3rlpy_' + args.replay_type + '_' + args.generate_type + '_' + args.orl + '_' + args.reduce_replay + '_' + args.dataset + '_' + ('test' if args.test else ('train' if not args.eval else 'eval'))
+    args.model_path = 'd3rlpy_' + args.experience_type + '_' + args.generate_type + '_' + args.replay_type + '_' + args.reduce_replay + '_' + args.change_reward + '_' + args.dense + '_' + args.dataset + '_' + ('test' if args.test else ('train' if not args.eval else 'eval'))
     if not os.path.exists(args.model_path):
         os.makedirs(args.model_path)
     args.model_path +=  '/model_'
-    if args.orl:
-        args.cql_loss = True
-        args.td3_loss = True
-        args.q_bc_loss = False
-        args.policy_bc_loss = False
-    else:
-        args.cql_loss = False
-        args.td3_loss = False
-        args.q_bc_loss = True
-        args.policy_bc_loss = True
     global DATASET_PATH
     DATASET_PATH = './.d4rl/datasets/'
     device = torch.device('cuda:0')

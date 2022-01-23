@@ -6,24 +6,20 @@ from typing import Optional, Sequence, List, Any, Tuple, Dict, Union, cast
 import numpy as np
 import torch
 from torch import nn
-from torch.optim import Optimizer
 import torch.nn.functional as F
 
 from d3rlpy.gpu import Device
 from d3rlpy.models.encoders import EncoderFactory
 from d3rlpy.models.optimizers import OptimizerFactory
-from d3rlpy.models.torch import Policy
 from d3rlpy.models.q_functions import QFunctionFactory
 from d3rlpy.preprocessing import ActionScaler, RewardScaler, Scaler
-from d3rlpy.torch_utility import TorchMiniBatch, soft_sync, train_api, eval_api, torch_api
-from d3rlpy.dataset import MDPDataset, TransitionMiniBatch
-from d3rlpy.algos.base import AlgoBase
-from d3rlpy.algos.torch.base import TorchImplBase
+from d3rlpy.torch_utility import TorchMiniBatch, soft_sync, train_api, torch_api
+from d3rlpy.dataset import TransitionMiniBatch
 from d3rlpy.algos.torch.cql_impl import CQLImpl
 
-from d3rlpy.models.builders import create_squashed_normal_policy, create_continuous_q_function, create_parameter
 from myd3rlpy.models.builders import create_phi, create_psi
-from myd3rlpy.siamese_similar import similar_euclid, similar_psi, similar_phi
+from myd3rlpy.algos.torch.gem import overwrite_grad, store_grad, project2cone2
+from myd3rlpy.algos.torch.agem import project
 from utils.utils import Struct
 
 
@@ -49,11 +45,10 @@ class COImpl(CQLImpl):
         q_func_factory: QFunctionFactory,
         replay_actor_alpha: float,
         replay_critic_alpha: float,
-        cql_loss: bool,
-        q_bc_loss: bool,
-        td3_loss: bool,
-        policy_bc_loss: bool,
+        replay_type: str,
         gamma: float,
+        gem_gamma: float,
+        agem_alpha: float,
         tau: float,
         n_critics: int,
         initial_alpha: float,
@@ -95,10 +90,7 @@ class COImpl(CQLImpl):
             action_scaler = action_scaler,
             reward_scaler = reward_scaler,
         )
-        self._cql_loss = cql_loss
-        self._q_bc_loss = q_bc_loss
-        self._td3_loss = td3_loss
-        self._policy_bc_loss = policy_bc_loss
+        self._replay_type = replay_type
         self._replay_actor_alpha = replay_actor_alpha
         self._replay_critic_alpha = replay_critic_alpha
 
@@ -106,6 +98,8 @@ class COImpl(CQLImpl):
         self._alpha_optim_factory = alpha_optim_factory
         self._initial_alpha = initial_alpha
         self._alpha_threshold = alpha_threshold
+        self._gem_gamma = gem_gamma
+        self._agem_alpha = agem_alpha
 
         self._phi_learning_rate = phi_learning_rate
         self._psi_learning_rate = psi_learning_rate
@@ -126,9 +120,52 @@ class COImpl(CQLImpl):
         self._psi_optim = self._psi_optim_factory.create(
             self._psi.parameters(), lr=self._psi_learning_rate
         )
+        assert self._q_func is not None
+        assert self._policy is not None
+        if self._replay_type in ['ewc', 'r_walk']:
+            # Store fisher information weight importance
+            self._critic_fisher = {n: torch.zeros(p.shape).to(self.device) for n, p in self._q_func.named_parameters() if p.requires_grad}
+            # Store current parameters for the next task
+            self._critic_older_params = {n: p.clone().detach() for n, p in self._q_func.named_parameters() if p.requires_grad}
+            # Store fisher information weight importance
+            self._actor_fisher = {n: torch.zeros(p.shape).to(self.device) for n, p in self._policy.named_parameters() if p.requires_grad}
+            # Store current parameters for the next task
+            self._actor_older_params = {n: p.clone().detach() for n, p in self._policy.named_parameters() if p.requires_grad}
+            if self._replay_type == 'r_walk':
+                # Page 7: "task-specific parameter importance over the entire training trajectory."
+                self._critic_w = {n: torch.zeros(p.shape).to(self.device) for n, p in self._q_func.named_parameters() if p.requires_grad}
+                self._critic_scores = {n: torch.zeros(p.shape).to(self.device) for n, p in self._q_func.named_parameters() if p.requires_grad}
+
+                # Page 7: "task-specific parameter importance over the entire training trajectory."
+                self._actor_w = {n: torch.zeros(p.shape).to(self.device) for n, p in self._policy.named_parameters() if p.requires_grad}
+                self._actor_scores = {n: torch.zeros(p.shape).to(self.device) for n, p in self._policy.named_parameters() if p.requires_grad}
+        elif self._replay_type == 'gem':
+            # Allocate temporary synaptic memory
+            self._critic_grad_dims = []
+            for pp in self._q_func.parameters():
+                self._critic_grad_dims.append(pp.data.numel())
+            self._critic_grads_cs = []
+            self._critic_grads_da = torch.zeros(np.sum(self._critic_grad_dims)).to(self.device)
+
+            self._actor_grad_dims = []
+            for pp in self._policy.parameters():
+                self._actor_grad_dims.append(pp.data.numel())
+            self._actor_grads_cs = []
+            self._actor_grads_da = torch.zeros(np.sum(self._actor_grad_dims)).to(self.device)
+        elif self._replay_type == 'agem':
+            self._critic_grad_dims = []
+            for param in self._q_func.parameters():
+                self._critic_grad_dims.append(param.data.numel())
+            self._critic_grad_xy = torch.Tensor(np.sum(self._critic_grad_dims)).to(self.device)
+            self._critic_grad_er = torch.Tensor(np.sum(self._critic_grad_dims)).to(self.device)
+            self._actor_grad_dims = []
+            for param in self._policy.parameters():
+                self._actor_grad_dims.append(param.data.numel())
+            self._actor_grad_xy = torch.Tensor(np.sum(self._actor_grad_dims)).to(self.device)
+            self._actor_grad_er = torch.Tensor(np.sum(self._actor_grad_dims)).to(self.device)
 
     @train_api
-    def update_critic(self, batch_tran: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[torch.Tensor]]]=None):
+    def update_critic(self, batch_tran: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[torch.Tensor]]]=None, step=True):
         batch = TorchMiniBatch(
             batch_tran,
             self.device,
@@ -142,11 +179,26 @@ class COImpl(CQLImpl):
         self._q_func.train()
         self._policy.eval()
 
+        if replay_batches is not None and len(replay_batches) != 0 and self._replay_type == 'gem':
+            for i, replay_batch in replay_batches.items():
+                replay_batch = dict(zip(replay_name, replay_batch))
+                replay_batch = Struct(**replay_batch)
+                replay_batch = cast(TorchMiniBatch, replay_batch)
+                q_tpn = self.compute_target(replay_batch)
+                replay_loss_ = self.compute_critic_loss(replay_batch, q_tpn) / len(replay_batches)
+                replay_loss = replay_loss_
+                replay_loss.backward()
+                store_grad(self._q_func.parameters, self._critic_grads_cs[i], self._critic_grad_dims)
+        elif replay_batches is not None and len(replay_batches) != 0 and self._replay_type == 'r_walk':
+            curr_feat_ext = {n: p.clone().detach() for n, p in self._q_func.named_parameters() if p.requires_grad}
+
         self._critic_optim.zero_grad()
 
         q_tpn = self.compute_target(batch)
 
         loss = self.compute_critic_loss(batch, q_tpn)
+        unreg_grads = None
+        curr_feat_ext = None
         replay_loss = 0
         replay_losses = []
         if replay_batches is not None and len(replay_batches) != 0:
@@ -154,7 +206,7 @@ class COImpl(CQLImpl):
                 replay_batch = dict(zip(replay_name, replay_batch))
                 replay_batch = Struct(**replay_batch)
                 replay_loss = 0
-                if self._cql_loss:
+                if self._replay_type == "orl":
                     replay_batch.n_steps = 1
                     replay_batch.masks = None
                     replay_batch = cast(TorchMiniBatch, replay_batch)
@@ -162,7 +214,7 @@ class COImpl(CQLImpl):
                     replay_cql_loss = self.compute_critic_loss(replay_batch, q_tpn)
                     replay_losses.append(replay_cql_loss.cpu().detach().numpy())
                     replay_loss += replay_cql_loss
-                if self._q_bc_loss:
+                elif self._replay_type == "bc":
                     with torch.no_grad():
                         replay_observations = replay_batch.observations.to(self.device)
                         replay_qs = replay_batch.qs.to(self.device)
@@ -171,12 +223,67 @@ class COImpl(CQLImpl):
                     replay_bc_loss = F.mse_loss(replay_qs, q) / len(replay_batches)
                     replay_losses.append(replay_bc_loss.cpu().detach().numpy())
                     replay_loss += replay_bc_loss
-            loss += self._replay_critic_alpha * replay_loss
-            if self._cql_loss or self._q_bc_loss:
+                elif self._replay_type == "ewc":
+                    replay_loss = 0
+                    for n, p in self._q_func.named_parameters():
+                        if n in self._critic_fisher.keys():
+                            replay_loss += torch.sum(self._critic_fisher[n] * (p - self._critic_older_params[n]).pow(2)) / 2
+                elif self._replay_type == 'r_walk':
+                    # store gradients without regularization term
+                    unreg_grads = {n: p.grad.clone().detach() for n, p in self._q_func.named_parameters()
+                                   if p.grad is not None}
+
+                    self._critic_optim.zero_grad()
+                    replay_loss = 0
+                    # Eq. 3: elastic weight consolidation quadratic penalty
+                    for n, p in self._q_func.named_parameters():
+                        if n in self._critic_fisher.keys():
+                            replay_loss += torch.sum((self._critic_fisher[n] + self._critic_scores[n]) * (p - self._critic_older_params[n]).pow(2)) / 2
+                elif self._replay_type == "agem":
+                    store_grad(self._q_func.parameters, self._critic_grad_xy, self._critic_grad_dims)
+                    replay_batch.n_steps = 1
+                    replay_batch.masks = None
+                    replay_batch = cast(TorchMiniBatch, replay_batch)
+                    q_tpn = self.compute_target(replay_batch)
+                    replay_cql_loss = self.compute_critic_loss(replay_batch, q_tpn)
+                    replay_losses.append(replay_cql_loss.cpu().detach().numpy())
+                    replay_loss += replay_cql_loss
+
+            if self._replay_type in ['orl', 'bc', 'ewc', 'lamb']:
+                loss += self._replay_critic_alpha * replay_loss
                 replay_loss = replay_loss.cpu().detach().numpy()
 
         loss.backward()
-        self._critic_optim.step()
+        if self._replay_type == 'agem':
+            replay_loss.backward()
+            store_grad(self._q_func.parameters, self._critic_grad_er, self._critic_grad_dims)
+            dot_prod = torch.dot(self._critic_grad_xy, self._critic_grad_er)
+            if dot_prod.item() < 0:
+                g_tilde = project(gxy=self._critic_grad_xy, ger=self._critic_grad_er)
+                overwrite_grad(self._q_func.parameters, g_tilde, self._critic_grad_dims)
+            else:
+                overwrite_grad(self._q_func.parameters, self._critic_grad_xy, self._critic_grad_dims)
+        elif self._replay_type == 'gem':
+            # copy gradient
+            store_grad(self._q_func.parameters, self._critic_grads_da, self._critic_grad_dims)
+            dot_prod = torch.mm(self._critic_grads_da.unsqueeze(0),
+                            torch.stack(self._critic_grads_cs).T)
+            if (dot_prod < 0).sum() != 0:
+                project2cone2(self._critic_grads_da.unsqueeze(1),
+                              torch.stack(self._critic_grads_cs).T, margin=self._gem_gamma)
+                # copy gradients back
+                overwrite_grad(self._q_func.parameters, self._critic_grads_da,
+                               self._critic_grad_dims)
+        if step:
+            self._critic_optim.step()
+
+        if self._replay_type == 'r_walk':
+            assert unreg_grads is not None
+            assert curr_feat_ext is not None
+            with torch.no_grad():
+                for n, p in self._q_func.named_parameters():
+                    if n in unreg_grads.keys():
+                        self._critic_w[n] -= unreg_grads[n] * (p.detach() - curr_feat_ext[n])
 
         loss = loss.cpu().detach().numpy()
 
@@ -200,7 +307,7 @@ class COImpl(CQLImpl):
         return loss + conservative_loss
 
     @train_api
-    def update_actor(self, batch_tran: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[torch.Tensor]]]=None) -> np.ndarray:
+    def update_actor(self, batch_tran: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[torch.Tensor]]]=None, step=True) -> np.ndarray:
         assert self._q_func is not None
         assert self._policy is not None
         assert self._actor_optim is not None
@@ -216,21 +323,35 @@ class COImpl(CQLImpl):
         self._q_func.eval()
         self._policy.train()
 
+        if replay_batches is not None and len(replay_batches) != 0 and self._replay_type == 'gem':
+            for i, replay_batch in replay_batches.items():
+                replay_batch = dict(zip(replay_name, replay_batch))
+                replay_batch = Struct(**replay_batch)
+                replay_batch = cast(TorchMiniBatch, replay_batch)
+                replay_loss_ = self.compute_actor_loss(replay_batch) / len(replay_batches)
+                replay_loss = replay_loss_
+                replay_loss.backward()
+                store_grad(self._policy.parameters, self._actor_grads_cs[i], self._actor_grad_dims)
+        elif replay_batches is not None and len(replay_batches) != 0 and self._replay_type == 'r_walk':
+            curr_feat_ext = {n: p.clone().detach() for n, p in self._policy.named_parameters() if p.requires_grad}
+
         self._actor_optim.zero_grad()
 
         loss = self.compute_actor_loss(batch)
+        unreg_grads = None
+        curr_feat_ext = None
         replay_loss = 0
         replay_losses = []
         if replay_batches is not None and len(replay_batches) != 0:
             for i, replay_batch in replay_batches.items():
                 replay_batch = dict(zip(replay_name, replay_batch))
                 replay_batch = Struct(**replay_batch)
-                if self._td3_loss:
+                if self._replay_type == "orl":
                     replay_batch = cast(TorchMiniBatch, replay_batch)
                     replay_loss_ = self.compute_actor_loss(replay_batch) / len(replay_batches)
                     replay_loss += replay_loss_
                     replay_losses.append(replay_loss_.cpu().detach().numpy())
-                if self._policy_bc_loss:
+                if self._replay_type == "bc":
                     with torch.no_grad():
                         replay_observations = replay_batch.observations.to(self.device)
                         replay_means = replay_batch.means.to(self.device)
@@ -240,12 +361,64 @@ class COImpl(CQLImpl):
                     replay_loss_ = torch.distributions.kl.kl_divergence(actions, replay_actions).mean() / len(replay_batches)
                     replay_losses.append(replay_loss.cpu().detach().numpy())
                     replay_loss = replay_loss_
-            loss += self._replay_actor_alpha * replay_loss
-            if self._td3_loss or self._policy_bc_loss:
+                if self._replay_type == "ewc":
+                    replay_loss = 0
+                    for n, p in self._q_func.named_parameters():
+                        if n in self._critic_fisher.keys():
+                            replay_loss += torch.sum(self._critic_fisher[n] * (p - self._critic_older_params[n]).pow(2)) / 2
+                elif self._replay_type == 'r_walk':
+                    # store gradients without regularization term
+                    unreg_grads = {n: p.grad.clone().detach() for n, p in self._policy.named_parameters()
+                                   if p.grad is not None}
+
+                    self._actor_optim.zero_grad()
+                    replay_loss = 0
+                    # Eq. 3: elastic weight consolidation quadratic penalty
+                    for n, p in self._policy.named_parameters():
+                        if n in self._actor_fisher.keys():
+                            replay_loss += torch.sum((self._actor_fisher[n] + self._actor_scores[n]) * (p - self._actor_older_params[n]).pow(2)) / 2
+                if self._replay_type == "agem":
+                    store_grad(self._policy.parameters, self._actor_grad_xy, self._actor_grad_dims)
+                    replay_batch = cast(TorchMiniBatch, replay_batch)
+                    replay_loss_ = self.compute_actor_loss(replay_batch) / len(replay_batches)
+                    replay_loss += replay_loss_
+                    replay_losses.append(replay_loss_.cpu().detach().numpy())
+
+            if self._replay_type in ['orl', 'bc', 'ewc', 'lamb']:
+                loss += self._replay_actor_alpha * replay_loss
                 replay_loss = replay_loss.cpu().detach().numpy()
 
         loss.backward()
-        self._actor_optim.step()
+        if self._replay_type == 'agem':
+            replay_loss.backward()
+            store_grad(self._policy.parameters, self._actor_grad_er, self._actor_grad_dims)
+            dot_prod = torch.dot(self._actor_grad_xy, self._actor_grad_er)
+            if dot_prod.item() < 0:
+                g_tilde = project(gxy=self._actor_grad_xy, ger=self._actor_grad_er)
+                overwrite_grad(self._policy.parameters, g_tilde, self._actor_grad_dims)
+            else:
+                overwrite_grad(self._policy.parameters, self._actor_grad_xy, self._actor_grad_dims)
+        elif self._replay_type == 'gem':
+            # copy gradient
+            store_grad(self._policy.parameters, self._actor_grads_da, self._actor_grad_dims)
+            dot_prod = torch.mm(self._actor_grads_da.unsqueeze(0),
+                            torch.stack(self._actor_grads_cs).T)
+            if (dot_prod < 0).sum() != 0:
+                project2cone2(self._actor_grads_da.unsqueeze(1),
+                              torch.stack(self._actor_grads_cs).T, margin=self._gem_gamma)
+                # copy gradients back
+                overwrite_grad(self._policy.parameters, self._actor_grads_da,
+                               self._actor_grad_dims)
+        if step:
+            self._actor_optim.step()
+
+        if self._replay_type == 'r_walk':
+            assert unreg_grads is not None
+            assert curr_feat_ext is not None
+            with torch.no_grad():
+                for n, p in self._policy.named_parameters():
+                    if n in unreg_grads.keys():
+                        self._actor_w[n] -= unreg_grads[n] * (p.detach() - curr_feat_ext[n])
 
         loss = loss.cpu().detach().numpy()
 
@@ -362,6 +535,65 @@ class COImpl(CQLImpl):
         assert self._psi is not None
         assert self._targ_psi is not None
         soft_sync(self._targ_psi, self._psi, self._tau)
+
+    def compute_fisher_matrix_diag(self, iterator, network, optimizer, update):
+        # Store Fisher Information
+        fisher = {n: torch.zeros(p.shape).to(self.device) for n, p in network.named_parameters()
+                  if p.requires_grad}
+        # Do forward and backward pass to compute the fisher information
+        network.train()
+        replay_loss = 0
+        iterator.reset()
+        for t in range(len(iterator)):
+            batch = next(iterator)
+            update(batch)
+            # Accumulate all gradients from loss with regularization
+            for n, p in network.named_parameters():
+                if p.grad is not None:
+                    fisher[n] += p.grad.pow(2)
+        # Apply mean across all samples
+        fisher = {n: (p / len(iterator)) for n, p in fisher.items()}
+        return fisher
+
+    def agem_post_train_process(self, iterator):
+
+        # calculate Fisher information
+        curr_fisher = self.compute_fisher_matrix_diag(iterator, self._q_func, self._critic_optim, update=self.update_critic)
+        # merge fisher information, we do not want to keep fisher information for each task in memory
+        for n in self._critic_fisher.keys():
+            # Added option to accumulate fisher over time with a pre-fixed growing alpha
+            self._critic_fisher[n] = (self._agem_alpha * self._critic_fisher[n] + (1 - self._agem_alpha) * curr_fisher[n])
+
+        # calculate Fisher information
+        curr_fisher = self.compute_fisher_matrix_diag(iterator, self._policy, self._actor_optim, update=self.update_actor)
+        # merge fisher information, we do not want to keep fisher information for each task in memory
+        for n in self._actor_fisher.keys():
+            # Added option to accumulate fisher over time with a pre-fixed growing alpha
+            self._actor_fisher[n] = (self._agem_alpha * self._actor_fisher[n] + (1 - self._agem_alpha) * curr_fisher[n])
+
+    def gem_post_train_process(self):
+        assert self._q_func is not None
+        assert self._policy is not None
+        # copy gradient
+        store_grad(self._q_func.parameters, self._critic_grads_da, self._critic_grad_dims)
+        dot_prod = torch.mm(self._critic_grads_da.unsqueeze(0),
+                        torch.stack(self._critic_grads_cs).T)
+        if (dot_prod < 0).sum() != 0:
+            project2cone2(self._critic_grads_da.unsqueeze(1),
+                          torch.stack(self._critic_grads_cs).T, margin=self._gem_gamma)
+            # copy gradients back
+            overwrite_grad(self._q_func.parameters, self._critic_grads_da,
+                           self._critic_grad_dims)
+        # copy gradient
+        store_grad(self._policy.parameters, self._actor_grads_da, self._actor_grad_dims)
+        dot_prod = torch.mm(self._actor_grads_da.unsqueeze(0),
+                        torch.stack(self._actor_grads_cs).T)
+        if (dot_prod < 0).sum() != 0:
+            project2cone2(self._actor_grads_da.unsqueeze(1),
+                          torch.stack(self._actor_grads_cs).T, margin=self._gem_gamma)
+            # copy gradients back
+            overwrite_grad(self._policy.parameters, self._actor_grads_da,
+                           self._actor_grad_dims)
 
     def copy_weight(self):
         state_dicts = [self._q_func.state_dict(), self._policy.state_dict(), self._log_alpha.state_dict(), self._log_temp.state_dict(), self._phi.state_dict(), self._psi.state_dict(), self._critic_optim.state_dict(), self._actor_optim.state_dict(), self._alpha_optim.state_dict(), self._temp_optim.state_dict(), self._phi_optim.state_dict(), self._psi_optim.state_dict()]

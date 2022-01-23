@@ -174,10 +174,7 @@ class CO(CQL):
         replay_critic_alpha = 1,
         replay_phi_alpha = 1,
         replay_psi_alpha = 1,
-        cql_loss=False,
-        q_bc_loss=True,
-        td3_loss=False,
-        policy_bc_loss=True,
+        replay_type='orl',
         phi_bc_loss=True,
         psi_bc_loss=True,
         train_phi=True,
@@ -186,13 +183,15 @@ class CO(CQL):
         n_frames: int = 1,
         n_steps: int = 1,
         gamma: float = 0.99,
+        gem_gamma: float = 1,
+        agem_alpha: float = 1,
         tau: float = 0.005,
         n_critics: int = 2,
         update_actor_interval: int = 1,
         initial_temperature: float = 1.0,
         initial_alpha: float = 1.0,
         alpha_threshold: float = 10.0,
-        conservative_weight: float = 1.0,
+        conservative_weight: float = 5.0,
         n_action_samples: int = 10,
         soft_q_backup: bool =False,
         # dynamics: Optional[ProbabilisticEnsembleDynamics] = None,
@@ -207,7 +206,6 @@ class CO(CQL):
         reward_scaler: RewardScalerArg = None,
         impl = None,
         impl_name = 'co',
-        origin = None,
         # n_train_dynamics = 1,
         phi_topk = 20,
         retrain_topk = 4,
@@ -250,10 +248,7 @@ class CO(CQL):
             impl = impl,
             kwargs = kwargs,
         )
-        self._cql_loss = cql_loss
-        self._q_bc_loss = q_bc_loss
-        self._td3_loss = td3_loss
-        self._policy_bc_loss = policy_bc_loss
+        self._replay_type = replay_type
         self._replay_actor_alpha = replay_actor_alpha
         self._replay_critic_alpha = replay_critic_alpha
         self._id_size = id_size
@@ -262,6 +257,8 @@ class CO(CQL):
         self._alpha_learning_rate = alpha_learning_rate
         self._initial_alpha = initial_alpha
         self._alpha_threshold = alpha_threshold
+        self._gem_gamma = gem_gamma
+        self._agem_alpha = agem_alpha
 
         self._phi_optim_factory = phi_optim_factory
         self._psi_optim_factory = psi_optim_factory
@@ -313,11 +310,10 @@ class CO(CQL):
             q_func_factory=self._q_func_factory,
             replay_critic_alpha=self._replay_critic_alpha,
             replay_actor_alpha=self._replay_actor_alpha,
-            cql_loss=self._cql_loss,
-            q_bc_loss=self._q_bc_loss,
-            td3_loss=self._td3_loss,
-            policy_bc_loss=self._policy_bc_loss,
+            replay_type=self._replay_type,
             gamma=self._gamma,
+            gem_gamma=self._gem_gamma,
+            agem_alpha=self._agem_alpha,
             tau=self._tau,
             n_critics=self._n_critics,
             initial_alpha=self._initial_alpha,
@@ -861,6 +857,13 @@ class CO(CQL):
             # drop reference to active logger since out of fit there is no active
             # logger
             self._active_logger = None
+
+            # for EWC
+            if self._replay_type == 'agem':
+                self._impl.agem_post_train_process(iterator)
+            elif self._replay_type == 'gem':
+                self._impl.gem_post_train_process()
+
         else:
             replay_buffer = ReplayBuffer(real_observation_size, real_action_size)
             # Evaluate untrained policy
@@ -1001,13 +1004,11 @@ class CO(CQL):
 
     def test(
         self,
-        replay_datasets: Optional[Dict[int, List[TensorDataset]]],
         save_metrics: bool = True,
         experiment_name: Optional[str] = None,
         with_timestamp: bool = True,
         logdir: str = "d3rlpy_logs",
         verbose: bool = True,
-        show_progress: bool = True,
         tensorboard_dir: Optional[str] = None,
         eval_episodess: Optional[Dict[int, List[Episode]]] = None,
         save_interval: int = 1,
@@ -1017,59 +1018,35 @@ class CO(CQL):
         replay_scorers: Optional[
             Dict[str, Callable[[Any, Iterator], float]]
         ] = None,
-    ) -> List[Tuple[int, Dict[int, float]]]:
-        results = list(
-            self.tester(
-                replay_datasets,
-                save_metrics,
-                experiment_name,
-                with_timestamp,
-                logdir,
-                verbose,
-                show_progress,
-                tensorboard_dir,
-                eval_episodess,
-                save_interval,
-                scorers,
-                replay_scorers,
-            )
+    ):
+        self.tester(
+            save_metrics,
+            experiment_name,
+            with_timestamp,
+            logdir,
+            verbose,
+            tensorboard_dir,
+            eval_episodess,
+            save_interval,
+            scorers,
         )
-        return results
 
     def tester(
         self,
-        replay_datasets: Optional[Dict[int, TensorDataset]],
         save_metrics: bool = True,
         experiment_name: Optional[str] = None,
         with_timestamp: bool = True,
         logdir: str = "d3rlpy_logs",
         verbose: bool = True,
-        show_progress: bool = True,
         tensorboard_dir: Optional[str] = None,
         eval_episodess: Optional[Dict[int, List[Episode]]] = None,
         save_interval: int = 1,
         scorers: Optional[
             Dict[str, Callable[[Any, List[Episode]], Callable[..., float]]]
         ] = None,
-        replay_scorers: Optional[
-            Dict[str, Callable[[Any, Iterator], float]]
-        ] = None,
-    ) -> Generator[Tuple[int, Dict[int, float]], None, None]:
-
-        replay_dataloaders: Optional[Dict[int, DataLoader]]
-        if replay_datasets is not None:
-            replay_dataloaders = dict()
-            for replay_num, replay_dataset in replay_datasets.items():
-                dataloader = DataLoader(replay_dataset, batch_size=self._batch_size, shuffle=True)
-                replay_dataloaders[replay_num] = dataloader
-            replay_iterators = dict()
-            for replay_num, replay_dataloader in replay_dataloaders.items():
-                replay_iterators[replay_num] = iter(replay_dataloader)
-        else:
-            replay_dataloaders = None
-            replay_iterators = None
-
-        # setup logger
+    ):
+        epoch = 10000
+        total_step = 10000
         logger = self._prepare_logger(
             save_metrics,
             experiment_name,
@@ -1078,114 +1055,13 @@ class CO(CQL):
             verbose,
             tensorboard_dir,
         )
-
-        # add reference to active logger to algo class during fit
-        self._active_logger = logger
-
-        # # TODO: 这些还没写，别用！
-        # # initialize scaler
-        # if self._scaler:
-        #     assert not self._scaler
-        #     LOG.debug("Fitting scaler...", scaler=self._scaler.get_type())
-        #     self._scaler.fit(episodes)
-        #     if replay_episodess is not None:
-        #         for replay_episodes in replay_episodess:
-        #             self._scaler.fit(replay_episodes)
-
-        # # initialize action scaler
-        # if self._action_scaler:
-        #     assert not self._action_scaler
-        #     LOG.debug(
-        #         "Fitting action scaler...",
-        #         action_scaler=self._action_scaler.get_type(),
-        #     )
-        #     self._action_scaler.fit(episodes)
-        #     if replay_episodess is not None:
-        #         for replay_episodes in replay_episodess:
-        #             self._action_scaler.fit(replay_episodes)
-
-        # # initialize reward scaler
-        # if self._reward_scaler:
-        #     assert not self._reward_scaler
-        #     LOG.debug(
-        #         "Fitting reward scaler...",
-        #         reward_scaler=self._reward_scaler.get_type(),
-        #     )
-        #     self._reward_scaler.fit(episodes)
-        #     if replay_episodess is not None:
-        #         for replay_episodes in replay_episodess:
-        #             self._reward_scaler.fit(replay_episodes)
-
-        # instantiate implementation
-        assert self._impl is not None
-        self._impl.update_alpha()
-        LOG.warning("Skip building models since they're already built.")
-
-        # save hyperparameters
-        self.save_params(logger)
-
-        # refresh evaluation metrics
-        self._eval_results = defaultdict(list)
-
-        # refresh loss history
-        self._loss_history = defaultdict(list)
-        if replay_datasets is not None:
-            self._replay_loss_histories = dict()
-            for replay_num in self._loss_history:
-                self._replay_loss_histories[replay_num] = defaultdict(list)
-
-        total_step = 0
-        epoch = 1
-
-        # dict to add incremental mean losses to epoch
-        epoch_loss = defaultdict(list)
-
-        if replay_dataloaders is not None:
-            replay_iterators = dict()
-            for replay_num, replay_dataloader in replay_dataloaders.items():
-                replay_iterators[replay_num] = iter(replay_dataloader)
-        else:
-            replay_iterators = None
-
-        with logger.measure_time("step"):
-            # pick transitions
-            with logger.measure_time("sample_batch"):
-                if replay_iterators is not None:
-                    assert replay_dataloaders is not None
-                    replay_batches = dict()
-                    for replay_iterator_num in replay_iterators.keys():
-                        try:
-                            replay_batches[replay_iterator_num] = next(replay_iterators[replay_iterator_num])
-                        except StopIteration:
-                            replay_iterators[replay_iterator_num] = iter(replay_dataloaders[replay_iterator_num])
-                            replay_batches[replay_iterator_num] = next(replay_iterators[replay_iterator_num])
-                else:
-                    replay_batches = None
-
         if scorers and eval_episodess:
             for id, eval_episodes in eval_episodess.items():
-                scorers_tmp = {k + str(id): v(id) for k, v in scorers.items()}
+                scorers_tmp = {k + str(id): v(id, epoch) for k, v in scorers.items()}
                 self._evaluate(eval_episodes, scorers_tmp, logger)
-
-        if replay_scorers:
-            if replay_dataloaders is not None:
-                for replay_num, replay_dataloader in replay_dataloaders.items():
-                    # 重命名
-                    replay_scorers_tmp = {k + str(replay_num): v for k, v in replay_scorers.items()}
-                    self._evaluate(replay_dataloader, replay_scorers_tmp, logger)
 
         # save metrics
         metrics = logger.commit(epoch, total_step)
-
-        # save model parameters
-        if epoch % save_interval == 0:
-            logger.save_model(total_step, self)
-
-        yield epoch, metrics
-
-        # drop reference to active logger since out of fit there is no active
-        # logger
-        self._active_logger = None
 
     def generate_new_data(
         self, transitions: List[Transition], real_observation_size, task_id
@@ -1323,9 +1199,9 @@ class CO(CQL):
 
         # new_transitions = self.generate_new_data(transitions=new_transitions, real_observation_size=real_observation_size, task_id=task_id)
         random.shuffle(new_transitions)
-        if self._td3_loss or in_task:
+        if self._replay_type != 'bc' or in_task:
             return new_transitions, None
-        elif self._policy_bc_loss and not in_task:
+        elif self._replay_type == 'bc' and not in_task:
             replay_observations = torch.cat([torch.from_numpy(transition.observation) for transition in new_transitions], dim=0)
             replay_actions = torch.cat([torch.from_numpy(transition.action) for transition in new_transitions], dim=0)
             replay_rewards = torch.cat([torch.from_numpy(transition.reward) for transition in new_transitions], dim=0)
@@ -1382,7 +1258,7 @@ class CO(CQL):
             choosed_samples.append(indexes[choosed_sample_index])
         return choosed_samples
 
-    def generate_replay_data_phi(self, task_id, dataset, original_index, max_save_num=1000, max_export_time=1000, max_reward=None, real_action_size=1, real_observation_size=1, low_log_prob=0.8, in_task=False):
+    def generate_replay_data_phi(self, task_id, dataset, original_indexes, max_save_num=1000, max_export_time=1000, max_reward=None, real_action_size=1, real_observation_size=1, low_log_prob=0.8, in_task=False):
         assert self._impl is not None
         assert self._impl._policy is not None
         assert self._impl._q_func is not None
@@ -1396,75 +1272,76 @@ class CO(CQL):
             episodes = dataset
         # 关键算法
 
-        start_indexes = np.array([original_index])
-
-        transitions = np.array([transition for episode in dataset.episodes for transition in episode])
-        transition_observations = np.stack([transition.observation for transition in transitions])
-        transition_observations = torch.from_numpy(transition_observations).to(self._impl.device)
-        transition_actions = np.stack([transition.action for transition in transitions])
-        transition_actions = torch.from_numpy(transition_actions).to(self._impl.device)
-        transition_rewards = np.stack([transition.reward for transition in transitions])
-        transition_rewards = torch.from_numpy(transition_rewards).to(self._impl.device)
-
-        export_time = 0
-        replay_indexes = []
         orl_indexes = []
-        while start_indexes.shape[0] != 0 and export_time < max_export_time and len(replay_indexes) < max_save_num:
-            start_observations = torch.from_numpy(dataset._observations[start_indexes]).to(self._impl.device)
-            start_actions = self._impl._policy(start_observations)
-            start_rewards = dataset._rewards[start_indexes]
+        for original_index in original_indexes:
+            start_indexes = np.array([original_index])
 
-            indexes_euclid = np.array(dataset._actions[start_indexes, real_action_size:], dtype=np.int64)
-            near_observations = dataset._observations[indexes_euclid]
-            near_actions = dataset._actions[indexes_euclid][:, :, :real_action_size]
-            # this_observations = start_observations.unsqueeze(dim=1).expand(-1, indexes_euclid.shape[1], -1)
-            line_indexes = dataset._actions[start_indexes[0], real_action_size:].astype(np.int64)
+            transitions = np.array([transition for episode in dataset.episodes for transition in episode])
+            transition_observations = np.stack([transition.observation for transition in transitions])
+            transition_observations = torch.from_numpy(transition_observations).to(self._impl.device)
+            transition_actions = np.stack([transition.action for transition in transitions])
+            transition_actions = torch.from_numpy(transition_actions).to(self._impl.device)
+            transition_rewards = np.stack([transition.reward for transition in transitions])
+            transition_rewards = torch.from_numpy(transition_rewards).to(self._impl.device)
 
-            near_indexes_list = []
-            if start_indexes.shape[0] > 0:
-                near_indexes, _, _ = similar_phi(start_observations, start_actions[:, :real_action_size], near_observations, near_actions, self._impl._phi, indexes_euclid, topk=self._phi_topk)
-                for i in range(near_indexes.shape[0]):
-                    near_indexes_list.append(near_indexes[i])
-            near_indexes_list.reverse()
-            # 附近的所有点都会留下来作为orl的数据集。
-            for start_indexes in near_indexes_list:
-                orl_indexes.append(start_indexes.astype(np.int64))
-            # 第一个非空的将作为接下来衍生的起点被保留，同时也用作replay的数据集。
-            for start_indexes in near_indexes_list:
-                new_start_indexes = np.setdiff1d(start_indexes, replay_indexes, True)
-                if new_start_indexes.shape[0] != 0:
-                    start_indexes = new_start_indexes
+            export_time = 0
+            replay_indexes = []
+            while start_indexes.shape[0] != 0 and export_time < max_export_time and len(replay_indexes) < max_save_num:
+                start_observations = torch.from_numpy(dataset._observations[start_indexes]).to(self._impl.device)
+                start_actions = self._impl._policy(start_observations)
+                start_rewards = dataset._rewards[start_indexes]
+
+                indexes_euclid = np.array(dataset._actions[start_indexes, real_action_size:], dtype=np.int64)
+                near_observations = dataset._observations[indexes_euclid]
+                near_actions = dataset._actions[indexes_euclid][:, :, :real_action_size]
+                # this_observations = start_observations.unsqueeze(dim=1).expand(-1, indexes_euclid.shape[1], -1)
+                line_indexes = dataset._actions[start_indexes[0], real_action_size:].astype(np.int64)
+
+                near_indexes_list = []
+                if start_indexes.shape[0] > 0:
+                    near_indexes, _, _ = similar_phi(start_observations, start_actions[:, :real_action_size], near_observations, near_actions, self._impl._phi, indexes_euclid, topk=self._phi_topk)
+                    for i in range(near_indexes.shape[0]):
+                        near_indexes_list.append(near_indexes[i])
+                near_indexes_list.reverse()
+                # 附近的所有点都会留下来作为orl的数据集。
+                for start_indexes in near_indexes_list:
+                    orl_indexes.append(start_indexes.astype(np.int64))
+                # 第一个非空的将作为接下来衍生的起点被保留，同时也用作replay的数据集。
+                for start_indexes in near_indexes_list:
+                    new_start_indexes = np.setdiff1d(start_indexes, replay_indexes, True)
+                    if new_start_indexes.shape[0] != 0:
+                        start_indexes = new_start_indexes
+                    else:
+                        continue
+                if start_indexes is None:
+                    break
+
+                start_rewards = transition_rewards[start_indexes]
+                if max_reward is not None:
+                    start_indexes = start_indexes[start_rewards >= max_reward]
+                replay_indexes = np.concatenate([replay_indexes, start_indexes], axis=0)
+                export_time += 1
+
+            orl_transitions = [transitions[orl_index] for orl_index in orl_indexes]
+
+            # 用log_prob缩小范围。
+            orl_indexes_ = []
+            for log_prob_indexes, log_prob_transitions in zip(orl_indexes, orl_transitions):
+                transition_batch = TransitionMiniBatch(log_prob_transitions.tolist())
+                transition_dist = self._impl._policy.dist(torch.from_numpy(transition_batch.observations).to(self._impl.device))
+                transition_log_prob = torch.mean(transition_dist.log_prob(torch.from_numpy(transition_batch.actions[:, :real_action_size]).to(self._impl.device)), dim=1)
+                if self._reduce_replay == 'retrain' and not in_task:
+                    _, choosed_sample_index = torch.topk(transition_log_prob, k=self._log_prob_topk)
+                    choosed_sample_index = log_prob_indexes[choosed_sample_index.cpu().detach().numpy()]
                 else:
-                    continue
-            if start_indexes is None:
-                break
+                    _, choosed_sample_index = torch.topk(transition_log_prob, k=self._retrain_topk)
+                    choosed_sample_index = log_prob_indexes[choosed_sample_index.cpu().detach().numpy()]
+                orl_indexes_.append(choosed_sample_index)
+            orl_indexes = orl_indexes_
+            orl_transitions = [transitions[orl_index] for orl_index in orl_indexes]
 
-            start_rewards = transition_rewards[start_indexes]
-            if max_reward is not None:
-                start_indexes = start_indexes[start_rewards >= max_reward]
-            replay_indexes = np.concatenate([replay_indexes, start_indexes], axis=0)
-            export_time += 1
-
-        orl_transitions = [transitions[orl_index] for orl_index in orl_indexes]
-
-        # 用log_prob缩小范围。
-        orl_indexes_ = []
-        for log_prob_indexes, log_prob_transitions in zip(orl_indexes, orl_transitions):
-            transition_batch = TransitionMiniBatch(log_prob_transitions.tolist())
-            transition_dist = self._impl._policy.dist(torch.from_numpy(transition_batch.observations).to(self._impl.device))
-            transition_log_prob = torch.mean(transition_dist.log_prob(torch.from_numpy(transition_batch.actions[:, :real_action_size]).to(self._impl.device)), dim=1)
             if self._reduce_replay == 'retrain' and not in_task:
-                _, choosed_sample_index = torch.topk(transition_log_prob, k=self._log_prob_topk)
-                choosed_sample_index = log_prob_indexes[choosed_sample_index.cpu().detach().numpy()]
-            else:
-                _, choosed_sample_index = torch.topk(transition_log_prob, k=self._retrain_topk)
-                choosed_sample_index = log_prob_indexes[choosed_sample_index.cpu().detach().numpy()]
-            orl_indexes_.append(choosed_sample_index)
-        orl_indexes = orl_indexes_
-        orl_transitions = [transitions[orl_index] for orl_index in orl_indexes]
-
-        if self._reduce_replay == 'retrain' and not in_task:
-            orl_indexes = self.generate_replay_data_reduce(orl_indexes, orl_transitions, real_action_size)
+                orl_indexes = self.generate_replay_data_reduce(orl_indexes, orl_transitions, real_action_size)
 
         orl_indexes = np.concatenate(orl_indexes, axis=0)
         orl_indexes = np.unique(orl_indexes)
@@ -1512,10 +1389,10 @@ class CO(CQL):
         replay_rewards = torch.stack([torch.from_numpy(np.array([transition.reward])) for transition in orl_transitions], dim=0)
         replay_next_observations = torch.stack([torch.from_numpy(transition.next_observation) for transition in orl_transitions], dim=0)
         replay_terminals = torch.stack([torch.from_numpy(np.array([transition.terminal])) for transition in orl_transitions], dim=0)
-        if self._td3_loss or in_task:
+        if self._replay_type != 'bc' or in_task:
             replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals)
             return orl_transitions, replay_dataset
-        elif self._policy_bc_loss and not in_task:
+        elif self._replay_type == 'bc' and not in_task:
             replay_dists = self._impl._policy.dist(replay_observations)
             replay_means, replay_std_logs = replay_dists.mean, replay_dists.stddev
             replay_qs = self._impl._q_func(replay_observations, replay_actions)
@@ -1694,10 +1571,10 @@ class CO(CQL):
         replay_rewards = torch.stack([torch.from_numpy(np.array([transition.reward])) for transition in new_transitions], dim=0)
         replay_next_observations = torch.stack([torch.from_numpy(transition.next_observation) for transition in new_transitions], dim=0)
         replay_terminals = torch.stack([torch.from_numpy(np.array([transition.terminal])) for transition in new_transitions], dim=0)
-        if self._td3_loss or in_task:
+        if self._replay_type != 'bc' or in_task:
             replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals)
             return new_transitions, replay_dataset
-        elif self._policy_bc_loss and not in_task:
+        elif self._replay_type == 'bc' and not in_task:
             replay_dists = self._impl._policy.dist(replay_observations)
             replay_means, replay_std_logs = replay_dists.mean, replay_dists.stddev
             replay_qs = self._impl._q_func(replay_observations, replay_actions)

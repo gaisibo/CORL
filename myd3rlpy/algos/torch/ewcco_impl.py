@@ -1,8 +1,11 @@
+import time
+import math
 import copy
-from typing import Optional, Sequence, List, Any, Tuple, Dict, Union
+from typing import Optional, Sequence, List, Any, Tuple, Dict, Union, cast
 
 import numpy as np
 import torch
+from torch import nn
 from torch.optim import Optimizer
 import torch.nn.functional as F
 
@@ -12,11 +15,16 @@ from d3rlpy.models.optimizers import OptimizerFactory
 from d3rlpy.models.torch import Policy
 from d3rlpy.models.q_functions import QFunctionFactory
 from d3rlpy.preprocessing import ActionScaler, RewardScaler, Scaler
-from d3rlpy.torch_utility import TorchMiniBatch, soft_sync, train_api, eval_api, torch_api, torch_api
+from d3rlpy.torch_utility import TorchMiniBatch, soft_sync, train_api, eval_api, torch_api
 from d3rlpy.dataset import MDPDataset, TransitionMiniBatch
 from d3rlpy.algos.base import AlgoBase
 from d3rlpy.algos.torch.base import TorchImplBase
-from d3rlpy.models.builders import create_squashed_normal_policy, create_continuous_q_function
+from d3rlpy.algos.torch.cql_impl import CQLImpl
+
+from d3rlpy.models.builders import create_squashed_normal_policy, create_continuous_q_function, create_parameter
+from myd3rlpy.models.builders import create_phi, create_psi
+from myd3rlpy.siamese_similar import similar_euclid, similar_psi, similar_phi
+from utils.utils import Struct
 
 from myd3rlpy.algos.torch.co_impl import COImpl
 
@@ -28,29 +36,36 @@ class EWCCOImpl(COImpl):
         action_size: int,
         actor_learning_rate: float,
         critic_learning_rate: float,
+        temp_learning_rate: float,
+        alpha_learning_rate: float,
         phi_learning_rate: float,
         psi_learning_rate: float,
         actor_optim_factory: OptimizerFactory,
         critic_optim_factory: OptimizerFactory,
+        temp_optim_factory: OptimizerFactory,
+        alpha_optim_factory: OptimizerFactory,
         phi_optim_factory: OptimizerFactory,
         psi_optim_factory: OptimizerFactory,
         actor_encoder_factory: EncoderFactory,
         critic_encoder_factory: EncoderFactory,
+        q_func_factory: QFunctionFactory,
         critic_lamb: float,
         actor_lamb: float,
-        q_func_factory: QFunctionFactory,
         replay_actor_alpha: float,
         replay_critic_alpha: float,
-        replay_critic: bool,
-        replay_phi: bool,
-        replay_psi: bool,
+        cql_loss: bool,
+        q_bc_loss: bool,
+        td3_loss: bool,
+        policy_bc_loss: bool,
         gamma: float,
         tau: float,
         n_critics: int,
-        target_reduction_type: str,
-        target_smoothing_sigma: float,
-        target_smoothing_clip: float,
-        n_sample_actions: int,
+        initial_alpha: float,
+        initial_temperature: float,
+        alpha_threshold: float,
+        conservative_weight: float,
+        n_action_samples: int,
+        soft_q_backup: bool,
         use_gpu: Optional[Device],
         scaler: Optional[Scaler],
         action_scaler: Optional[ActionScaler],
@@ -61,10 +76,14 @@ class EWCCOImpl(COImpl):
             action_size = action_size,
             actor_learning_rate = actor_learning_rate,
             critic_learning_rate = critic_learning_rate,
+            temp_learning_rate = temp_learning_rate,
+            alpha_learning_rate = alpha_learning_rate,
             phi_learning_rate = phi_learning_rate,
             psi_learning_rate = psi_learning_rate,
             actor_optim_factory = actor_optim_factory,
             critic_optim_factory = critic_optim_factory,
+            temp_optim_factory = temp_optim_factory,
+            alpha_optim_factory = alpha_optim_factory,
             phi_optim_factory = phi_optim_factory,
             psi_optim_factory = psi_optim_factory,
             actor_encoder_factory = actor_encoder_factory,
@@ -72,16 +91,19 @@ class EWCCOImpl(COImpl):
             q_func_factory = q_func_factory,
             replay_actor_alpha = replay_actor_alpha,
             replay_critic_alpha = replay_critic_alpha,
-            replay_critic = replay_critic,
-            replay_phi = replay_phi,
-            replay_psi = replay_psi,
+            cql_loss = cql_loss,
+            q_bc_loss = q_bc_loss,
+            td3_loss = td3_loss,
+            policy_bc_loss = policy_bc_loss,
             gamma = gamma,
             tau = tau,
             n_critics = n_critics,
-            target_reduction_type = target_reduction_type,
-            target_smoothing_sigma = target_smoothing_sigma,
-            target_smoothing_clip = target_smoothing_clip,
-            n_sample_actions = n_sample_actions,
+            initial_alpha = initial_alpha,
+            initial_temperature = initial_temperature,
+            alpha_threshold = alpha_threshold,
+            conservative_weight = conservative_weight,
+            n_action_samples = n_action_samples,
+            soft_q_backup = soft_q_backup,
             use_gpu = use_gpu,
             scaler = scaler,
             action_scaler = action_scaler,
@@ -105,18 +127,17 @@ class EWCCOImpl(COImpl):
         self._actor_older_params = {n: p.clone().detach() for n, p in self._policy.named_parameters() if p.requires_grad}
 
     @train_api
-    def update_critic(self, batch: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[torch.Tensor]]]=None, all_data: MDPDataset=None) -> np.ndarray:
-        assert all_data is not None
+    def update_critic(self, batch_tran: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[torch.Tensor]]]=None):
         batch = TorchMiniBatch(
-            batch,
+            batch_tran,
             self.device,
             scaler=self.scaler,
             action_scaler=self.action_scaler,
             reward_scaler=self.reward_scaler,
         )
         assert self._critic_optim is not None
-        self._phi.eval()
-        self._psi.eval()
+        assert self._q_func is not None
+        assert self._policy is not None
         self._q_func.train()
         self._policy.eval()
 
@@ -124,7 +145,7 @@ class EWCCOImpl(COImpl):
 
         q_tpn, action = self.compute_target(batch)
 
-        loss = self.compute_critic_loss(batch, q_tpn, all_data, action)
+        loss = self.compute_critic_loss(batch, q_tpn)
         loss_reg = 0
         # Eq. 3: elastic weight consolidation quadratic penalty
         for n, p in self._q_func.named_parameters():

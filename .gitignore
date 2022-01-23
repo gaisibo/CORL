@@ -13,3 +13,4 @@ test_*.txt
 *.json
 output_*.txt
 *.hdf5
+*.log
