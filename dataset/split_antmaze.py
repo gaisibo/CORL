@@ -119,7 +119,6 @@ def split_antmaze(origin_dataset, env, dataset_name, task_nums, end_points, task
         nearest_indexes_ = np.unique(np.array(nearest_indexes_))
         nearest_indexes[dataset_num] = nearest_indexes_
         print(f'nearest_indexes_: {nearest_indexes_}')
-    assert False
 
     changed_task_datasets = dict()
     taskid_task_datasets = dict()
@@ -142,5 +141,4 @@ def split_antmaze(origin_dataset, env, dataset_name, task_nums, end_points, task
         indexes_euclids[dataset_num] = indexes_euclid
     # torch.save(task_datasets, dataset_name + '_' + task_split_type + '.pt')
 
-    original = 0
     return changed_task_datasets, envs, end_points, nearest_indexes, real_action_size, real_observation_size, indexes_euclids, task_nums

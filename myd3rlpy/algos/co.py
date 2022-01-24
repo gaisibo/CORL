@@ -271,7 +271,6 @@ class CO(CQL):
         self._replay_psi_alpha = replay_psi_alpha
 
         self._impl_name = impl_name
-        self._origin = origin
         # self._n_train_dynamics = n_train_dynamics
         self._phi_topk = phi_topk
         self._retrain_topk = retrain_topk

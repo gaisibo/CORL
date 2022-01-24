@@ -109,6 +109,24 @@ def split_gym(top_euclid, dataset_name, origin_dataset, env, origin_dataset_back
     envs = {0: env, 1: env_back}
     task_nums = 2
 
+    nearest_indexes = {}
+    for dataset_num, dataset in task_datasets.items():
+        env = envs[dataset_num]
+        nearest_dist = 1000000000
+        nearest_index = -1
+        nearest_indexes_ = []
+        for times in range(100):
+            origin = env.reset()[:2]
+            for i in range(dataset.observations.shape[0]):
+                dist = np.linalg.norm(origin - dataset.observations[i, :2])
+                if dist < nearest_dist:
+                    nearest_index = i
+                    nearest_dist = dist
+            nearest_indexes_.append(nearest_index)
+        nearest_indexes_ = np.unique(np.array(nearest_indexes_))
+        nearest_indexes[dataset_num] = nearest_indexes_
+        print(f'nearest_indexes_: {nearest_indexes_}')
+
     changed_task_datasets = dict()
     taskid_task_datasets = dict()
     origin_task_datasets = dict()
@@ -130,5 +148,4 @@ def split_gym(top_euclid, dataset_name, origin_dataset, env, origin_dataset_back
         indexes_euclids[dataset_num] = indexes_euclid
     # torch.save(task_datasets, dataset_name  + '.pt')
 
-    original = 0
-    return changed_task_datasets, envs, [None for _ in range(task_nums)], original, real_action_size, real_observation_size, indexes_euclids, task_nums
+    return changed_task_datasets, envs, [None for _ in range(task_nums)], nearest_indexes, real_action_size, real_observation_size, indexes_euclids, task_nums
