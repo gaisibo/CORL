@@ -121,7 +121,7 @@ def main(args, device):
                 eval_episodess=eval_datasets,
                 scorers={
                     # 'environment': evaluate_on_environment(env),
-                    "real_env": evaluate_on_environment(envs, end_points, task_nums, draw_path),
+                    "real_env": evaluate_on_environment(envs, end_points, task_nums, draw_path, dense=args.dense=='dense'),
                 },
             )
     print('finish')
@@ -152,6 +152,7 @@ if __name__ == '__main__':
     parser.add_argument('--change_reward', default='change', type=str, choices=['change', 'no_change'])
     parser.add_argument('--dense', default='dense', type=str)
     parser.add_argument("--alpha_lr", default=1e-4, type=float)
+    parser.add_argument('--sum', default='no_sum', type=str)
     args = parser.parse_args()
     args.model_path = 'd3rlpy_' + args.experience_type + '_' + args.generate_type + '_' + args.replay_type + '_' + args.reduce_replay + '_' + args.change_reward + '_' + args.dense + '_' + args.dataset + '_' + ('test' if args.test else ('train' if not args.eval else 'eval'))
     if not os.path.exists(args.model_path):

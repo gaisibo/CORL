@@ -76,7 +76,7 @@ def split_antmaze(origin_dataset, env, dataset_name, task_nums, end_points, task
         actions = np.concatenate([episode.actions for episode in episodes], axis=0)
         # rewards = np.concatenate([episode.rewards for episode in episodes], axis=0)
         if not dense:
-            rewards = np.where(np.linalg.norm(observations[:, :2] - end_points[index], axis=1) < 0.2, 1, 0)
+            rewards = np.where(np.linalg.norm(observations[:, :2] - end_points[index], axis=1) < 0.5, 1, 0)
         else:
             rewards = - np.linalg.norm(observations[:, :2] - end_points[index], axis=1)
         terminals = [np.zeros(episode.observations.shape[0]) for episode in episodes]
@@ -85,6 +85,11 @@ def split_antmaze(origin_dataset, env, dataset_name, task_nums, end_points, task
         terminals = np.concatenate(terminals, axis=0)
         task_datasets_[index] = MDPDataset(observations, actions, rewards, terminals)
     task_datasets = task_datasets_
+    # transitions = [transition for episode in task_datasets[0].episodes for transition in episode]
+    # for transition in transitions:
+    #     if transition.reward == 1:
+    #         print(f'obs: {transition.observation[:2]}, target: {end_points[0]}, reward: {transition.reward}')
+    # assert False
 
     # for i in range(task_nums):
     #     dataset = task_datasets[i]
@@ -118,7 +123,7 @@ def split_antmaze(origin_dataset, env, dataset_name, task_nums, end_points, task
             nearest_indexes_.append(nearest_index)
         nearest_indexes_ = np.unique(np.array(nearest_indexes_))
         nearest_indexes[dataset_num] = nearest_indexes_
-        print(f'nearest_indexes_: {nearest_indexes_}')
+    nearest_indexes = {0: np.array([0]), 1: np.array([0]), 2: np.array([0])}
 
     changed_task_datasets = dict()
     taskid_task_datasets = dict()

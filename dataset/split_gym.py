@@ -79,7 +79,6 @@ def split_hopper(top_euclid, dataset_name):
     names = dataset_name.split('-', 1)
     dataset_path = './dataset/gym_back/hopper_bach_' + names[1][:-3].replace('-', '_') + '.hdf5'
     origin_dataset_back = get_d4rl_local(get_dataset(dataset_path, env.observation_space, env.action_space))
-    dataset_name = dataset_name + '-v0'
     from mygym.envs.hopper_back import HopperEnvBack
     env_back = HopperEnvBack()
     return split_gym(top_euclid, dataset_name, origin_dataset, env, origin_dataset_back, env_back, compare_dim=3)
@@ -89,7 +88,6 @@ def split_walker(top_euclid, dataset_name):
     names = dataset_name.split('-', 1)
     dataset_path = './dataset/gym_back/walker_bach_' + names[1][:-3].replace('-', '_') + '.hdf5'
     origin_dataset_back = get_d4rl_local(get_dataset(dataset_path, env.observation_space, env.action_space))
-    dataset_name = dataset_name + '-v0'
     from mygym.envs.walker2d_back import Walker2dEnvBack
     env_back = Walker2dEnvBack()
     return split_gym(top_euclid, dataset_name, origin_dataset, env, origin_dataset_back, env_back, compare_dim=3)
@@ -126,6 +124,7 @@ def split_gym(top_euclid, dataset_name, origin_dataset, env, origin_dataset_back
         nearest_indexes_ = np.unique(np.array(nearest_indexes_))
         nearest_indexes[dataset_num] = nearest_indexes_
         print(f'nearest_indexes_: {nearest_indexes_}')
+    nearest_indexes = {0: np.array([0]), 1: np.array([0])}
 
     changed_task_datasets = dict()
     taskid_task_datasets = dict()

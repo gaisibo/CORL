@@ -1,3 +1,4 @@
+import pdb
 import os
 from typing import List, cast, Callable, Any, Dict, Tuple, Optional
 import matplotlib.pyplot as plt
@@ -70,7 +71,7 @@ def td_error_scorer(real_action_size: int) -> Callable[..., Callable[...,float]]
     return id_scorer
 
 def evaluate_on_environment(
-        envs: Dict[int, gym.Env], end_points: Optional[List[Tuple[float, float]]], task_nums: int, draw_path: str, n_trials: int = 10, epsilon: float = 0.0, render: bool = False, sum: bool=False
+        envs: Dict[int, gym.Env], end_points: Optional[List[Tuple[float, float]]], task_nums: int, draw_path: str, n_trials: int = 10, epsilon: float = 0.0, render: bool = False, dense: bool=False
 ) -> Callable[..., Callable[..., float]]:
 
     # for image observation
@@ -115,6 +116,7 @@ def evaluate_on_environment(
                     stacked_observation.clear()
                     stacked_observation.append(observation)
 
+                time = 0
                 while True:
                     # take action
                     if np.random.random() < epsilon:
@@ -125,7 +127,15 @@ def evaluate_on_environment(
                         else:
                             action = algo.predict([observation])[0]
 
+                    # pdb.set_trace()
                     observation, reward, done, _ = env.step(action)
+                    finish = (np.linalg.norm(np.array(observation[:2]) - np.array(env.target_goal)) < 0.1)
+                    done = done or finish
+                    if dense:
+                        reward = finish
+                    else:
+                        reward = - np.linalg.norm(np.array(observation[:2]) - np.array(env.target_goal))
+                    time += 1
                     trajectory.append(observation[:2])
                     task_id_numpy = np.eye(task_nums)[id].squeeze()
                     observation = np.concatenate([observation, task_id_numpy], axis=0)
@@ -140,13 +150,10 @@ def evaluate_on_environment(
                     if done:
                         break
                 trajectories.append(trajectory)
-                rewards.append(reward)
                 episode_rewards.append(episode_reward)
+                rewards.append(reward)
             draw(trajectories)
-            if not sum:
-                return float(np.mean(rewards))
-            else:
-                return float(np.mean(episode_rewards))
+            return float(np.mean(rewards))
         return scorer
 
     return id_scorer

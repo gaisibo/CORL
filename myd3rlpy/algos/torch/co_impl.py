@@ -106,6 +106,8 @@ class COImpl(CQLImpl):
         self._phi_optim_factory = phi_optim_factory
         self._psi_optim_factory = psi_optim_factory
 
+        self._conservative_weight *= 2
+
         # initialized in build
 
     def build(self):
@@ -304,40 +306,7 @@ class COImpl(CQLImpl):
         conservative_loss = self._compute_conservative_loss(
             batch.observations, batch.actions[:, :self._action_size], batch.next_observations
         )
-        print(f'batch_loss: {loss}, conservative_loss: {conservative_loss}, rewards: {batch.rewards.mean()}, q: {self._q_func(batch.observations, batch.actions[:, :self._action_size]).mean()}, q_tpn: {q_tpn.mean()}')
-        print(f'conservative_loss: {conservative_loss}')
         return loss + conservative_loss
-
-    def _compute_conservative_loss(
-        self, obs_t: torch.Tensor, act_t: torch.Tensor, obs_tp1: torch.Tensor
-    ) -> torch.Tensor:
-        assert self._policy is not None
-        assert self._q_func is not None
-        assert self._log_alpha is not None
-
-        policy_values_t = self._compute_policy_is_values(obs_t, obs_t)
-        policy_values_tp1 = self._compute_policy_is_values(obs_tp1, obs_t)
-        random_values = self._compute_random_is_values(obs_t)
-
-        # compute logsumexp
-        # (n critics, batch, 3 * n samples) -> (n critics, batch, 1)
-        target_values = torch.cat(
-            [policy_values_t, policy_values_tp1, random_values], dim=2
-        )
-        logsumexp = torch.logsumexp(target_values, dim=2, keepdim=True)
-
-        # estimate action-values for data actions
-        data_values = self._q_func(obs_t, act_t, "none")
-
-        print(f'logsumexp: {logsumexp.mean(dim=0).mean()}, data_values: {data_values.mean(dim=0).mean()}')
-
-        loss = logsumexp.mean(dim=0).mean() - data_values.mean(dim=0).mean()
-        scaled_loss = self._conservative_weight * loss
-
-        # clip for stability
-        clipped_alpha = self._log_alpha().exp().clamp(0, 1e6)[0][0]
-
-        return clipped_alpha * (scaled_loss - self._alpha_threshold)
 
     @train_api
     def update_actor(self, batch_tran: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[torch.Tensor]]]=None, step=True) -> np.ndarray:
