@@ -328,7 +328,7 @@ class CO(CQL):
         )
         self._impl.build()
 
-    def update(self, batch: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[Tensor]]], batch2: TransitionMiniBatch = None) -> Dict[int, float]:
+    def update(self, batch: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[Tensor]]]=None, batch2: TransitionMiniBatch = None) -> Dict[int, float]:
         """Update parameters with mini-batch of data.
         Args:
             batch: mini-batch data.
@@ -340,7 +340,7 @@ class CO(CQL):
         return loss
 
     # 注意欧氏距离最近邻被塞到actions后面了。
-    def _update(self, batch: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[Tensor]]]) -> Dict[int, float]:
+    def _update(self, batch: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[Tensor]]]=None) -> Dict[int, float]:
         assert self._impl is not None, IMPL_NOT_INITIALIZED_ERROR
         metrics = {}
 
@@ -365,7 +365,7 @@ class CO(CQL):
 
         return metrics
 
-    def _update_phi(self, batch: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[Tensor]]]):
+    def _update_phi(self, batch: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[Tensor]]]=None):
         assert self._impl is not None, IMPL_NOT_INITIALIZED_ERROR
         metrics = {}
 
@@ -590,54 +590,6 @@ class CO(CQL):
 
         # refresh loss history
         self._loss_history = defaultdict(list)
-        if replay_datasets is not None:
-            self._replay_loss_histories = dict()
-            for replay_num in self._loss_history:
-                self._replay_loss_histories[replay_num] = defaultdict(list)
-
-        if replay_datasets is not None:
-            replay_dataloaders: Optional[Dict[int, DataLoader]]
-            replay_iterators: Optional[Dict[int, Iterator]]
-            replay_dataloaders = dict()
-            replay_iterators = dict()
-            for replay_num, replay_dataset in replay_datasets.items():
-                if isinstance(replay_dataset, TensorDataset):
-                    dataloader = DataLoader(replay_dataset, batch_size=self._batch_size, shuffle=True)
-                    replay_dataloaders[replay_num] = dataloader
-                    replay_iterators[replay_num] = iter(replay_dataloaders[replay_num])
-                else:
-                    if n_epochs is None and n_steps is not None:
-                        assert n_steps >= n_steps_per_epoch
-                        n_epochs = n_steps // n_steps_per_epoch
-                        iterator = RandomIterator(
-                            replay_dataset,
-                            n_steps_per_epoch,
-                            batch_size=self._batch_size,
-                            n_steps=self._n_steps,
-                            gamma=self._gamma,
-                            n_frames=self._n_frames,
-                            real_ratio=self._real_ratio,
-                            generated_maxlen=self._generated_maxlen,
-                        )
-                        LOG.debug("RandomIterator is selected.")
-                    elif n_epochs is not None and n_steps is None:
-                        iterator = RoundIterator(
-                            replay_dataset,
-                            batch_size=self._batch_size,
-                            n_steps=self._n_steps,
-                            gamma=self._gamma,
-                            n_frames=self._n_frames,
-                            real_ratio=self._real_ratio,
-                            generated_maxlen=self._generated_maxlen,
-                            shuffle=shuffle,
-                        )
-                        LOG.debug("RoundIterator is selected.")
-                    else:
-                        raise ValueError("Either of n_epochs or n_steps must be given.")
-                    replay_iterators[replay_num] = iterator
-        else:
-            replay_dataloaders = None
-            replay_iterators = None
 
         iterator: TransitionIterator
         if env is None:
@@ -729,12 +681,6 @@ class CO(CQL):
                 )
 
                 iterator.reset()
-                if replay_dataloaders is not None:
-                    replay_iterators = dict()
-                    for replay_num, replay_dataloader in replay_dataloaders.items():
-                        replay_iterators[replay_num] = iter(replay_dataloader)
-                else:
-                    replay_iterators = None
 
                 for itr in range_gen:
 
@@ -777,33 +723,22 @@ class CO(CQL):
                             fake_transitions=len(iterator.generated_transitions),
                         )
 
-                    # if new_transitions:
-                    #     print(f'real_transitions: {len(iterator.transitions)}')
-                    #     print(f'fake_transitions: {len(iterator.generated_transitions)}')
-                    #     for new_transition in new_transitions:
-                    #         mu, logstd = self._impl._policy.sample_with_log_prob(torch.from_numpy(new_transition.observation).to(self._impl.device))
-                    #         print(f'mu: {mu}')
-                    #         print(f'logstd: {logstd}')
+                    if new_transitions:
+                        print(f'real_transitions: {len(iterator.transitions)}')
+                        print(f'fake_transitions: {len(iterator.generated_transitions)}')
+                        for new_transition in new_transitions:
+                            mu, logstd = self._impl._policy.sample_with_log_prob(torch.from_numpy(new_transition.observation).to(self._impl.device))
+                            print(f'mu: {mu}')
+                            print(f'logstd: {logstd}')
 
                     with logger.measure_time("step"):
                         # pick transitions
                         with logger.measure_time("sample_batch"):
                             batch = next(iterator)
-                            if replay_iterators is not None:
-                                assert replay_dataloaders is not None
-                                replay_batches = dict()
-                                for replay_iterator_num in replay_iterators.keys():
-                                    try:
-                                        replay_batches[replay_iterator_num] = next(replay_iterators[replay_iterator_num])
-                                    except StopIteration:
-                                        replay_iterators[replay_iterator_num] = iter(replay_dataloaders[replay_iterator_num])
-                                        replay_batches[replay_iterator_num] = next(replay_iterators[replay_iterator_num])
-                            else:
-                                replay_batches = None
 
                         # update parameters
                         with logger.measure_time("algorithm_update"):
-                            loss = self.update(batch, replay_batches)
+                            loss = self.update(batch)
                             # self._impl.increase_siamese_alpha(epoch - n_epochs, itr / len(iterator))
 
                         # record metrics

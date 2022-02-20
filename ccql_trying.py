@@ -45,7 +45,7 @@ def main(args, device):
             from dataset.split_maze import split_navigate_maze2d_large_v1 as split_navigate
         else:
             raise NotImplementedError
-        task_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums = split_navigate(args.task_split_type, args.top_euclid, device, args.dense)
+        task_datasets, origin_datasets, taskid_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums = split_navigate(args.task_split_type, args.top_euclid, device, args.dense)
     elif args.dataset in ['hopper_expert_v0', 'hopper_medium_v0', 'hopper_medium_expert_v0', 'hopper_medium_replay_v0', 'hopper_random_v0', 'halfcheetah_expert_v0', 'halfcheetah_medium_v0', 'halfcheetah_medium_expert_v0', 'halfcheetah_medium_replay_v0', 'halfcheetah_random_v0', 'walker2d_expert_v0', 'walker2d_medium_v0', 'walker2d_medium_expert_v0', 'walker2d_medium_replay_v0', 'walker2d_random_v0']:
         if args.dataset in ['hopper_expert_v0', 'hopper_medium_v0', 'hopper_medium_expert_v0', 'hopper_medium_replay_v0', 'hopper_random_v0']:
             from dataset.split_gym import split_hopper as split_gym
@@ -55,14 +55,16 @@ def main(args, device):
             from dataset.split_gym import split_walker as split_gym
         else:
             raise NotImplementedError
-        task_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums = split_gym(args.top_euclid, args.dataset.replace('_', '-'))
+        task_datasets, origin_datasets, taskid_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums = split_gym(args.top_euclid, args.dataset.replace('_', '-'))
     else:
         raise NotImplementedError
 
     # prepare algorithm
     if args.algos == 'co':
-        from myd3rlpy.algos.co import CO
+        from myd3rlpy.algos.co_2 import CO
         co = CO(use_gpu=True, batch_size=args.batch_size, n_action_samples=args.n_action_samples, id_size=task_nums, replay_type=args.replay_type, generate_type=args.generate_type, reduce_replay=args.reduce_replay, change_reward=args.change_reward, alpha_learning_rate=args.alpha_lr)
+        # from myd3rlpy.algos.cql import MyCQL
+        # cql = MyCQL(use_gpu=True)
     else:
         raise NotImplementedError
     experiment_name = "CO"
@@ -71,11 +73,14 @@ def main(args, device):
     algos_name += "_" + args.experience_type
     algos_name += '_' + args.dataset
 
+    print(original)
+    assert False
+
     if not args.eval:
         replay_datasets = dict()
         save_datasets = dict()
         eval_datasets = dict()
-        for task_id, dataset in task_datasets.items():
+        for task_id, dataset in taskid_datasets.items():
             eval_datasets[task_id] = dataset
             draw_path = args.model_path + algos_name + '_trajectories_' + str(task_id)
 
@@ -91,23 +96,24 @@ def main(args, device):
                 n_epochs=args.n_epochs if not args.test else 1,
                 experiment_name=experiment_name + algos_name,
                 scorers={
-                    "real_env": evaluate_on_environment(envs, end_points, task_nums, draw_path),
+                    "real_env0": evaluate_on_environment(envs[0]),
+                    "real_env1": evaluate_on_environment(envs[1]),
                 },
                 test=args.test,
             )
-            if args.algos == 'co':
-                if args.experience_type == 'siamese':
-                    replay_datasets[task_id], save_datasets[task_id] = co.generate_replay_data_phi(task_id, task_datasets[task_id], original, in_task=False, max_save_num=args.max_save_num, real_action_size=real_action_size, real_observation_size=real_observation_size)
-                    print(f"len(replay_datasets[task_id]): {len(replay_datasets[task_id])}")
-                else:
-                    replay_datasets[task_id], save_datasets[task_id] = co.generate_replay_data_random(task_id, task_datasets[task_id], max_save_num=args.max_save_num, real_action_size=real_action_size, in_task=False)
-                    print(f"len(replay_datasets[task_id]): {len(replay_datasets[task_id])}")
-            else:
-                raise NotImplementedError
-            co.save_model(args.model_path + algos_name + '_' + str(task_id) + '.pt')
-            if args.test and task_id >= 1:
-                break
-        torch.save(save_datasets, f=args.model_path + algos_name + '_datasets.pt')
+            # if args.algos == 'co':
+            #     if args.experience_type == 'siamese':
+            #         replay_datasets[task_id], save_datasets[task_id] = co.generate_replay_data_phi(task_id, task_datasets[task_id], original, in_task=False, max_save_num=args.max_save_num, real_action_size=real_action_size, real_observation_size=real_observation_size)
+            #         print(f"len(replay_datasets[task_id]): {len(replay_datasets[task_id])}")
+            #     else:
+            #         replay_datasets[task_id], save_datasets[task_id] = co.generate_replay_data_random(task_id, task_datasets[task_id], max_save_num=args.max_save_num, real_action_size=real_action_size, in_task=False)
+            #         print(f"len(replay_datasets[task_id]): {len(replay_datasets[task_id])}")
+            # else:
+            #     raise NotImplementedError
+            # co.save_model(args.model_path + algos_name + '_' + str(task_id) + '.pt')
+            # if args.test and task_id >= 1:
+            #     break
+        # torch.save(save_datasets, f=args.model_path + algos_name + '_datasets.pt')
     else:
         assert args.model_path
         eval_datasets = dict()
@@ -155,9 +161,11 @@ if __name__ == '__main__':
     parser.add_argument('--sum', default='no_sum', type=str)
     args = parser.parse_args()
     if 'maze' in args.dataset:
-        args.model_path = 'd3rlpy_' + args.experience_type + '_' + args.generate_type + '_' + args.replay_type + '_' + args.reduce_replay + '_' + args.change_reward + '_' + args.dense + '_' + args.dataset + '_' + ('test' if args.test else ('train' if not args.eval else 'eval'))
+        # args.model_path = 'd3rlpy_' + args.experience_type + '_' + args.generate_type + '_' + args.replay_type + '_' + args.reduce_replay + '_' + args.change_reward + '_' + args.dense + '_' + args.dataset + '_' + ('test' if args.test else ('train' if not args.eval else 'eval'))
+        args.model_path = 'd3rlpy_' + args.experience_type + '_' + args.generate_type + '_' + args.replay_type + '_' + args.reduce_replay + '_' + args.change_reward + '_' + args.dense + '_' + args.dataset + '_' + 'trying'
     else:
-        args.model_path = 'd3rlpy_' + args.experience_type + '_' + args.generate_type + '_' + args.replay_type + '_' + args.reduce_replay + '_' + args.change_reward + '_' + args.dataset + '_' + ('test' if args.test else ('train' if not args.eval else 'eval'))
+        # args.model_path = 'd3rlpy_' + args.experience_type + '_' + args.generate_type + '_' + args.replay_type + '_' + args.reduce_replay + '_' + args.change_reward + '_' + args.dataset + '_' + ('test' if args.test else ('train' if not args.eval else 'eval'))
+        args.model_path = 'd3rlpy_' + args.experience_type + '_' + args.generate_type + '_' + args.replay_type + '_' + args.reduce_replay + '_' + args.change_reward + '_' + args.dataset + '_' + 'trying'
     if not os.path.exists(args.model_path):
         os.makedirs(args.model_path)
     args.model_path +=  '/model_'

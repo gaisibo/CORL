@@ -147,4 +147,4 @@ def split_gym(top_euclid, dataset_name, origin_dataset, env, origin_dataset_back
         indexes_euclids[dataset_num] = indexes_euclid
     # torch.save(task_datasets, dataset_name  + '.pt')
 
-    return changed_task_datasets, envs, [None for _ in range(task_nums)], nearest_indexes, real_action_size, real_observation_size, indexes_euclids, task_nums
+    return changed_task_datasets, origin_task_datasets, taskid_task_datasets, envs, [None for _ in range(task_nums)], nearest_indexes, real_action_size, real_observation_size, indexes_euclids, task_nums

@@ -287,7 +287,7 @@ class COImpl(CQLImpl):
 
         loss = loss.cpu().detach().numpy()
 
-        return loss, replay_loss, replay_losses
+        return loss
 
     def compute_critic_loss(
         self, batch: TorchMiniBatch, q_tpn: torch.Tensor
@@ -422,7 +422,7 @@ class COImpl(CQLImpl):
 
         loss = loss.cpu().detach().numpy()
 
-        return loss, replay_loss, replay_losses
+        return loss
 
     @train_api
     @torch_api()
@@ -464,7 +464,7 @@ class COImpl(CQLImpl):
         loss.backward()
         self._phi_optim.step()
 
-        return loss.cpu().detach().numpy(), diff_phi, diff_r, diff_kl, diff_psi
+        return loss.cpu().detach().numpy()
 
     def compute_phi_loss(self, batch: TorchMiniBatch):
         assert self._phi is not None
@@ -486,7 +486,7 @@ class COImpl(CQLImpl):
         diff_kl = torch.distributions.kl.kl_divergence(self._policy.dist(s[:half_size]), self._policy.dist(s[half_size:end_size])).mean()
         diff_psi = self._gamma * torch.linalg.vector_norm(psi[:half_size] - psi[half_size:end_size], dim=1).mean()
         loss_phi = diff_phi + diff_r + diff_kl + diff_psi
-        return loss_phi, diff_phi.cpu().detach().numpy(), diff_r.cpu().detach().numpy(), diff_kl.cpu().detach().numpy(), diff_psi.cpu().detach().numpy()
+        return loss_phi
 
     @train_api
     @torch_api()
@@ -503,7 +503,7 @@ class COImpl(CQLImpl):
         loss.backward()
         self._psi_optim.step()
 
-        return loss.cpu().detach().numpy(), loss_psi_diff, loss_psi_u
+        return loss.cpu().detach().numpy()
 
     def compute_psi_loss(self, batch: TorchMiniBatch, pretrain: bool = False):
         assert self._phi is not None
@@ -524,7 +524,7 @@ class COImpl(CQLImpl):
         loss_psi = loss_psi_diff - loss_psi_u
         loss_psi_diff = loss_psi_diff.cpu().detach().numpy()
         loss_psi_u = loss_psi_u.cpu().detach().numpy()
-        return loss_psi, loss_psi_diff, loss_psi_u
+        return loss_psi
 
     def update_phi_target(self) -> None:
         assert self._phi is not None
