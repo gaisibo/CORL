@@ -73,9 +73,6 @@ def main(args, device):
     algos_name += "_" + args.experience_type
     algos_name += '_' + args.dataset
 
-    print(original)
-    assert False
-
     if not args.eval:
         replay_datasets = dict()
         save_datasets = dict()

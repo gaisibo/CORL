@@ -397,7 +397,7 @@ class CO(CQL):
         verbose: bool = True,
         show_progress: bool = True,
         tensorboard_dir: Optional[str] = None,
-        eval_episodess: Optional[Dict[int, List[Episode]]] = None,
+        eval_episodes: Optional[Dict[int, List[Episode]]] = None,
         save_interval: int = 1,
         discount: float = 0.99,
         start_timesteps : int = int(25e3),
@@ -462,7 +462,7 @@ class CO(CQL):
                 verbose,
                 show_progress,
                 tensorboard_dir,
-                eval_episodess,
+                eval_episodes,
                 save_interval,
                 discount,
                 start_timesteps,
@@ -497,7 +497,7 @@ class CO(CQL):
         verbose: bool = True,
         show_progress: bool = True,
         tensorboard_dir: Optional[str] = None,
-        eval_episodess: Optional[Dict[int, List[Episode]]] = None,
+        eval_episodes: Optional[Dict[int, List[Episode]]] = None,
         save_interval: int = 1,
         discount: float = 0.99,
         start_timesteps : int = int(25e3),
@@ -685,51 +685,51 @@ class CO(CQL):
                 for itr in range_gen:
 
                     # generate new transitions with dynamics models
-                    if self._generate_type == 'model_base':
-                        new_transitions = self.generate_replay_data(
-                            task_id,
-                            dataset,
-                            original,
-                            in_task=True,
-                            real_action_size=real_action_size,
-                            real_observation_size=real_observation_size,
-                        )
-                        if isinstance(new_transitions, Tuple):
-                            new_transitions = new_transitions[0]
-                    elif self._generate_type == 'siamese':
-                        new_transitions = self.generate_replay_data_phi(
-                            task_id,
-                            dataset,
-                            original,
-                            in_task=True,
-                            real_action_size=real_action_size,
-                            real_observation_size=real_observation_size,
-                        )
-                        if isinstance(new_transitions, Tuple):
-                            new_transitions = new_transitions[0]
-                    else:
-                        new_transitions = None
+                    # if self._generate_type == 'model_base':
+                    #     new_transitions = self.generate_replay_data(
+                    #         task_id,
+                    #         dataset,
+                    #         original,
+                    #         in_task=True,
+                    #         real_action_size=real_action_size,
+                    #         real_observation_size=real_observation_size,
+                    #     )
+                    #     if isinstance(new_transitions, Tuple):
+                    #         new_transitions = new_transitions[0]
+                    # elif self._generate_type == 'siamese':
+                    #     new_transitions = self.generate_replay_data_phi(
+                    #         task_id,
+                    #         dataset,
+                    #         original,
+                    #         in_task=True,
+                    #         real_action_size=real_action_size,
+                    #         real_observation_size=real_observation_size,
+                    #     )
+                    #     if isinstance(new_transitions, Tuple):
+                    #         new_transitions = new_transitions[0]
+                    # else:
+                    #     new_transitions = None
                         # new_transitions = self.generate_new_data(
                         #     iterator.transitions,
                         #     real_observation_size=real_observation_size,
                         #     task_id=task_id,
                         # )
 
-                    if new_transitions:
-                        iterator.add_generated_transitions(new_transitions)
-                        LOG.debug(
-                            f"{len(new_transitions)} transitions are generated.",
-                            real_transitions=len(iterator.transitions),
-                            fake_transitions=len(iterator.generated_transitions),
-                        )
+                    # if new_transitions:
+                    #     iterator.add_generated_transitions(new_transitions)
+                    #     LOG.debug(
+                    #         f"{len(new_transitions)} transitions are generated.",
+                    #         real_transitions=len(iterator.transitions),
+                    #         fake_transitions=len(iterator.generated_transitions),
+                    #     )
 
-                    if new_transitions:
-                        print(f'real_transitions: {len(iterator.transitions)}')
-                        print(f'fake_transitions: {len(iterator.generated_transitions)}')
-                        for new_transition in new_transitions:
-                            mu, logstd = self._impl._policy.sample_with_log_prob(torch.from_numpy(new_transition.observation).to(self._impl.device))
-                            print(f'mu: {mu}')
-                            print(f'logstd: {logstd}')
+                    # if new_transitions:
+                    #     print(f'real_transitions: {len(iterator.transitions)}')
+                    #     print(f'fake_transitions: {len(iterator.generated_transitions)}')
+                    #     for new_transition in new_transitions:
+                    #         mu, logstd = self._impl._policy.sample_with_log_prob(torch.from_numpy(new_transition.observation).to(self._impl.device))
+                    #         print(f'mu: {mu}')
+                    #         print(f'logstd: {logstd}')
 
                     with logger.measure_time("step"):
                         # pick transitions
@@ -767,9 +767,8 @@ class CO(CQL):
                         self._loss_history[name].append(np.mean(vals))
 
                 if epoch % save_interval == 0:
-                    if scorers and eval_episodess:
-                        for scorer, eval_episode in zip(scorers, eval_episodess):
-                            self._evaluate(eval_episode, scorer, logger)
+                    if scorers and eval_episodes:
+                        self._evaluate(eval_episodes, scorers, logger)
 
                 # save metrics
                 metrics = logger.commit(epoch, total_step)
@@ -876,10 +875,8 @@ class CO(CQL):
                     # save model parameters
                     if t % save_interval == 0:
                         logger.save_model(t, self)
-                    if scorers and eval_episodess:
-                        for id, eval_episodes in eval_episodess.items():
-                            scorers_tmp = {k + str(id): v(id) for k, v in scorers.items()}
-                            self._evaluate(eval_episodes, scorers_tmp, logger)
+                    if scorers and eval_episodes:
+                        self._evaluate(eval_episodes, scorers, logger)
 
 
 
