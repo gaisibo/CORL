@@ -61,10 +61,10 @@ def main(args, device):
 
     # prepare algorithm
     if args.algos == 'co':
-        from myd3rlpy.algos.co_2 import CO
-        co = CO(use_gpu=True, batch_size=args.batch_size, n_action_samples=args.n_action_samples, id_size=task_nums, replay_type=args.replay_type, generate_type=args.generate_type, reduce_replay=args.reduce_replay, change_reward=args.change_reward, alpha_learning_rate=args.alpha_lr)
-        # from myd3rlpy.algos.cql import MyCQL
-        # cql = MyCQL(use_gpu=True)
+        # from myd3rlpy.algos.co_2 import CO
+        # co = CO(use_gpu=True, batch_size=args.batch_size, n_action_samples=args.n_action_samples, id_size=task_nums, replay_type=args.replay_type, generate_type=args.generate_type, reduce_replay=args.reduce_replay, change_reward=args.change_reward, alpha_learning_rate=args.alpha_lr)
+        from myd3rlpy.algos.cql import MyCQL
+        cql = MyCQL(use_gpu=True)
     else:
         raise NotImplementedError
     experiment_name = "CO"
@@ -77,27 +77,35 @@ def main(args, device):
         replay_datasets = dict()
         save_datasets = dict()
         eval_datasets = dict()
-        for task_id, dataset in task_datasets.items():
+        for task_id, dataset in taskid_datasets.items():
             eval_datasets[task_id] = dataset
             draw_path = args.model_path + algos_name + '_trajectories_' + str(task_id)
 
-            # train
-            co.fit(
-                task_id,
-                dataset,
-                replay_datasets,
-                original = original[task_id],
-                real_action_size = real_action_size,
-                real_observation_size = real_observation_size,
-                eval_episodes=eval_datasets,
-                n_epochs=args.n_epochs if not args.test else 1,
-                experiment_name=experiment_name + algos_name,
+            cql.fit(dataset,
+                eval_episodes=dataset,
+                n_epochs=100,
                 scorers={
                     "real_env0": evaluate_on_environment(envs[0]),
                     "real_env1": evaluate_on_environment(envs[1]),
-                },
-                test=args.test,
-            )
+            })
+
+            # train
+            # co.fit(
+            #     task_id,
+            #     dataset,
+            #     replay_datasets,
+            #     original = original[task_id],
+            #     real_action_size = real_action_size,
+            #     real_observation_size = real_observation_size,
+            #     eval_episodes=eval_datasets,
+            #     n_epochs=args.n_epochs if not args.test else 1,
+            #     experiment_name=experiment_name + algos_name,
+            #     scorers={
+            #         "real_env0": evaluate_on_environment(envs[0]),
+            #         "real_env1": evaluate_on_environment(envs[1]),
+            #     },
+            #     test=args.test,
+            # )
             # if args.algos == 'co':
             #     if args.experience_type == 'siamese':
             #         replay_datasets[task_id], save_datasets[task_id] = co.generate_replay_data_phi(task_id, task_datasets[task_id], original, in_task=False, max_save_num=args.max_save_num, real_action_size=real_action_size, real_observation_size=real_observation_size)

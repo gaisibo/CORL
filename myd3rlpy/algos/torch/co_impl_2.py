@@ -301,6 +301,9 @@ class COImpl(CQLImpl):
             terminals=batch.terminals,
             gamma=self._gamma ** batch.n_steps,
         )
+        print(batch.actions[:, :self._action_size])
+        print(batch.actions[:, :self._action_size].shape)
+        assert False
         conservative_loss = self._compute_conservative_loss(
             batch.observations, batch.actions[:, :self._action_size], batch.next_observations
         )
