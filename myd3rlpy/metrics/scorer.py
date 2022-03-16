@@ -160,7 +160,7 @@ def td_error_scorer(real_action_size: int) -> Callable[..., Callable[...,float]]
 # 
 
 def evaluate_on_environment(
-    env: gym.Env, n_trials: int = 10, epsilon: float = 0.0, render: bool = False
+    env: gym.Env, test_id: int, n_trials: int = 10, epsilon: float = 0.0, render: bool = False
 ) -> Callable[..., float]:
     """Returns scorer function of evaluation on environment.
     This function returns scorer function, which is suitable to the standard
@@ -189,16 +189,17 @@ def evaluate_on_environment(
     is_image = len(observation_shape) == 3
 
     def scorer(algo: AlgoProtocol, *args: Any) -> float:
+        print(f"test_id: {test_id}")
         if is_image:
             stacked_observation = StackedObservation(
                 observation_shape, algo.n_frames
             )
+        save_id = algo._impl._impl_id
+        algo._impl.change_task(test_id)
 
         episode_rewards = []
         for _ in range(n_trials):
             observation = env.reset()
-            task_id_numpy = np.eye(2)[0].squeeze()
-            observation = np.concatenate([observation, task_id_numpy], axis=0)
             episode_reward = 0.0
 
             # frame stacking
@@ -206,6 +207,7 @@ def evaluate_on_environment(
                 stacked_observation.clear()
                 stacked_observation.append(observation)
 
+            i = 0
             while True:
                 # take action
                 if np.random.random() < epsilon:
@@ -216,8 +218,7 @@ def evaluate_on_environment(
                     else:
                         action = algo.predict([observation])[0]
 
-                observation, reward, done, _ = env.step(action)
-                observation = np.concatenate([observation, task_id_numpy], axis=0)
+                observation, reward, done, pos = env.step(action)
                 episode_reward += reward
 
                 if is_image:
@@ -228,7 +229,12 @@ def evaluate_on_environment(
 
                 if done:
                     break
+                if i > 1000:
+                    break
+
+                i += 1
             episode_rewards.append(episode_reward)
+        algo._impl.change_task(save_id)
         return float(np.mean(episode_rewards))
 
     return scorer

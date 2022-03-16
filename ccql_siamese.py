@@ -45,7 +45,7 @@ def main(args, device):
             from dataset.split_maze import split_navigate_maze2d_large_v1 as split_navigate
         else:
             raise NotImplementedError
-        task_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums = split_navigate(args.task_split_type, args.top_euclid, device, args.dense)
+        task_datasets, origin_datasets, taskid_datasets, action_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums = split_gym(args.top_euclid, args.dataset.replace('_', '-'))
     elif args.dataset in ['hopper_expert_v0', 'hopper_medium_v0', 'hopper_medium_expert_v0', 'hopper_medium_replay_v0', 'hopper_random_v0', 'halfcheetah_expert_v0', 'halfcheetah_medium_v0', 'halfcheetah_medium_expert_v0', 'halfcheetah_medium_replay_v0', 'halfcheetah_random_v0', 'walker2d_expert_v0', 'walker2d_medium_v0', 'walker2d_medium_expert_v0', 'walker2d_medium_replay_v0', 'walker2d_random_v0']:
         if args.dataset in ['hopper_expert_v0', 'hopper_medium_v0', 'hopper_medium_expert_v0', 'hopper_medium_replay_v0', 'hopper_random_v0']:
             from dataset.split_gym import split_hopper as split_gym
@@ -55,14 +55,14 @@ def main(args, device):
             from dataset.split_gym import split_walker as split_gym
         else:
             raise NotImplementedError
-        task_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums = split_gym(args.top_euclid, args.dataset.replace('_', '-'))
+        task_datasets, origin_datasets, taskid_datasets, action_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums = split_gym(args.top_euclid, args.dataset.replace('_', '-'))
     else:
         raise NotImplementedError
 
     # prepare algorithm
     if args.algos == 'co':
         from myd3rlpy.algos.co import CO
-        co = CO(use_gpu=True, batch_size=args.batch_size, n_action_samples=args.n_action_samples, id_size=task_nums, replay_type=args.replay_type, generate_type=args.generate_type, reduce_replay=args.reduce_replay, change_reward=args.change_reward, alpha_learning_rate=args.alpha_lr)
+        co = CO(use_gpu=True, batch_size=args.batch_size, id_size=task_nums, replay_type=args.replay_type, generate_type=args.generate_type, reduce_replay=args.reduce_replay, change_reward=args.change_reward)
     else:
         raise NotImplementedError
     experiment_name = "CO"
@@ -75,7 +75,7 @@ def main(args, device):
         replay_datasets = dict()
         save_datasets = dict()
         eval_datasets = dict()
-        for task_id, dataset in task_datasets.items():
+        for task_id, dataset in action_datasets.items():
             eval_datasets[task_id] = dataset
             draw_path = args.model_path + algos_name + '_trajectories_' + str(task_id)
 
@@ -87,20 +87,23 @@ def main(args, device):
                 original = original[task_id],
                 real_action_size = real_action_size,
                 real_observation_size = real_observation_size,
-                eval_episodess=eval_datasets,
+                eval_episodes=dataset,
                 n_epochs=args.n_epochs if not args.test else 1,
                 experiment_name=experiment_name + algos_name,
                 scorers={
-                    "real_env": evaluate_on_environment(envs, end_points, task_nums, draw_path),
+                    "real_env0": evaluate_on_environment(envs[0], test_id=0),
+                    "real_env1": evaluate_on_environment(envs[1], test_id=1),
+                    "real_env2": evaluate_on_environment(envs[2], test_id=2),
+                    "real_env3": evaluate_on_environment(envs[3], test_id=3),
                 },
                 test=args.test,
             )
             if args.algos == 'co':
                 if args.experience_type == 'siamese':
-                    replay_datasets[task_id], save_datasets[task_id] = co.generate_replay_data_phi(task_id, task_datasets[task_id], original, in_task=False, max_save_num=args.max_save_num, real_action_size=real_action_size, real_observation_size=real_observation_size)
+                    replay_datasets[task_id], save_datasets[task_id] = co.generate_replay_data_phi(action_datasets[task_id], original, in_task=False, max_save_num=args.max_save_num, real_action_size=real_action_size, real_observation_size=real_observation_size)
                     print(f"len(replay_datasets[task_id]): {len(replay_datasets[task_id])}")
                 else:
-                    replay_datasets[task_id], save_datasets[task_id] = co.generate_replay_data_random(task_id, task_datasets[task_id], max_save_num=args.max_save_num, real_action_size=real_action_size, in_task=False)
+                    replay_datasets[task_id], save_datasets[task_id] = co.generate_replay_data_random(action_datasets[task_id], max_save_num=args.max_save_num, real_action_size=real_action_size, in_task=False)
                     print(f"len(replay_datasets[task_id]): {len(replay_datasets[task_id])}")
             else:
                 raise NotImplementedError
@@ -113,7 +116,7 @@ def main(args, device):
         eval_datasets = dict()
         if co._impl is None:
             co.create_impl([real_observation_size + task_nums], real_action_size)
-        for task_id, dataset in task_datasets.items():
+        for task_id, dataset in action_datasets.items():
             draw_path = args.model_path + algos_name + '_trajectories_' + str(task_id) + '_'
             eval_datasets[task_id] = dataset
             co.load_model(args.model_path + algos_name + '_' + str(task_id) + '.pt')
@@ -142,7 +145,7 @@ if __name__ == '__main__':
     parser.add_argument('--algos', default='co', type=str)
     parser.add_argument('--eval', action='store_true')
     parser.add_argument('--test', action='store_true')
-    parser.add_argument("--n_epochs", default=1000, type=int)
+    parser.add_argument("--n_epochs", default=10, type=int)
     parser.add_argument("--n_action_samples", default=4, type=int)
     parser.add_argument('--top_euclid', default=64, type=int)
     parser.add_argument('--replay_type', default='orl', type=str, choices=['orl', 'bc', 'ewc', 'gem', 'agem'])

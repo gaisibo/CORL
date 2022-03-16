@@ -3,9 +3,9 @@ from gym import utils
 from gym.envs.mujoco import mujoco_env
 
 
-class Walker2dBackEnv(mujoco_env.MujocoEnv, utils.EzPickle):
+class Walker2dLightEnv(mujoco_env.MujocoEnv, utils.EzPickle):
     def __init__(self):
-        mujoco_env.MujocoEnv.__init__(self, "walker2d.xml", 4)
+        mujoco_env.MujocoEnv.__init__(self, "/home/gaisibo/Continual-Offline/CCQL/mygym/envs/assets/walker2d_light.xml", 4)
         utils.EzPickle.__init__(self)
 
     def step(self, a):
@@ -13,7 +13,7 @@ class Walker2dBackEnv(mujoco_env.MujocoEnv, utils.EzPickle):
         self.do_simulation(a, self.frame_skip)
         posafter, height, ang = self.sim.data.qpos[0:3]
         alive_bonus = 1.0
-        reward = - (posafter - posbefore) / self.dt
+        reward = (posafter - posbefore) / self.dt
         reward += alive_bonus
         reward -= 1e-3 * np.square(a).sum()
         done = not (height > 0.8 and height < 2.0 and ang > -1.0 and ang < 1.0)

@@ -152,6 +152,8 @@ class CO(CQL):
     _change_reward: str
     _reduce_replay: str
 
+    _task_id: str
+
     def __init__(
         self,
         *,
@@ -187,7 +189,6 @@ class CO(CQL):
         agem_alpha: float = 1,
         tau: float = 0.005,
         n_critics: int = 2,
-        update_actor_interval: int = 1,
         initial_temperature: float = 1.0,
         initial_alpha: float = 1.0,
         alpha_threshold: float = 10.0,
@@ -213,6 +214,8 @@ class CO(CQL):
         generate_type = True,
         change_reward = 'change',
         reduce_replay = 'retrain',
+
+        task_id = 0,
         **kwargs: Any
     ):
         super().__init__(
@@ -231,7 +234,6 @@ class CO(CQL):
             gamma = gamma,
             tau = tau,
             n_critics = n_critics,
-            update_actor_interval = update_actor_interval,
             initial_temperature = initial_temperature,
             conservative_weight = conservative_weight,
             n_action_samples = n_action_samples,
@@ -283,10 +285,12 @@ class CO(CQL):
         self._rollout_horizon = rollout_horizon
         self._rollout_batch_size = rollout_batch_size
 
+        self._task_id = task_id
+
         # self._dynamics = dynamics
 
     def _create_impl(
-        self, observation_shape: Sequence[int], action_size: int
+        self, observation_shape: Sequence[int], action_size: int, task_id: int
     ) -> None:
         assert self._impl_name in ['co', 'gemco', 'agemco']
         self._impl = COImpl(
@@ -326,7 +330,7 @@ class CO(CQL):
             action_scaler=self._action_scaler,
             reward_scaler=self._reward_scaler,
         )
-        self._impl.build()
+        self._impl.build(task_id)
 
     def update(self, batch: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[Tensor]]], batch2: TransitionMiniBatch = None) -> Dict[int, float]:
         """Update parameters with mini-batch of data.
@@ -397,7 +401,7 @@ class CO(CQL):
         verbose: bool = True,
         show_progress: bool = True,
         tensorboard_dir: Optional[str] = None,
-        eval_episodess: Optional[Dict[int, List[Episode]]] = None,
+        eval_episodes: Optional[Dict[int, List[Episode]]] = None,
         save_interval: int = 1,
         discount: float = 0.99,
         start_timesteps : int = int(25e3),
@@ -462,7 +466,7 @@ class CO(CQL):
                 verbose,
                 show_progress,
                 tensorboard_dir,
-                eval_episodess,
+                eval_episodes,
                 save_interval,
                 discount,
                 start_timesteps,
@@ -497,7 +501,7 @@ class CO(CQL):
         verbose: bool = True,
         show_progress: bool = True,
         tensorboard_dir: Optional[str] = None,
-        eval_episodess: Optional[Dict[int, List[Episode]]] = None,
+        eval_episodes: Optional[Dict[int, List[Episode]]] = None,
         save_interval: int = 1,
         discount: float = 0.99,
         start_timesteps : int = int(25e3),
@@ -550,12 +554,13 @@ class CO(CQL):
         if self._impl is None:
             LOG.debug("Building models...")
             action_size = real_action_size
-            observation_shape = [real_observation_size + self._id_size]
-            self.create_impl(
-                observation_shape, action_size
+            observation_shape = [real_observation_size]
+            self._create_impl(
+                self._process_observation_shape(observation_shape), action_size, task_id
             )
             LOG.debug("Models have been built.")
         else:
+            self._impl.change_task(task_id)
             LOG.warning("Skip building models since they're already built.")
 
         # if self._generate_type == 'model_base':
@@ -741,7 +746,6 @@ class CO(CQL):
                     # generate new transitions with dynamics models
                     if self._generate_type == 'model_base':
                         new_transitions = self.generate_replay_data(
-                            task_id,
                             dataset,
                             original,
                             in_task=True,
@@ -752,7 +756,6 @@ class CO(CQL):
                             new_transitions = new_transitions[0]
                     elif self._generate_type == 'siamese':
                         new_transitions = self.generate_replay_data_phi(
-                            task_id,
                             dataset,
                             original,
                             in_task=True,
@@ -766,7 +769,6 @@ class CO(CQL):
                         # new_transitions = self.generate_new_data(
                         #     iterator.transitions,
                         #     real_observation_size=real_observation_size,
-                        #     task_id=task_id,
                         # )
 
                     if new_transitions:
@@ -831,10 +833,8 @@ class CO(CQL):
                     if vals:
                         self._loss_history[name].append(np.mean(vals))
 
-                if epoch % save_interval == 0:
-                    if scorers and eval_episodess:
-                        for scorer, eval_episode in zip(scorers, eval_episodess):
-                            self._evaluate(eval_episode, scorer, logger)
+                if scorers and eval_episodes:
+                    self._evaluate(eval_episodes, scorers, logger)
 
                 # save metrics
                 metrics = logger.commit(epoch, total_step)
@@ -941,10 +941,8 @@ class CO(CQL):
                     # save model parameters
                     if t % save_interval == 0:
                         logger.save_model(t, self)
-                    if scorers and eval_episodess:
-                        for id, eval_episodes in eval_episodess.items():
-                            scorers_tmp = {k + str(id): v(id) for k, v in scorers.items()}
-                            self._evaluate(eval_episodes, scorers_tmp, logger)
+                    if scorers and eval_episodes:
+                        self._evaluate(eval_episodes, scorers, logger)
 
 
 
@@ -1044,7 +1042,7 @@ class CO(CQL):
         metrics = logger.commit(epoch, total_step)
 
     def generate_new_data(
-        self, transitions: List[Transition], real_observation_size, task_id
+        self, transitions: List[Transition], real_observation_size
     ) -> Optional[List[Transition]]:
         assert self._impl, IMPL_NOT_INITIALIZED_ERROR
         assert self._dynamics, DYNAMICS_NOT_GIVEN_ERROR
@@ -1063,10 +1061,6 @@ class CO(CQL):
         rewards = batch.rewards
         prev_transitions: List[Transition] = []
 
-        task_id_tensor = np.eye(self._id_size)[task_id].squeeze()
-        task_id_tensor = np.broadcast_to(task_id_tensor, (observations.shape[0], self._id_size))
-        # task_id_tensor = torch.from_numpy(np.broadcast_to(task_id_tensor, (observations.shape[0], self._id_size))).to(torch.float32).to(self._impl.device)
-
         for _ in range(self._get_rollout_horizon()):
 
             # predict next state
@@ -1078,7 +1072,6 @@ class CO(CQL):
             next_observations, next_rewards = self._mutate_transition(
                 next_observations, next_rewards, variances
             )
-            next_observations = np.concatenate([next_observations, task_id_tensor], axis=1)
 
             # sample policy action
             next_actions = self._sample_rollout_action(next_observations)
@@ -1110,7 +1103,7 @@ class CO(CQL):
 
         return rets
 
-    def generate_new_data_trajectory(self, task_id, dataset, original_index, in_task=False, max_export_time = 100, max_reward=None, real_action_size=1, real_observation_size=1):
+    def generate_new_data_trajectory(self, dataset, original_index, in_task=False, max_export_time = 100, max_reward=None, real_action_size=1, real_observation_size=1):
         assert self._impl is not None
         if not self._is_generating_new_data():
             return None
@@ -1141,7 +1134,7 @@ class CO(CQL):
             logstds = logstds[torch.arange(start_observations.shape[0]), torch.randint(len(self._dynamics._impl._dynamics._models), size=(start_observations.shape[0],))]
             dist = Normal(mus, torch.exp(logstds))
             pred = dist.rsample()
-            pred_observations = torch.cat([pred[:, :-1], task_id_tensor.expand(pred.shape[0], -1)], dim=1)
+            pred_observations = pred[:, :-1]
             next_x = start_observations + pred_observations
             next_action = self._impl._policy(next_x)
             next_reward = pred[:, -1].view(-1, 1)
@@ -1177,7 +1170,6 @@ class CO(CQL):
                 replay_indexes = start_indexes
             export_time += 1
 
-        # new_transitions = self.generate_new_data(transitions=new_transitions, real_observation_size=real_observation_size, task_id=task_id)
         random.shuffle(new_transitions)
         if self._replay_type != 'bc' or in_task:
             return new_transitions, None
@@ -1241,7 +1233,7 @@ class CO(CQL):
             choosed_samples.append(indexes[choosed_sample_index])
         return choosed_samples
 
-    def generate_replay_data_phi(self, task_id, dataset, original_indexes, max_save_num=1000, max_export_time=1000, max_reward=None, real_action_size=1, real_observation_size=1, low_log_prob=0.8, in_task=False):
+    def generate_replay_data_phi(self, dataset, original_indexes, max_save_num=1000, max_export_time=1000, max_reward=None, real_action_size=1, real_observation_size=1, low_log_prob=0.8, in_task=False):
         assert self._impl is not None
         assert self._impl._policy is not None
         assert self._impl._q_func is not None
@@ -1371,7 +1363,7 @@ class CO(CQL):
         random.shuffle(orl_transitions)
         if len(orl_transitions) > max_save_num:
             orl_transitions = orl_transitions[:max_save_num]
-        # new_transitions = self.generate_new_data(transitions=new_transitions, real_observation_size=real_observation_size, task_id=task_id)
+        # new_transitions = self.generate_new_data(transitions=new_transitions, real_observation_size=real_observation_size)
         if in_task:
             return orl_transitions, None
 
@@ -1392,7 +1384,7 @@ class CO(CQL):
             replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals, replay_means, replay_std_logs, replay_qs, replay_phis, replay_psis)
             return replay_dataset, replay_dataset
 
-    # def generate_replay_data(self, task_id, dataset, original_index, in_task=False, max_save_num=1000, max_export_time = 1000, max_reward=None, real_action_size=1, real_observation_size=1, low_log_prob = 0.8):
+    # def generate_replay_data(self, dataset, original_index, in_task=False, max_save_num=1000, max_export_time = 1000, max_reward=None, real_action_size=1, real_observation_size=1, low_log_prob = 0.8):
     #     assert self._impl is not None
     #     assert self._impl._policy is not None
     #     assert self._impl._q_func is not None
@@ -1519,7 +1511,7 @@ class CO(CQL):
     #     random.shuffle(orl_transitions)
     #     if len(orl_transitions) > max_save_num:
     #         orl_transitions = orl_transitions[:max_save_num]
-    #     # new_transitions = self.generate_new_data(transitions=new_transitions, real_observation_size=real_observation_size, task_id=task_id)
+    #     # new_transitions = self.generate_new_data(transitions=new_transitions, real_observation_size=real_observation_size)
     #     if in_task:
     #         return orl_transitions, None
 
@@ -1540,7 +1532,7 @@ class CO(CQL):
     #         replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals, replay_means, replay_std_logs, replay_qs, replay_phis, replay_psis)
     #         return replay_dataset, replay_dataset
 
-    def generate_replay_data_random(self, task_id, dataset, in_task=False, max_save_num=1000, real_action_size=1):
+    def generate_replay_data_random(self, dataset, in_task=False, max_save_num=1000, real_action_size=1):
         if isinstance(dataset, MDPDataset):
             episodes = dataset.episodes
         else:

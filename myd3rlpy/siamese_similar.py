@@ -16,7 +16,7 @@ def compute_vector_norm(tensor1, tensor2):
     ret = torch.linalg.vector_norm(tensor1 - tensor2, dim = 2)
     return ret.cpu()
 def similar_euclid(obs_all, obs_transition, dataset_name, dataset_num, input_indexes=None, eval_batch_size=1000, topk=256, compare_dim=2):
-    filename = 'near_indexes_' + dataset_name + '/near_indexes_' + dataset_name + '_' + str(dataset_num) + '.pt'
+    filename = 'near_indexes/near_indexes_' + dataset_name + '/near_indexes_' + dataset_name + '_' + str(dataset_num) + '.pt'
     if os.path.exists(filename):
         return torch.load(filename)
     results = []
@@ -57,7 +57,7 @@ def similar_euclid(obs_all, obs_transition, dataset_name, dataset_num, input_ind
     near_indexes = torch.cat(results, dim=0)
     if input_indexes is not None:
         near_indexes = input_indexes[near_indexes]
-    if not os.path.exists('near_indexes_' + dataset_name):
+    if not os.path.exists('near_indexes/near_indexes_' + dataset_name):
         os.makedirs('near_indexes_' + dataset_name)
     torch.save(near_indexes, filename)
     return near_indexes

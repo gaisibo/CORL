@@ -1,3 +1,5 @@
+import inspect
+import types
 import time
 import math
 import copy
@@ -12,6 +14,7 @@ from d3rlpy.gpu import Device
 from d3rlpy.models.encoders import EncoderFactory
 from d3rlpy.models.optimizers import OptimizerFactory
 from d3rlpy.models.q_functions import QFunctionFactory
+from d3rlpy.models.torch.policies import squash_action
 from d3rlpy.preprocessing import ActionScaler, RewardScaler, Scaler
 from d3rlpy.torch_utility import TorchMiniBatch, soft_sync, train_api, torch_api
 from d3rlpy.dataset import TransitionMiniBatch
@@ -108,7 +111,7 @@ class COImpl(CQLImpl):
 
         # initialized in build
 
-    def build(self):
+    def build(self, task_id):
         self._phi = create_phi(self._observation_shape, self._action_size, self._critic_encoder_factory)
         self._psi = create_psi(self._observation_shape, self._actor_encoder_factory)
         self._targ_phi = copy.deepcopy(self._phi)
@@ -164,6 +167,17 @@ class COImpl(CQLImpl):
             self._actor_grad_xy = torch.Tensor(np.sum(self._actor_grad_dims)).to(self.device)
             self._actor_grad_er = torch.Tensor(np.sum(self._actor_grad_dims)).to(self.device)
 
+        self._policy._mus = dict()
+        self._policy._mus[task_id] = self._policy._mu
+        self._policy._logstds = dict()
+        self._policy._logstds[task_id] = self._policy._logstd
+        for q_func in self._q_func._q_funcs:
+            q_func._fcs = dict()
+            q_func._fcs[task_id] = q_func._fc
+        self.change_task(task_id)
+        self._impl_id = task_id
+        self._using_id = task_id
+
     @train_api
     def update_critic(self, batch_tran: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[torch.Tensor]]]=None, step=True):
         batch = TorchMiniBatch(
@@ -176,6 +190,7 @@ class COImpl(CQLImpl):
         assert self._critic_optim is not None
         assert self._q_func is not None
         assert self._policy is not None
+        self.change_task(self._impl_id)
         self._q_func.train()
         self._policy.eval()
 
@@ -199,10 +214,12 @@ class COImpl(CQLImpl):
         loss = self.compute_critic_loss(batch, q_tpn)
         unreg_grads = None
         curr_feat_ext = None
+
         replay_loss = 0
         replay_losses = []
         if replay_batches is not None and len(replay_batches) != 0:
             for i, replay_batch in replay_batches.items():
+                self.change_task(i)
                 replay_batch = dict(zip(replay_name, replay_batch))
                 replay_batch = Struct(**replay_batch)
                 replay_loss = 0
@@ -286,6 +303,7 @@ class COImpl(CQLImpl):
                         self._critic_w[n] -= unreg_grads[n] * (p.detach() - curr_feat_ext[n])
 
         loss = loss.cpu().detach().numpy()
+        self.change_task(self._impl_id)
 
         return loss, replay_loss, replay_losses
 
@@ -320,6 +338,7 @@ class COImpl(CQLImpl):
         )
 
         # Q function should be inference mode for stability
+        self.change_task(self._impl_id)
         self._q_func.eval()
         self._policy.train()
 
@@ -344,6 +363,7 @@ class COImpl(CQLImpl):
         replay_losses = []
         if replay_batches is not None and len(replay_batches) != 0:
             for i, replay_batch in replay_batches.items():
+                self.change_task(i)
                 replay_batch = dict(zip(replay_name, replay_batch))
                 replay_batch = Struct(**replay_batch)
                 if self._replay_type == "orl":
@@ -421,6 +441,7 @@ class COImpl(CQLImpl):
                         self._actor_w[n] -= unreg_grads[n] * (p.detach() - curr_feat_ext[n])
 
         loss = loss.cpu().detach().numpy()
+        self.change_task(self._impl_id)
 
         return loss, replay_loss, replay_losses
 
@@ -596,7 +617,7 @@ class COImpl(CQLImpl):
                            self._actor_grad_dims)
 
     def copy_weight(self):
-        state_dicts = [self._q_func.state_dict(), self._policy.state_dict(), self._log_alpha.state_dict(), self._log_temp.state_dict(), self._phi.state_dict(), self._psi.state_dict(), self._critic_optim.state_dict(), self._actor_optim.state_dict(), self._alpha_optim.state_dict(), self._temp_optim.state_dict(), self._phi_optim.state_dict(), self._psi_optim.state_dict()]
+        state_dicts = [copy.deepcopy(self._q_func.state_dict()), copy.deepcopy(self._policy.state_dict()), copy.deepcopy(self._log_alpha.state_dict()), copy.deepcopy(self._log_temp.state_dict()), copy.deepcopy(self._phi.state_dict()), copy.deepcopy(self._psi.state_dict()), copy.deepcopy(self._critic_optim.state_dict()), copy.deepcopy(self._actor_optim.state_dict()), copy.deepcopy(self._alpha_optim.state_dict()), copy.deepcopy(self._temp_optim.state_dict()), copy.deepcopy(self._phi_optim.state_dict()), copy.deepcopy(self._psi_optim.state_dict())]
         return state_dicts
 
     def reload_weight(self, state_dicts):
@@ -612,3 +633,52 @@ class COImpl(CQLImpl):
         self._temp_optim.load_state_dict(state_dicts[9])
         self._phi_optim.load_state_dict(state_dicts[10])
         self._psi_optim.load_state_dict(state_dicts[11])
+
+    def change_task(self, task_id):
+        print(f'Change to Task {task_id}')
+        print(f'{inspect.stack()[1][3]}')
+        self._impl_id = task_id
+        if task_id not in self._policy._mus.keys():
+            assert task_id not in self._policy._logstds.keys()
+            for q_func in self._q_func._q_funcs:
+                assert task_id not in q_func._fcs.keys()
+            self._policy._mus[task_id] = nn.Linear(self._policy._mu.weight.shape[1], self._policy._mu.weight.shape[0], bias=self._policy._mu.bias is not None).to(self.device)
+            self._policy._logstds[task_id] = nn.Linear(self._policy._logstd.weight.shape[1], self._policy._logstd.weight.shape[0], bias=self._policy._logstd.bias is not None).to(self.device)
+            for q_func in self._q_func._q_funcs:
+                q_func._fcs[task_id] = nn.Linear(q_func._fc.weight.shape[1], q_func._fc.weight.shape[0], bias=q_func._fc.bias is not None).to(self.device)
+            self._actor_optim.add_param_group({'params': list(self._policy._mus[task_id].parameters())})
+            self._actor_optim.add_param_group({'params': list(self._policy._logstds[task_id].parameters())})
+            for q_func in self._q_func._q_funcs:
+                self._critic_optim.add_param_group({'params': list(q_func._fcs[task_id].parameters())})
+        def dist(self, x: torch.Tensor) -> torch.distributions.normal.Normal:
+            h = self._encoder(x)
+            mu = self._mus[task_id](h)
+            clipped_logstd = self._compute_logstd(h)
+            return torch.distributions.normal.Normal(mu, clipped_logstd.exp())
+
+        def forward(
+            self,
+            x: torch.Tensor,
+            deterministic: bool = False,
+            with_log_prob: bool = False,
+        ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+            if deterministic:
+                # to avoid errors at ONNX export because broadcast_tensors in
+                # Normal distribution is not supported by ONNX
+                action = self._mus[task_id](self._encoder(x))
+                dist = None
+            else:
+                dist = self.dist(x)
+                action = dist.rsample()
+
+            if with_log_prob:
+                assert dist is not None
+                return squash_action(dist, action)
+
+            return torch.tanh(action)
+        self._policy.dist = types.MethodType(dist, self._policy)
+        self._policy.forward = types.MethodType(forward, self._policy)
+        def forward(self, x: torch.Tensor, action: torch.Tensor) -> torch.Tensor:
+            return cast(torch.Tensor, self._fcs[task_id](self._encoder(x, action)))
+        for q_func in self._q_func._q_funcs:
+            q_func.forward = types.MethodType(forward, q_func)

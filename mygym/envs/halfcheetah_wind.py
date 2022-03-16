@@ -4,9 +4,9 @@ from gym.envs.mujoco import mujoco_env
 from gym.envs.registration import register
 
 
-class HalfCheetahBackEnv(mujoco_env.MujocoEnv, utils.EzPickle):
+class HalfCheetahWindEnv(mujoco_env.MujocoEnv, utils.EzPickle):
     def __init__(self):
-        mujoco_env.MujocoEnv.__init__(self, "half_cheetah.xml", 5)
+        mujoco_env.MujocoEnv.__init__(self, "/home/gaisibo/Continual-Offline/CCQL/mygym/envs/assets/half_cheetah_wind.xml", 5)
         utils.EzPickle.__init__(self)
 
     def step(self, action):
@@ -15,7 +15,7 @@ class HalfCheetahBackEnv(mujoco_env.MujocoEnv, utils.EzPickle):
         xposafter = self.sim.data.qpos[0]
         ob = self._get_obs()
         reward_ctrl = -0.1 * np.square(action).sum()
-        reward_run = - (xposafter - xposbefore) / self.dt
+        reward_run = (xposafter - xposbefore) / self.dt
         reward = reward_ctrl + reward_run
         done = False
         return ob, reward, done, dict(reward_run=reward_run, reward_ctrl=reward_ctrl)
