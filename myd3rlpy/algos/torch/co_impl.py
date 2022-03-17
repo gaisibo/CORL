@@ -699,8 +699,6 @@ class COImpl(CQLImpl):
         self._psi_optim.load_state_dict(state_dicts[11])
 
     def change_task(self, task_id):
-        print(f'Change to Task {task_id}')
-        print(f'{inspect.stack()[1][3]}')
         self._impl_id = task_id
         if task_id not in self._policy._mus.keys():
             print(f'add new id: {task_id}')
@@ -722,7 +720,6 @@ class COImpl(CQLImpl):
         def dist(self, x: torch.Tensor) -> torch.distributions.normal.Normal:
             h = self._encoder(x)
             mu = self._mus[task_id](h)
-            print(f'task_id: {task_id}')
             clipped_logstd = self._compute_logstd(h)
             return torch.distributions.normal.Normal(mu, clipped_logstd.exp())
         def forward(
@@ -735,7 +732,6 @@ class COImpl(CQLImpl):
                 # to avoid errors at ONNX export because broadcast_tensors in
                 # Normal distribution is not supported by ONNX
                 action = self._mus[task_id](self._encoder(x))
-                print(f'task_id: {task_id}')
                 dist = None
             else:
                 dist = self.dist(x)
@@ -749,7 +745,6 @@ class COImpl(CQLImpl):
         self._policy.dist = types.MethodType(dist, self._policy)
         self._policy.forward = types.MethodType(forward, self._policy)
         def forward(self, x: torch.Tensor, action: torch.Tensor) -> torch.Tensor:
-            print(f'task_id: {task_id}')
             return cast(torch.Tensor, self._fcs[task_id](self._encoder(x, action)))
         for q_func in self._q_func._q_funcs:
             q_func.forward = types.MethodType(forward, q_func)

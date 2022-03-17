@@ -736,85 +736,88 @@ class CO(CQL):
             else:
                 raise ValueError("Either of n_epochs or n_steps must be given.")
 
-            if n_begin_epochs is not None:
-                iterator = RoundIterator(
-                    transitions,
-                    batch_size=self._batch_size,
-                    n_steps=self._n_steps,
-                    gamma=self._gamma,
-                    n_frames=self._n_frames,
-                    real_ratio=self._real_ratio,
-                    generated_maxlen=self._generated_maxlen,
-                    shuffle=shuffle,
-                )
+            if task_id != 0:
 
-            total_step = 0
-            # if self._generate_type == 'model_base':
-            #     assert self._dynamics is not None
-            #     self._dynamics._network = self
-            if n_begin_epochs is not None:
-                for epoch in range(1, n_begin_epochs + 1):
-
-                    # dict to add incremental mean losses to epoch
-                    epoch_loss = defaultdict(list)
-
-                    range_gen = tqdm(
-                        range(len(iterator)),
-                        disable=not show_progress,
-                        desc=f"Epoch {epoch}/{n_epochs}",
+                if n_begin_epochs is not None:
+                    iterator = RoundIterator(
+                        transitions,
+                        batch_size=self._batch_size,
+                        n_steps=self._n_steps,
+                        gamma=self._gamma,
+                        n_frames=self._n_frames,
+                        real_ratio=self._real_ratio,
+                        generated_maxlen=self._generated_maxlen,
+                        shuffle=shuffle,
                     )
 
-                    iterator.reset()
+                total_step = 0
+                # if self._generate_type == 'model_base':
+                #     assert self._dynamics is not None
+                #     self._dynamics._network = self
+                if n_begin_epochs is not None:
+                    for epoch in range(1, n_begin_epochs + 1):
 
-                    for itr in range_gen:
+                        # dict to add incremental mean losses to epoch
+                        epoch_loss = defaultdict(list)
 
-                        with logger.measure_time("step"):
-                            # pick transitions
-                            with logger.measure_time("sample_batch"):
-                                batch = next(iterator)
+                        range_gen = tqdm(
+                            range(len(iterator)),
+                            disable=not show_progress,
+                            desc=f"Epoch {epoch}/{n_epochs}",
+                        )
 
-                            # update parameters
-                            with logger.measure_time("algorithm_update"):
-                                loss = self.begin_update(batch)
-                                # self._impl.increase_siamese_alpha(epoch - n_epochs, itr / len(iterator))
+                        iterator.reset()
 
-                            # record metrics
-                            for name, val in loss.items():
-                                logger.add_metric(name, val)
-                                epoch_loss[name].append(val)
+                        for itr in range_gen:
 
-                            # update progress postfix with losses
-                            if itr % 10 == 0:
-                                mean_loss = {
-                                    k: np.mean(v) for k, v in epoch_loss.items()
-                                }
-                                range_gen.set_postfix(mean_loss)
+                            with logger.measure_time("step"):
+                                # pick transitions
+                                with logger.measure_time("sample_batch"):
+                                    batch = next(iterator)
 
-                        total_step += 1
+                                # update parameters
+                                with logger.measure_time("algorithm_update"):
+                                    loss = self.begin_update(batch)
+                                    # self._impl.increase_siamese_alpha(epoch - n_epochs, itr / len(iterator))
 
-                        # call callback if given
-                        if callback:
-                            callback(self, epoch, total_step)
+                                # record metrics
+                                for name, val in loss.items():
+                                    logger.add_metric(name, val)
+                                    epoch_loss[name].append(val)
 
-                    # save loss to loss history dict
-                    self._loss_history["epoch"].append(epoch)
-                    self._loss_history["step"].append(total_step)
-                    for name, vals in epoch_loss.items():
-                        if vals:
-                            self._loss_history[name].append(np.mean(vals))
+                                # update progress postfix with losses
+                                if itr % 10 == 0:
+                                    mean_loss = {
+                                        k: np.mean(v) for k, v in epoch_loss.items()
+                                    }
+                                    range_gen.set_postfix(mean_loss)
 
-                    if scorers and eval_episodes:
-                        self._evaluate(eval_episodes, scorers, logger)
+                            total_step += 1
 
-                    # save metrics
-                    metrics = logger.commit(epoch, total_step)
+                            # call callback if given
+                            if callback:
+                                callback(self, epoch, total_step)
 
-                    # save model parameters
-                    if epoch % save_interval == 0:
-                        logger.save_model(total_step, self)
+                        # save loss to loss history dict
+                        self._loss_history["epoch"].append(epoch)
+                        self._loss_history["step"].append(total_step)
+                        for name, vals in epoch_loss.items():
+                            if vals:
+                                self._loss_history[name].append(np.mean(vals))
 
-                    yield epoch, metrics
+                        if scorers and eval_episodes:
+                            self._evaluate(eval_episodes, scorers, logger)
 
+                        # save metrics
+                        metrics = logger.commit(epoch, total_step)
+
+                        # save model parameters
+                        if epoch % save_interval == 0:
+                            logger.save_model(total_step, self)
+
+                        yield epoch, metrics
+
+            total_step = 0
             for epoch in range(1, n_epochs + 1):
 
                 # if self._generate_type == 'model_base':
