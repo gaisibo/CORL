@@ -99,6 +99,13 @@ def main(args, device):
                 },
                 test=args.test,
             )
+            # scorers={
+            #     "real_env0": evaluate_on_environment(envs[0], test_id=0, render=True),
+            #     "real_env1": evaluate_on_environment(envs[1], test_id=1, render=True),
+            #     "real_env2": evaluate_on_environment(envs[2], test_id=2, render=True),
+            #     "real_env3": evaluate_on_environment(envs[3], test_id=3, render=True),
+            # }
+            # co._evaluate(dataset, scorers, co._active_logger)
             if args.algos == 'co':
                 if args.experience_type == 'siamese':
                     replay_datasets[task_id], save_datasets[task_id] = co.generate_replay_data_phi(action_datasets[task_id], original, in_task=False, max_save_num=args.max_save_num, real_action_size=real_action_size, real_observation_size=real_observation_size)
@@ -146,8 +153,8 @@ if __name__ == '__main__':
     parser.add_argument('--algos', default='co', type=str)
     parser.add_argument('--eval', action='store_true')
     parser.add_argument('--test', action='store_true')
-    parser.add_argument("--n_epochs", default=10, type=int)
-    parser.add_argument("--n_begin_epochs", default=10, type=int)
+    parser.add_argument("--n_epochs", default=100, type=int)
+    parser.add_argument("--n_begin_epochs", default=20, type=int)
     parser.add_argument("--n_action_samples", default=4, type=int)
     parser.add_argument('--top_euclid', default=64, type=int)
     parser.add_argument('--replay_type', default='orl', type=str, choices=['orl', 'bc', 'ewc', 'gem', 'agem'])

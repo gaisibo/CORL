@@ -169,10 +169,12 @@ class COImpl(CQLImpl):
 
         self._policy._mus = dict()
         self._policy._mus[task_id] = self._policy._mu
+        self._policy._logstds = dict()
+        self._policy._logstds[task_id] = self._policy._logstd
         self._targ_policy._mus = dict()
-        self._targ_policy._mus[task_id] = self._policy._mu
+        self._targ_policy._mus[task_id] = self._targ_policy._mu
         self._targ_policy._logstds = dict()
-        self._targ_policy._logstds[task_id] = self._policy._logstd
+        self._targ_policy._logstds[task_id] = self._targ_policy._logstd
         for q_func in self._q_func._q_funcs:
             q_func._fcs = dict()
             q_func._fcs[task_id] = q_func._fc
@@ -479,12 +481,16 @@ class COImpl(CQLImpl):
 
         loss.backward()
 
-        for q_func in self._q_func._q_funcs:
-            for task_id, fc in q_func._fcs.items():
-                print(f'self._q_func._fcs[{task_id}].weight.grad: {fc.weight.grad}')
-        for ((task_id, mu), (_, logstd)) in zip(self._policy._mus.items(), self._policy._logstds.items()):
-            print(f'self._policy._mus[{task_id}].weight.grad: {mu.weight.grad}')
-            print(f'self._policy._logs[{task_id}].weight.grad: {logstd.weight.grad}')
+        # if self._impl_id != 0:
+        #     print(f'self._impl_id: {self._impl_id}')
+        #     for q_func in self._q_func._q_funcs:
+        #         for task_id, fc in q_func._fcs.items():
+        #             print(f'self._q_func._fcs[{task_id}].weight.grad: {fc.weight.grad}')
+        #     for ((task_id, mu), (_, logstd)) in zip(self._policy._mus.items(), self._policy._logstds.items()):
+        #         print(f'self._policy._mus[{task_id}].weight.grad: {mu.weight.grad}')
+        #         print(f'self._policy._logs[{task_id}].weight.grad: {logstd.weight.grad}')
+        # else:
+        #     print(f'self._impl_id: {self._impl_id}')
 
         if self._replay_type == 'agem':
             replay_loss.backward()
@@ -640,9 +646,9 @@ class COImpl(CQLImpl):
         soft_sync(self._targ_q_func, self._q_func, self._tau)
         with torch.no_grad():
             for q_func, targ_q_func in zip(self._q_func._q_funcs, self._targ_q_func._q_funcs):
-                for key in _q_func._fcs:
-                    params = _q_func._fcs[key].parameters()
-                    targ_params = targ_q_fun._fcs[key].parameters()
+                for key in q_func._fcs:
+                    params = q_func._fcs[key].parameters()
+                    targ_params = targ_q_func._fcs[key].parameters()
                     for p, p_targ in zip(params, targ_params):
                         p_targ.data.mul_(1 - self._tau)
                         p_targ.data.add_(self._tau * p.data)
@@ -654,13 +660,13 @@ class COImpl(CQLImpl):
         with torch.no_grad():
             for key in self._policy._mus:
                 params = self._policy._mus[key].parameters()
-                targ_params = self._policy._mus[key].parameters()
+                targ_params = self._targ_policy._mus[key].parameters()
                 for p, p_targ in zip(params, targ_params):
                     p_targ.data.mul_(1 - self._tau)
                     p_targ.data.add_(self._tau * p.data)
             for key in self._policy._logstds:
                 params = self._policy._logstds[key].parameters()
-                targ_params = self._policy._logstds[key].parameters()
+                targ_params = self._targ_policy._logstds[key].parameters()
                 for p, p_targ in zip(params, targ_params):
                     p_targ.data.mul_(1 - self._tau)
                     p_targ.data.add_(self._tau * p.data)
@@ -765,6 +771,9 @@ class COImpl(CQLImpl):
                 self._critic_optim.add_param_group({'params': list(q_func._fcs[task_id].parameters())})
                 if task_id != 0:
                     self._critic_optims[task_id] = self._critic_optim_factory.create(q_func._fcs[task_id].parameters(), lr=self._critic_learning_rate)
+        def _compute_logstd(self, h: torch.Tensor) -> torch.Tensor:
+            clipped_logstd = self._logstds[task_id](h).clamp(self._min_logstd, self._max_logstd)
+            return clipped_logstd
         def dist(self, x: torch.Tensor) -> torch.distributions.normal.Normal:
             h = self._encoder(x)
             mu = self._mus[task_id](h)
@@ -790,8 +799,10 @@ class COImpl(CQLImpl):
                 return squash_action(dist, action)
 
             return torch.tanh(action)
+        self._policy._compute_logstd = types.MethodType(_compute_logstd, self._policy)
         self._policy.dist = types.MethodType(dist, self._policy)
         self._policy.forward = types.MethodType(forward, self._policy)
+        self._targ_policy._compute_logstd = types.MethodType(_compute_logstd, self._targ_policy)
         self._targ_policy.dist = types.MethodType(dist, self._targ_policy)
         self._targ_policy.forward = types.MethodType(forward, self._targ_policy)
         def forward(self, x: torch.Tensor, action: torch.Tensor) -> torch.Tensor:

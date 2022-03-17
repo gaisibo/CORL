@@ -168,12 +168,16 @@ def split_gym(top_euclid, dataset_name, origin_dataset, env, origin_dataset_back
         transitions = [transition for episode in dataset.episodes for transition in episode]
         observations = np.stack([transition.observation for transition in transitions], axis=0)
         # print(f"observations.shape: {observations.shape}")
-        indexes_euclid = similar_euclid(torch.from_numpy(dataset.observations).cuda(), torch.from_numpy(observations).cuda(), dataset_name, dataset_num, compare_dim=compare_dim)[:, :top_euclid]
+        indexes_euclid = similar_euclid(torch.from_numpy(dataset.observations).cuda(), torch.from_numpy(observations).cuda(), dataset_name, dataset_num, compare_dim=compare_dim)[:dataset.actions.shape[0], :top_euclid]
         # indexes_euclid = np.zeros_like(dataset.actions)
         real_action_size = dataset.actions.shape[1]
         task_id_numpy = np.eye(task_nums)[dataset_num].squeeze()
         task_id_numpy = np.broadcast_to(task_id_numpy, (dataset.observations.shape[0], task_nums))
         real_observation_size = dataset.observations.shape[1]
+        print(f'indexes_euclid.shape: {indexes_euclid.shape}')
+        print(f'dataset.observations.shape: {dataset.observations.shape}')
+        print(f'dataset.actions.shape: {dataset.actions.shape}')
+        print(f'task_id_numpy.shape: {task_id_numpy.shape}')
         # 用action保存一下indexes_euclid，用state保存一下task_id
         changed_task_datasets[dataset_num] = MDPDataset(np.concatenate([dataset.observations, task_id_numpy], axis=1), np.concatenate([dataset.actions, indexes_euclid], axis=1), dataset.rewards, dataset.terminals, dataset.episode_terminals)
         taskid_task_datasets[dataset_num] = MDPDataset(np.concatenate([dataset.observations, task_id_numpy], axis=1), dataset.actions, dataset.rewards, dataset.terminals, dataset.episode_terminals)
