@@ -177,6 +177,39 @@ class COImpl(CQLImpl):
         self.change_task(task_id)
         self._impl_id = task_id
         self._using_id = task_id
+        self._critic_optims = dict()
+        self._actor_optims = dict()
+
+    @train_api
+    def begin_update_critic(self, batch_tran: TransitionMiniBatch, step=True):
+        batch = TorchMiniBatch(
+            batch_tran,
+            self.device,
+            scaler=self.scaler,
+            action_scaler=self.action_scaler,
+            reward_scaler=self.reward_scaler,
+        )
+        assert self._critic_optim is not None
+        assert self._q_func is not None
+        assert self._policy is not None
+        self.change_task(self._impl_id)
+        self._q_func.train()
+        self._policy.eval()
+
+        self._critic_optim.zero_grad()
+
+        q_tpn = self.compute_target(batch)
+
+        loss = self.compute_critic_loss(batch, q_tpn)
+
+        loss.backward()
+        if step:
+            self._critic_optims[self._impl_id].step()
+
+        loss = loss.cpu().detach().numpy()
+        self.change_task(self._impl_id)
+
+        return loss
 
     @train_api
     def update_critic(self, batch_tran: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[torch.Tensor]]]=None, step=True):
@@ -323,6 +356,37 @@ class COImpl(CQLImpl):
             batch.observations, batch.actions[:, :self._action_size], batch.next_observations
         )
         return loss + conservative_loss
+
+    @train_api
+    def begin_update_actor(self, batch_tran: TransitionMiniBatch, step=True) -> np.ndarray:
+        assert self._q_func is not None
+        assert self._policy is not None
+        assert self._actor_optim is not None
+        batch = TorchMiniBatch(
+            batch_tran,
+            self.device,
+            scaler=self.scaler,
+            action_scaler=self.action_scaler,
+            reward_scaler=self.reward_scaler,
+        )
+
+        # Q function should be inference mode for stability
+        self.change_task(self._impl_id)
+        self._q_func.eval()
+        self._policy.train()
+
+        self._actor_optim.zero_grad()
+
+        loss = self.compute_actor_loss(batch)
+
+        loss.backward()
+        if step:
+            self._actor_optims[self._impl_id].step()
+
+        loss = loss.cpu().detach().numpy()
+        self.change_task(self._impl_id)
+
+        return loss
 
     @train_api
     def update_actor(self, batch_tran: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[torch.Tensor]]]=None, step=True) -> np.ndarray:
@@ -639,6 +703,7 @@ class COImpl(CQLImpl):
         print(f'{inspect.stack()[1][3]}')
         self._impl_id = task_id
         if task_id not in self._policy._mus.keys():
+            print(f'add new id: {task_id}')
             assert task_id not in self._policy._logstds.keys()
             for q_func in self._q_func._q_funcs:
                 assert task_id not in q_func._fcs.keys()
@@ -647,15 +712,19 @@ class COImpl(CQLImpl):
             for q_func in self._q_func._q_funcs:
                 q_func._fcs[task_id] = nn.Linear(q_func._fc.weight.shape[1], q_func._fc.weight.shape[0], bias=q_func._fc.bias is not None).to(self.device)
             self._actor_optim.add_param_group({'params': list(self._policy._mus[task_id].parameters())})
+            if task_id != 0:
+                self._actor_optims[task_id] = self._actor_optim_factory.create(self._policy._mus[task_id].parameters(), lr=self._actor_learning_rate)
             self._actor_optim.add_param_group({'params': list(self._policy._logstds[task_id].parameters())})
             for q_func in self._q_func._q_funcs:
                 self._critic_optim.add_param_group({'params': list(q_func._fcs[task_id].parameters())})
+                if task_id != 0:
+                    self._critic_optims[task_id] = self._critic_optim_factory.create(q_func._fcs[task_id].parameters(), lr=self._critic_learning_rate)
         def dist(self, x: torch.Tensor) -> torch.distributions.normal.Normal:
             h = self._encoder(x)
             mu = self._mus[task_id](h)
+            print(f'task_id: {task_id}')
             clipped_logstd = self._compute_logstd(h)
             return torch.distributions.normal.Normal(mu, clipped_logstd.exp())
-
         def forward(
             self,
             x: torch.Tensor,
@@ -666,6 +735,7 @@ class COImpl(CQLImpl):
                 # to avoid errors at ONNX export because broadcast_tensors in
                 # Normal distribution is not supported by ONNX
                 action = self._mus[task_id](self._encoder(x))
+                print(f'task_id: {task_id}')
                 dist = None
             else:
                 dist = self.dist(x)
@@ -679,6 +749,7 @@ class COImpl(CQLImpl):
         self._policy.dist = types.MethodType(dist, self._policy)
         self._policy.forward = types.MethodType(forward, self._policy)
         def forward(self, x: torch.Tensor, action: torch.Tensor) -> torch.Tensor:
+            print(f'task_id: {task_id}')
             return cast(torch.Tensor, self._fcs[task_id](self._encoder(x, action)))
         for q_func in self._q_func._q_funcs:
             q_func.forward = types.MethodType(forward, q_func)
