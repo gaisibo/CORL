@@ -737,7 +737,6 @@ class CO(CQL):
                 raise ValueError("Either of n_epochs or n_steps must be given.")
 
             if task_id != 0:
-
                 if n_begin_epochs is not None:
                     iterator = RoundIterator(
                         transitions,

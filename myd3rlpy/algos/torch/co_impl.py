@@ -169,9 +169,14 @@ class COImpl(CQLImpl):
 
         self._policy._mus = dict()
         self._policy._mus[task_id] = self._policy._mu
-        self._policy._logstds = dict()
-        self._policy._logstds[task_id] = self._policy._logstd
+        self._targ_policy._mus = dict()
+        self._targ_policy._mus[task_id] = self._policy._mu
+        self._targ_policy._logstds = dict()
+        self._targ_policy._logstds[task_id] = self._policy._logstd
         for q_func in self._q_func._q_funcs:
+            q_func._fcs = dict()
+            q_func._fcs[task_id] = q_func._fc
+        for q_func in self._targ_q_func._q_funcs:
             q_func._fcs = dict()
             q_func._fcs[task_id] = q_func._fc
         self.change_task(task_id)
@@ -473,6 +478,14 @@ class COImpl(CQLImpl):
                 replay_loss = replay_loss.cpu().detach().numpy()
 
         loss.backward()
+
+        for q_func in self._q_func._q_funcs:
+            for task_id, fc in q_func._fcs.items():
+                print(f'self._q_func._fcs[{task_id}].weight.grad: {fc.weight.grad}')
+        for ((task_id, mu), (_, logstd)) in zip(self._policy._mus.items(), self._policy._logstds.items()):
+            print(f'self._policy._mus[{task_id}].weight.grad: {mu.weight.grad}')
+            print(f'self._policy._logs[{task_id}].weight.grad: {logstd.weight.grad}')
+
         if self._replay_type == 'agem':
             replay_loss.backward()
             store_grad(self._policy.parameters, self._actor_grad_er, self._actor_grad_dims)
@@ -621,6 +634,37 @@ class COImpl(CQLImpl):
         assert self._targ_psi is not None
         soft_sync(self._targ_psi, self._psi, self._tau)
 
+    def update_critic_target(self) -> None:
+        assert self._q_func is not None
+        assert self._targ_q_func is not None
+        soft_sync(self._targ_q_func, self._q_func, self._tau)
+        with torch.no_grad():
+            for q_func, targ_q_func in zip(self._q_func._q_funcs, self._targ_q_func._q_funcs):
+                for key in _q_func._fcs:
+                    params = _q_func._fcs[key].parameters()
+                    targ_params = targ_q_fun._fcs[key].parameters()
+                    for p, p_targ in zip(params, targ_params):
+                        p_targ.data.mul_(1 - self._tau)
+                        p_targ.data.add_(self._tau * p.data)
+
+    def update_actor_target(self) -> None:
+        assert self._policy is not None
+        assert self._targ_policy is not None
+        soft_sync(self._targ_policy, self._policy, self._tau)
+        with torch.no_grad():
+            for key in self._policy._mus:
+                params = self._policy._mus[key].parameters()
+                targ_params = self._policy._mus[key].parameters()
+                for p, p_targ in zip(params, targ_params):
+                    p_targ.data.mul_(1 - self._tau)
+                    p_targ.data.add_(self._tau * p.data)
+            for key in self._policy._logstds:
+                params = self._policy._logstds[key].parameters()
+                targ_params = self._policy._logstds[key].parameters()
+                for p, p_targ in zip(params, targ_params):
+                    p_targ.data.mul_(1 - self._tau)
+                    p_targ.data.add_(self._tau * p.data)
+
     def compute_fisher_matrix_diag(self, iterator, network, optimizer, update):
         # Store Fisher Information
         fisher = {n: torch.zeros(p.shape).to(self.device) for n, p in network.named_parameters()
@@ -706,8 +750,12 @@ class COImpl(CQLImpl):
             for q_func in self._q_func._q_funcs:
                 assert task_id not in q_func._fcs.keys()
             self._policy._mus[task_id] = nn.Linear(self._policy._mu.weight.shape[1], self._policy._mu.weight.shape[0], bias=self._policy._mu.bias is not None).to(self.device)
+            self._targ_policy._mus[task_id] = nn.Linear(self._targ_policy._mu.weight.shape[1], self._targ_policy._mu.weight.shape[0], bias=self._targ_policy._mu.bias is not None).to(self.device)
             self._policy._logstds[task_id] = nn.Linear(self._policy._logstd.weight.shape[1], self._policy._logstd.weight.shape[0], bias=self._policy._logstd.bias is not None).to(self.device)
+            self._targ_policy._logstds[task_id] = nn.Linear(self._targ_policy._logstd.weight.shape[1], self._targ_policy._logstd.weight.shape[0], bias=self._targ_policy._logstd.bias is not None).to(self.device)
             for q_func in self._q_func._q_funcs:
+                q_func._fcs[task_id] = nn.Linear(q_func._fc.weight.shape[1], q_func._fc.weight.shape[0], bias=q_func._fc.bias is not None).to(self.device)
+            for q_func in self._targ_q_func._q_funcs:
                 q_func._fcs[task_id] = nn.Linear(q_func._fc.weight.shape[1], q_func._fc.weight.shape[0], bias=q_func._fc.bias is not None).to(self.device)
             self._actor_optim.add_param_group({'params': list(self._policy._mus[task_id].parameters())})
             if task_id != 0:
@@ -744,7 +792,11 @@ class COImpl(CQLImpl):
             return torch.tanh(action)
         self._policy.dist = types.MethodType(dist, self._policy)
         self._policy.forward = types.MethodType(forward, self._policy)
+        self._targ_policy.dist = types.MethodType(dist, self._targ_policy)
+        self._targ_policy.forward = types.MethodType(forward, self._targ_policy)
         def forward(self, x: torch.Tensor, action: torch.Tensor) -> torch.Tensor:
             return cast(torch.Tensor, self._fcs[task_id](self._encoder(x, action)))
         for q_func in self._q_func._q_funcs:
+            q_func.forward = types.MethodType(forward, q_func)
+        for q_func in self._targ_q_func._q_funcs:
             q_func.forward = types.MethodType(forward, q_func)
