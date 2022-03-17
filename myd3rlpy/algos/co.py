@@ -287,6 +287,8 @@ class CO(CQL):
 
         self._task_id = task_id
 
+        self._begin_grad_step = 0
+
         # self._dynamics = dynamics
 
     def _create_impl(
@@ -331,6 +333,33 @@ class CO(CQL):
             reward_scaler=self._reward_scaler,
         )
         self._impl.build(task_id)
+
+    def begin_update(self, batch: TransitionMiniBatch) -> Dict[int, float]:
+        """Update parameters with mini-batch of data.
+        Args:
+            batch: mini-batch data.
+        Returns:
+            dictionary of metrics.
+        """
+        loss = self._begin_update(batch)
+        self._begin_grad_step += 1
+        return loss
+
+    # 注意欧氏距离最近邻被塞到actions后面了。
+    def _begin_update(self, batch: TransitionMiniBatch) -> Dict[int, float]:
+        assert self._impl is not None, IMPL_NOT_INITIALIZED_ERROR
+        metrics = {}
+
+        critic_loss = self._impl.begin_update_critic(batch)
+        metrics.update({"begin_critic_loss": critic_loss})
+
+        actor_loss = self._impl.begin_update_actor(batch)
+        metrics.update({"begin_actor_loss": actor_loss})
+
+        self._impl.update_critic_target()
+        self._impl.update_actor_target()
+
+        return metrics
 
     def update(self, batch: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[Tensor]]], batch2: TransitionMiniBatch = None) -> Dict[int, float]:
         """Update parameters with mini-batch of data.
@@ -392,6 +421,7 @@ class CO(CQL):
         original = None,
         seed: int = None,
         n_epochs: Optional[int] = None,
+        n_begin_epochs: Optional[int] = None,
         n_steps: Optional[int] = None,
         n_steps_per_epoch: int = 10000,
         save_metrics: bool = True,
@@ -457,6 +487,7 @@ class CO(CQL):
                 original,
                 seed,
                 n_epochs,
+                n_begin_epochs,
                 n_steps,
                 n_steps_per_epoch,
                 save_metrics,
@@ -492,6 +523,7 @@ class CO(CQL):
         original = None,
         seed: int = None,
         n_epochs: Optional[int] = None,
+        n_begin_epochs: Optional[int] = None,
         n_steps: Optional[int] = None,
         n_steps_per_epoch: int = 10000,
         save_metrics: bool = True,
@@ -704,10 +736,85 @@ class CO(CQL):
             else:
                 raise ValueError("Either of n_epochs or n_steps must be given.")
 
+            if n_begin_epochs is not None:
+                iterator = RoundIterator(
+                    transitions,
+                    batch_size=self._batch_size,
+                    n_steps=self._n_steps,
+                    gamma=self._gamma,
+                    n_frames=self._n_frames,
+                    real_ratio=self._real_ratio,
+                    generated_maxlen=self._generated_maxlen,
+                    shuffle=shuffle,
+                )
+
             total_step = 0
             # if self._generate_type == 'model_base':
             #     assert self._dynamics is not None
             #     self._dynamics._network = self
+            if n_begin_epochs is not None:
+                for epoch in range(1, n_begin_epochs + 1):
+
+                    # dict to add incremental mean losses to epoch
+                    epoch_loss = defaultdict(list)
+
+                    range_gen = tqdm(
+                        range(len(iterator)),
+                        disable=not show_progress,
+                        desc=f"Epoch {epoch}/{n_epochs}",
+                    )
+
+                    iterator.reset()
+
+                    for itr in range_gen:
+
+                        with logger.measure_time("step"):
+                            # pick transitions
+                            with logger.measure_time("sample_batch"):
+                                batch = next(iterator)
+
+                            # update parameters
+                            with logger.measure_time("algorithm_update"):
+                                loss = self.begin_update(batch)
+                                # self._impl.increase_siamese_alpha(epoch - n_epochs, itr / len(iterator))
+
+                            # record metrics
+                            for name, val in loss.items():
+                                logger.add_metric(name, val)
+                                epoch_loss[name].append(val)
+
+                            # update progress postfix with losses
+                            if itr % 10 == 0:
+                                mean_loss = {
+                                    k: np.mean(v) for k, v in epoch_loss.items()
+                                }
+                                range_gen.set_postfix(mean_loss)
+
+                        total_step += 1
+
+                        # call callback if given
+                        if callback:
+                            callback(self, epoch, total_step)
+
+                    # save loss to loss history dict
+                    self._loss_history["epoch"].append(epoch)
+                    self._loss_history["step"].append(total_step)
+                    for name, vals in epoch_loss.items():
+                        if vals:
+                            self._loss_history[name].append(np.mean(vals))
+
+                    if scorers and eval_episodes:
+                        self._evaluate(eval_episodes, scorers, logger)
+
+                    # save metrics
+                    metrics = logger.commit(epoch, total_step)
+
+                    # save model parameters
+                    if epoch % save_interval == 0:
+                        logger.save_model(total_step, self)
+
+                    yield epoch, metrics
+
             for epoch in range(1, n_epochs + 1):
 
                 # if self._generate_type == 'model_base':

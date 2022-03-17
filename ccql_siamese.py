@@ -89,6 +89,7 @@ def main(args, device):
                 real_observation_size = real_observation_size,
                 eval_episodes=dataset,
                 n_epochs=args.n_epochs if not args.test else 1,
+                n_begin_epochs=args.n_begin_epochs if not args.test else 1,
                 experiment_name=experiment_name + algos_name,
                 scorers={
                     "real_env0": evaluate_on_environment(envs[0], test_id=0),
@@ -146,6 +147,7 @@ if __name__ == '__main__':
     parser.add_argument('--eval', action='store_true')
     parser.add_argument('--test', action='store_true')
     parser.add_argument("--n_epochs", default=10, type=int)
+    parser.add_argument("--n_begin_epochs", default=10, type=int)
     parser.add_argument("--n_action_samples", default=4, type=int)
     parser.add_argument('--top_euclid', default=64, type=int)
     parser.add_argument('--replay_type', default='orl', type=str, choices=['orl', 'bc', 'ewc', 'gem', 'agem'])
