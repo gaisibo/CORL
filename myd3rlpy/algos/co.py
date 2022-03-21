@@ -160,11 +160,11 @@ class CO(CQL):
         actor_learning_rate: float = 1e-4,
         critic_learning_rate: float = 3e-4,
         temp_learning_rate: float = 1e-4,
-        alpha_learning_rate: float = 1e-4,
+        alpha_learning_rate: float = 0,
         phi_learning_rate: float = 1e-4,
         psi_learning_rate: float = 1e-4,
         actor_optim_factory: OptimizerFactory = AdamFactory(),
-        critic_optim_factory: OptimizerFactory = AdamFactory(),
+        critic_optim_factory : OptimizerFactory = AdamFactory(),
         temp_optim_factory: OptimizerFactory = AdamFactory(),
         alpha_optim_factory: OptimizerFactory = AdamFactory(),
         phi_optim_factory: OptimizerFactory = AdamFactory(),
@@ -192,7 +192,7 @@ class CO(CQL):
         initial_temperature: float = 1.0,
         initial_alpha: float = 1.0,
         alpha_threshold: float = 10.0,
-        conservative_weight: float = 5.0,
+        conservative_weight: float = 10.0,
         n_action_samples: int = 10,
         soft_q_backup: bool =False,
         # dynamics: Optional[ProbabilisticEnsembleDynamics] = None,
@@ -211,7 +211,8 @@ class CO(CQL):
         phi_topk = 20,
         retrain_topk = 4,
         log_prob_topk = 10,
-        generate_type = True,
+        generate_type = 'random',
+        experience_type = 'random',
         change_reward = 'change',
         reduce_replay = 'retrain',
 
@@ -278,6 +279,7 @@ class CO(CQL):
         self._retrain_topk = retrain_topk
         self._log_prob_topk = log_prob_topk
         self._generate_type = generate_type
+        self._experience_type = experience_type
         self._change_reward = change_reward
         self._reduce_replay = reduce_replay
 
@@ -398,7 +400,7 @@ class CO(CQL):
 
         return metrics
 
-    def _update_phi(self, batch: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[Tensor]]]):
+    def _update_phi(self, batch: TransitionMiniBatch):
         assert self._impl is not None, IMPL_NOT_INITIALIZED_ERROR
         metrics = {}
 
@@ -915,6 +917,8 @@ class CO(CQL):
                         # update parameters
                         with logger.measure_time("algorithm_update"):
                             loss = self.update(batch, replay_batches)
+                            if self._experience_type == 'siamese' or self._generate_type == 'siamese':
+                                loss = self._update_phi(batch)
                             # self._impl.increase_siamese_alpha(epoch - n_epochs, itr / len(iterator))
 
                         # record metrics
@@ -1640,6 +1644,7 @@ class CO(CQL):
     #         replay_psis = self._impl._psi(replay_observations)
     #         replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals, replay_means, replay_std_logs, replay_qs, replay_phis, replay_psis)
     #         return replay_dataset, replay_dataset
+        transitions = sorted(transitions, key=lambda x: x.reward[-1])
 
     def generate_replay_data_random(self, dataset, in_task=False, max_save_num=1000, real_action_size=1):
         if isinstance(dataset, MDPDataset):
@@ -1647,7 +1652,14 @@ class CO(CQL):
         else:
             episodes = dataset
         transitions = [transition for episode in episodes for transition in episode.transitions]
-        random.shuffle(transitions)
+        if self._experience_type == 'random':
+            random.shuffle(transitions)
+        elif self._experience_type == 'max_end':
+            transitions = sorted(transitions, key=lambda x: x.reward[-1], reversed=True)
+        elif self._experience_type == 'max_mean':
+            transitions = sorted(transitions, key=lambda x: sum(x.reward) / len(x.reward), reversed=True)
+        else:
+            raise NotImplementedError
         transitions = transitions[:max_save_num]
         if in_task:
             if not self._is_generating_new_data():

@@ -62,7 +62,7 @@ def main(args, device):
     # prepare algorithm
     if args.algos == 'co':
         from myd3rlpy.algos.co import CO
-        co = CO(use_gpu=True, batch_size=args.batch_size, id_size=task_nums, replay_type=args.replay_type, generate_type=args.generate_type, reduce_replay=args.reduce_replay, change_reward=args.change_reward)
+        co = CO(use_gpu=True, batch_size=args.batch_size, id_size=task_nums, replay_type=args.replay_type, generate_type=args.generate_type, reduce_replay=args.reduce_replay, change_reward=args.change_reward, alpha_lr=args.alpha_lr)
     else:
         raise NotImplementedError
     experiment_name = "CO"
@@ -158,7 +158,7 @@ if __name__ == '__main__':
     parser.add_argument("--n_action_samples", default=4, type=int)
     parser.add_argument('--top_euclid', default=64, type=int)
     parser.add_argument('--replay_type', default='orl', type=str, choices=['orl', 'bc', 'ewc', 'gem', 'agem'])
-    parser.add_argument('--experience_type', default='siamese', type=str, choices=['siamese', 'random'])
+    parser.add_argument('--experience_type', default='siamese', type=str, choices=['siamese', 'random', 'max_mean', 'max_end'])
     parser.add_argument('--generate_type', default='siamese', type=str, choices=['siamese', 'random'])
     parser.add_argument('--reduce_replay', default='retrain', type=str, choices=['retrain', 'no_retrain'])
     parser.add_argument('--change_reward', default='change', type=str, choices=['change', 'no_change'])
