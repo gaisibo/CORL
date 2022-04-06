@@ -26,6 +26,7 @@ from myd3rlpy.algos.torch.agem import project
 from utils.utils import Struct
 
 
+replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'terminals', 'means', 'std_logs', 'qs', 'phis', 'psis']
 class COImpl(CQLImpl):
     def __init__(
         self,
@@ -262,7 +263,6 @@ class COImpl(CQLImpl):
                 self.change_task(i)
                 replay_batch = dict(zip(replay_name, replay_batch))
                 replay_batch = Struct(**replay_batch)
-                replay_loss = 0
                 if self._replay_type == "orl":
                     replay_batch.n_steps = 1
                     replay_batch.masks = None
@@ -273,15 +273,15 @@ class COImpl(CQLImpl):
                     replay_loss += replay_cql_loss
                 elif self._replay_type == "bc":
                     with torch.no_grad():
-                        replay_observations = replay_batch.observations.to(self.device)
-                        replay_qs = replay_batch.qs.to(self.device)
-                    replay_actions = self._policy(replay_observations)
-                    q = self._q_func(replay_observations, replay_actions)
+                        replay_observations = replay_batch.observations.to(self.device).detach()
+                        replay_qs = replay_batch.qs.to(self.device).detach()
+                        replay_actions = replay_batch.actions.to(self.device).detach()
+
+                    q = self._q_func(replay_observations, replay_actions[:, :self._action_size])
                     replay_bc_loss = F.mse_loss(replay_qs, q) / len(replay_batches)
                     replay_losses.append(replay_bc_loss.cpu().detach().numpy())
                     replay_loss += replay_bc_loss
                 elif self._replay_type == "ewc":
-                    replay_loss = 0
                     for n, p in self._q_func.named_parameters():
                         if n in self._critic_fisher.keys():
                             replay_loss += torch.sum(self._critic_fisher[n] * (p - self._critic_older_params[n]).pow(2)) / 2
@@ -291,7 +291,6 @@ class COImpl(CQLImpl):
                                    if p.grad is not None}
 
                     self._critic_optim.zero_grad()
-                    replay_loss = 0
                     # Eq. 3: elastic weight consolidation quadratic penalty
                     for n, p in self._q_func.named_parameters():
                         if n in self._critic_fisher.keys():
@@ -442,7 +441,7 @@ class COImpl(CQLImpl):
                     replay_loss_ = self.compute_actor_loss(replay_batch) / len(replay_batches)
                     replay_loss += replay_loss_
                     replay_losses.append(replay_loss_.cpu().detach().numpy())
-                if self._replay_type == "bc":
+                elif self._replay_type == "bc":
                     with torch.no_grad():
                         replay_observations = replay_batch.observations.to(self.device)
                         replay_means = replay_batch.means.to(self.device)
@@ -450,30 +449,32 @@ class COImpl(CQLImpl):
                         replay_actions = torch.distributions.normal.Normal(replay_means, torch.exp(replay_std_logs))
                     actions = self._policy.dist(replay_observations)
                     replay_loss_ = torch.distributions.kl.kl_divergence(actions, replay_actions).mean() / len(replay_batches)
-                    replay_losses.append(replay_loss.cpu().detach().numpy())
-                    replay_loss = replay_loss_
-                if self._replay_type == "ewc":
-                    replay_loss = 0
+                    replay_losses.append(replay_loss_.cpu().detach().numpy())
+                    replay_loss += replay_loss_
+                elif self._replay_type == "ewc":
                     for n, p in self._q_func.named_parameters():
                         if n in self._critic_fisher.keys():
-                            replay_loss += torch.sum(self._critic_fisher[n] * (p - self._critic_older_params[n]).pow(2)) / 2
+                            replay_loss_ = torch.sum(self._critic_fisher[n] * (p - self._critic_older_params[n]).pow(2)) / 2
+                            replay_losses.append(replay_loss_)
+                            replay_loss += replay_loss_
                 elif self._replay_type == 'r_walk':
                     # store gradients without regularization term
                     unreg_grads = {n: p.grad.clone().detach() for n, p in self._policy.named_parameters()
                                    if p.grad is not None}
 
                     self._actor_optim.zero_grad()
-                    replay_loss = 0
                     # Eq. 3: elastic weight consolidation quadratic penalty
                     for n, p in self._policy.named_parameters():
                         if n in self._actor_fisher.keys():
-                            replay_loss += torch.sum((self._actor_fisher[n] + self._actor_scores[n]) * (p - self._actor_older_params[n]).pow(2)) / 2
-                if self._replay_type == "agem":
+                            replay_loss_ = torch.sum((self._actor_fisher[n] + self._actor_scores[n]) * (p - self._actor_older_params[n]).pow(2)) / 2
+                            replay_losses.append(replay_loss_)
+                            replay_loss += replay_loss_
+                elif self._replay_type == "agem":
                     store_grad(self._policy.parameters, self._actor_grad_xy, self._actor_grad_dims)
                     replay_batch = cast(TorchMiniBatch, replay_batch)
                     replay_loss_ = self.compute_actor_loss(replay_batch) / len(replay_batches)
                     replay_loss += replay_loss_
-                    replay_losses.append(replay_loss_.cpu().detach().numpy())
+                    replay_losses.append(replay_loss_)
 
             if self._replay_type in ['orl', 'bc', 'ewc', 'lamb']:
                 loss += self._replay_actor_alpha * replay_loss

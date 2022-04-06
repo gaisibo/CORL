@@ -109,6 +109,7 @@ class ProbabilisticEnsembleDynamics(ProbabilisticEnsembleDynamics):
         shuffle: bool = True,
         callback: Optional[Callable[["LearnableBase", int, int], None]] = None,
         pretrain: bool = True,
+        test: bool = True,
     ) -> List[Tuple[int, Dict[str, float]]]:
         results = list(
             self.fitter(
@@ -129,6 +130,7 @@ class ProbabilisticEnsembleDynamics(ProbabilisticEnsembleDynamics):
                 shuffle,
                 callback,
                 pretrain,
+                test,
             )
         )
         return results
@@ -154,6 +156,7 @@ class ProbabilisticEnsembleDynamics(ProbabilisticEnsembleDynamics):
         shuffle: bool = True,
         callback: Optional[Callable[["LearnableBase", int, int], None]] = None,
         pretrain: bool = True,
+        test: bool = True,
     ) -> Generator[Tuple[int, Dict[str, float]], None, None]:
         """Iterate over epochs steps to train with the given dataset. At each
              iteration algo methods and properties can be changed or queried.
@@ -285,20 +288,11 @@ class ProbabilisticEnsembleDynamics(ProbabilisticEnsembleDynamics):
 
             iterator.reset()
 
-            for itr in range_gen:
+            for batch_num, itr in enumerate(range_gen):
+                if batch_num > 1000 and test:
+                    break
 
                 # generate new transitions with dynamics models
-                if not pretrain:
-                    new_transitions = self.generate_new_data_trajectory(dataset)
-                else:
-                    new_transitions = False
-                if new_transitions:
-                    iterator.add_generated_transitions(new_transitions)
-                    LOG.debug(
-                        f"{len(new_transitions)} transitions are generated.",
-                        real_transitions=len(iterator.transitions),
-                        fake_transitions=len(iterator.generated_transitions),
-                    )
 
                 with logger.measure_time("step"):
                     # pick transitions
@@ -350,72 +344,72 @@ class ProbabilisticEnsembleDynamics(ProbabilisticEnsembleDynamics):
         # logger
         self._active_logger = None
 
-    def generate_new_data_trajectory(self, dataset, max_export_time = 0, max_reward=None):
-        if self._network is not None:
-            # 关键算法
-            _original = torch.from_numpy(self._original).to(self._impl.device)
-            task_id_numpy = np.eye(self._id_size)[self._task_id].squeeze()
-            task_id_numpy = torch.from_numpy(np.broadcast_to(task_id_numpy, (_original.shape[0], self._id_size))).to(torch.float32).to(self._impl.device)
-            original_observation = torch.cat([_original, task_id_numpy], dim=1)
-            with torch.no_grad():
-                original_action = self._network._impl._policy(original_observation)
-            replay_indexes = []
-            new_transitions = []
+    # def generate_new_data_trajectory(self, dataset, max_export_time = 0, max_reward=None):
+    #     if self._network is not None:
+    #         # 关键算法
+    #         _original = torch.from_numpy(self._original).to(self._impl.device)
+    #         task_id_numpy = np.eye(self._id_size)[self._task_id].squeeze()
+    #         task_id_numpy = torch.from_numpy(np.broadcast_to(task_id_numpy, (_original.shape[0], self._id_size))).to(torch.float32).to(self._impl.device)
+    #         original_observation = torch.cat([_original, task_id_numpy], dim=1)
+    #         with torch.no_grad():
+    #             original_action = self._network._impl._policy(original_observation)
+    #         replay_indexes = []
+    #         new_transitions = []
 
-            export_time = 0
-            start_indexes = torch.zeros(0)
-            while start_indexes.shape[0] != 0 and original_observation is not None and export_time < max_export_time:
-                if original_observation is not None:
-                    start_observations = original_observation
-                    start_actions = original_action
-                    original_observation = None
-                else:
-                    start_observations = torch.from_numpy(dataset._observations[start_indexes.cpu().numpy()]).to(self._impl.device)
-                    with torch.no_grad():
-                        start_actions = self._network._impl._policy(start_observations)
+    #         export_time = 0
+    #         start_indexes = torch.zeros(0)
+    #         while start_indexes.shape[0] != 0 and original_observation is not None and export_time < max_export_time:
+    #             if original_observation is not None:
+    #                 start_observations = original_observation
+    #                 start_actions = original_action
+    #                 original_observation = None
+    #             else:
+    #                 start_observations = torch.from_numpy(dataset._observations[start_indexes.cpu().numpy()]).to(self._impl.device)
+    #                 with torch.no_grad():
+    #                     start_actions = self._network._impl._policy(start_observations)
 
-                mus, logstds = []
-                for model in self._impl._dynamics._models:
-                    mu, logstd = self._impl._dynamics.compute_stats(start_observations, start_actions)
-                    mus.append(mu)
-                    logstds.append(logstd)
-                mus = mus.stack(dim=1)
-                logstds = logstds.stack(dim=1)
-                mus = mus[torch.arange(start_observations.shape[0]), torch.randint(len(self._impl._dynamics._models), size=(start_observations.shape[0],))]
-                logstds = logstds[torch.arange(start_observations.shape[0]), torch.randint(len(self._models), size=(start_observations.shape[0],))]
+    #             mus, logstds = []
+    #             for model in self._impl._dynamics._models:
+    #                 mu, logstd = self._impl._dynamics.compute_stats(start_observations, start_actions)
+    #                 mus.append(mu)
+    #                 logstds.append(logstd)
+    #             mus = mus.stack(dim=1)
+    #             logstds = logstds.stack(dim=1)
+    #             mus = mus[torch.arange(start_observations.shape[0]), torch.randint(len(self._impl._dynamics._models), size=(start_observations.shape[0],))]
+    #             logstds = logstds[torch.arange(start_observations.shape[0]), torch.randint(len(self._models), size=(start_observations.shape[0],))]
 
-                near_indexes, _, _ = similar_mb(mus, logstds, dataset._observations, self._impl._dynamics, topk=self._topk)
-                near_indexes = near_indexes.reshape((near_indexes.shape[0] * near_indexes.shape[1]))
-                near_indexes = torch.unique(near_indexes).cpu().numpy()
-                start_indexes = near_indexes
-                for replay_index in replay_indexes:
-                    start_indexes = np.setdiff1d(start_indexes, replay_index, True)
-                start_indexes = start_indexes[start_indexes != dataset._observations.shape[0] - 1]
-                start_next_indexes = start_indexes + 1
+    #             near_indexes, _, _ = similar_mb(mus, logstds, dataset._observations, self._impl._dynamics, topk=self._topk)
+    #             near_indexes = near_indexes.reshape((near_indexes.shape[0] * near_indexes.shape[1]))
+    #             near_indexes = torch.unique(near_indexes).cpu().numpy()
+    #             start_indexes = near_indexes
+    #             for replay_index in replay_indexes:
+    #                 start_indexes = np.setdiff1d(start_indexes, replay_index, True)
+    #             start_indexes = start_indexes[start_indexes != dataset._observations.shape[0] - 1]
+    #             start_next_indexes = start_indexes + 1
 
-                for i in range(start_observations.shape[0]):
-                    transition = Transition(
-                        observation_shape = self._impl.observation_shape,
-                        action_size = self._impl.action_size,
-                        observation = dataset._observations[start_indexes[i]],
-                        action = dataset._actions[start_indexes[i]],
-                        reward = dataset._rewards[start_indexes[i]],
-                        next_observation = dataset._observations[start_next_indexes[i]],
-                        next_action = dataset._actions[start_next_indexes[i]],
-                        next_reward = dataset._rewards[start_next_indexes[i]],
-                        terminal = dataset._terminals[start_indexes[i]]
-                    )
-                    new_transitions.append(transition)
+    #             for i in range(start_observations.shape[0]):
+    #                 transition = Transition(
+    #                     observation_shape = self._impl.observation_shape,
+    #                     action_size = self._impl.action_size,
+    #                     observation = dataset._observations[start_indexes[i]],
+    #                     action = dataset._actions[start_indexes[i]],
+    #                     reward = dataset._rewards[start_indexes[i]],
+    #                     next_observation = dataset._observations[start_next_indexes[i]],
+    #                     next_action = dataset._actions[start_next_indexes[i]],
+    #                     next_reward = dataset._rewards[start_next_indexes[i]],
+    #                     terminal = dataset._terminals[start_indexes[i]]
+    #                 )
+    #                 new_transitions.append(transition)
 
-                start_rewards = dataset._rewards[start_indexes]
-                if max_reward is not None:
-                    start_indexes = start_indexes[start_rewards >= max_reward]
-                start_terminals = dataset._terminals[start_indexes]
-                start_indexes = start_indexes[start_terminals != 1]
-                if start_indexes.shape[0] == 0:
-                    break
-                replay_indexes.append(start_indexes)
-                replay_indexes = np.concatenate(replay_indexes, dim=0)
-            return new_transitions
-        else:
-            return None
+    #             start_rewards = dataset._rewards[start_indexes]
+    #             if max_reward is not None:
+    #                 start_indexes = start_indexes[start_rewards >= max_reward]
+    #             start_terminals = dataset._terminals[start_indexes]
+    #             start_indexes = start_indexes[start_terminals != 1]
+    #             if start_indexes.shape[0] == 0:
+    #                 break
+    #             replay_indexes.append(start_indexes)
+    #             replay_indexes = np.concatenate(replay_indexes, dim=0)
+    #         return new_transitions
+    #     else:
+    #         return None

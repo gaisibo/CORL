@@ -5,7 +5,7 @@ from gym.envs.mujoco import mujoco_env
 
 class HopperLightEnv(mujoco_env.MujocoEnv, utils.EzPickle):
     def __init__(self):
-        mujoco_env.MujocoEnv.__init__(self, "/home/gaisibo/Continual-Offline/CCQL/mygym/envs/assets/hopper_light.xml", 4)
+        mujoco_env.MujocoEnv.__init__(self, "/work/mygym/envs/assets/hopper_light.xml", 4)
         utils.EzPickle.__init__(self)
 
     def step(self, a):
