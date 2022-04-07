@@ -62,15 +62,11 @@ def main(args, device):
     # prepare algorithm
     if args.algos == 'co':
         from myd3rlpy.algos.co import CO
-        if args.generate_type == 'siamese' or args.experience_type == 'siamese':
+        if args.experience_type == 'siamese':
             use_phi = True
         else:
             use_phi = False
-        if args.generate_type in model_base_type or args.generate_type in model_base_type:
-            use_model = True
-        else:
-            use_model = False
-        co = CO(use_gpu=not args.use_cpu, batch_size=args.batch_size, id_size=task_nums, replay_type=args.replay_type, generate_type=args.generate_type, experience_type=args.experience_type, reduce_replay=args.reduce_replay, change_reward=args.change_reward, alpha_lr=args.alpha_lr, use_phi=use_phi, use_model=use_model)
+        co = CO(use_gpu=not args.use_cpu, batch_size=args.batch_size, id_size=task_nums, replay_type=args.replay_type, generate_type=args.generate_type, experience_type=args.experience_type, reduce_replay=args.reduce_replay, change_reward=args.change_reward, alpha_lr=args.alpha_lr, use_phi=use_phi, use_model=args.use_model)
     else:
         raise NotImplementedError
     experiment_name = "CO"
@@ -115,13 +111,13 @@ def main(args, device):
             # }
             # co._evaluate(dataset, scorers, co._active_logger)
             if args.algos == 'co':
-                if args.experience_type == 'siamese':
+                if args.experience_type in ['siamese', 'model']:
                     replay_datasets[task_id], save_datasets[task_id] = co.generate_replay_data_phi(action_datasets[task_id], original, in_task=False, max_save_num=args.max_save_num, real_action_size=real_action_size, real_observation_size=real_observation_size)
                     print(f"len(replay_datasets[task_id]): {len(replay_datasets[task_id])}")
-                elif args.experience_type in ['random_transition', 'max_reward', 'max_match']:
+                elif args.experience_type in ['random_transition', 'max_reward', 'max_match', 'max_model', 'min_reward', 'min_match', 'min_model']:
                     replay_datasets[task_id], save_datasets[task_id] = co.generate_replay_data_transition(action_datasets[task_id], max_save_num=args.max_save_num, real_action_size=real_action_size, in_task=False)
                     print(f"len(replay_datasets[task_id]): {len(replay_datasets[task_id])}")
-                elif args.experience_type in ['random_episode', 'max_reward_end', 'max_reward_mean', 'max_match_end', 'max_match_mean']:
+                elif args.experience_type in ['random_episode', 'max_reward_end', 'max_reward_mean', 'max_match_end', 'max_match_mean', 'max_model_end', 'max_model_mean', 'min_reward_end', 'min_reward_mean', 'min_match_end', 'min_match_mean', 'min_model_end', 'min_model_mean']:
                     replay_datasets[task_id], save_datasets[task_id] = co.generate_replay_data_episode(action_datasets[task_id], max_save_num=args.max_save_num, real_action_size=real_action_size, in_task=False)
                     print(f"len(replay_datasets[task_id]): {len(replay_datasets[task_id])}")
             else:
@@ -169,8 +165,8 @@ if __name__ == '__main__':
     parser.add_argument("--n_action_samples", default=4, type=int)
     parser.add_argument('--top_euclid', default=64, type=int)
     parser.add_argument('--replay_type', default='orl', type=str, choices=['orl', 'bc', 'ewc', 'gem', 'agem'])
-    parser.add_argument('--experience_type', default='siamese', type=str, choices=['siamese', 'random_transition', 'random_episode', 'max_reward', 'max_match', 'max_reward_end', 'max_reward_mean', 'max_match_end', 'max_match_mean', 'model_base_run', 'model_base_different', 'model_base_same'])
-    parser.add_argument('--generate_type', default='siamese', type=str, choices=['siamese', 'random_transition', 'random_episode', 'max_reward', 'max_match', 'max_reward_end', 'max_reward_mean', 'max_match_end', 'max_match_mean', 'model_base_run', 'model_base_different', 'model_base_same'])
+    parser.add_argument('--experience_type', default='siamese', type=str, choices=['siamese', 'model', 'random_transition', 'random_episode', 'min_reward', 'min_match', 'min_model', 'min_reward_end', 'min_reward_mean', 'min_match_end', 'min_match_mean', 'min_model_end', 'min_model_mean', 'min_reward', 'min_match', 'min_model', 'min_reward_end', 'min_reward_mean', 'min_match_end', 'min_match_mean', 'min_model_end', 'min_model_mean'])
+    parser.add_argument('--use_model', action='store_ture')
     parser.add_argument('--reduce_replay', default='retrain', type=str, choices=['retrain', 'no_retrain'])
     parser.add_argument('--change_reward', default='change', type=str, choices=['change', 'no_change'])
     parser.add_argument('--dense', default='dense', type=str)
@@ -185,6 +181,8 @@ if __name__ == '__main__':
     if not os.path.exists(args.model_path):
         os.makedirs(args.model_path)
     args.model_path +=  '/model_'
+    if 'model' in experienct_type:
+        args.use_model = True
     global DATASET_PATH
     DATASET_PATH = './.d4rl/datasets/'
     if args.use_cpu:
