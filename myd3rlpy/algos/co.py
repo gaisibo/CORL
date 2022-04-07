@@ -54,6 +54,8 @@ from myd3rlpy.siamese_similar import similar_mb, similar_phi, similar_psi
 # from myd3rlpy.dynamics.probabilistic_ensemble_dynamics import ProbabilisticEnsembleDynamics
 from myd3rlpy.algos.torch.co_impl import COImpl
 
+
+model_base_type = ['model_base_run', 'model_base_same', 'model_base_different']
 class CO(CQL):
     r"""Twin Delayed Deep Deterministic Policy Gradients algorithm.
     TD3 is an improved DDPG-based algorithm.
@@ -213,7 +215,7 @@ class CO(CQL):
         retrain_topk = 4,
         log_prob_topk = 10,
         generate_type = 'random',
-        experience_type = 'random',
+        experience_type = 'random_transition',
         change_reward = 'change',
         reduce_replay = 'retrain',
 
@@ -415,6 +417,11 @@ class CO(CQL):
 
         return metrics
 
+    def _update_model(self, batch: TransitionMiniBatch):
+        assert self._dynamics._impl is not None
+        loss = self._dynamics._impl.update(batch)
+        return {"loss": loss}
+
     def fit(
         self,
         task_id: int,
@@ -600,17 +607,17 @@ class CO(CQL):
             self._impl.change_task(task_id)
             LOG.warning("Skip building models since they're already built.")
 
-        if self._generate_type in ['model_base_run', 'model_base_same', 'model_base_different']:
-            if self._dynamics is not None:
-                if self._dynamics._impl is None:
-                    action_size = real_action_size
-                    observation_shape = [real_observation_size]
-                    self._dynamics.create_impl(
-                        observation_shape, action_size
-                    )
-                    LOG.debug("Dynamics have been built.")
-                else:
-                    LOG.warning("Skip building dynamics since they're already built.")
+        # if self._generate_type in model_base_type:
+        #     if self._dynamics is not None:
+        #         if self._dynamics._impl is None:
+        #             action_size = real_action_size
+        #             observation_shape = [real_observation_size]
+        #             self._dynamics.create_impl(
+        #                 observation_shape, action_size
+        #             )
+        #             LOG.debug("Dynamics have been built.")
+        #         else:
+        #             LOG.warning("Skip building dynamics since they're already built.")
 
         # setup logger
         logger = self._prepare_logger(
@@ -699,19 +706,18 @@ class CO(CQL):
             else:
                 raise ValueError(f"invalid dataset type: {type(dataset)}")
 
-            if self._generate_type in ['model_base_run', 'model_base_same', 'model_base_different']:
-                assert self._dynamics is not None
-                if train_dynamics:
-                    self._dynamics.fit(
-                        transitions,
-                        n_epochs=1,
-                        scorers={
-                           'observation_error': dynamics_observation_prediction_error_scorer,
-                           'reward_error': dynamics_reward_prediction_error_scorer,
-                           'variance': dynamics_prediction_variance_scorer,
-                        },
-                        pretrain=True
-                    )
+            # if self._generate_type in model_base_type:
+            #     assert self._dynamics is not None
+            #     self._dynamics.fit(
+            #         transitions,
+            #         n_epochs=1,
+            #         scorers={
+            #            'observation_error': dynamics_observation_prediction_error_scorer,
+            #            'reward_error': dynamics_reward_prediction_error_scorer,
+            #            'variance': dynamics_prediction_variance_scorer,
+            #         },
+            #         pretrain=True
+            #     )
 
             if n_epochs is None and n_steps is not None:
                 assert n_steps >= n_steps_per_epoch
@@ -840,7 +846,7 @@ class CO(CQL):
                 for itr in range_gen:
 
                     # generate new transitions with dynamics models
-                    if self._generate_type in ['model_base_same', 'model_base_different', 'model_base_run']:
+                    if self._generate_type in model_base_type:
                         new_transitions = self.generate_replay_data(
                             dataset,
                             original,
@@ -938,6 +944,74 @@ class CO(CQL):
                     logger.save_model(total_step, self)
 
                 yield epoch, metrics
+
+            if self._generate_type not in model_base_type and self._experience_type in model_base_type:
+                # training loop
+                total_step = 0
+                for epoch in range(1, n_dynamic_epochs + 1):
+
+                    # dict to add incremental mean losses to epoch
+                    epoch_loss = defaultdict(list)
+
+                    range_gen = tqdm(
+                        range(len(iterator)),
+                        disable=not show_progress,
+                        desc=f"Epoch {int(epoch)}/{n_epochs}",
+                    )
+
+                    iterator.reset()
+
+                    for batch_num, itr in enumerate(range_gen):
+                        if batch_num > 1000 and test:
+                            break
+
+                        # generate new transitions with dynamics models
+
+                        with logger.measure_time("step"):
+                            # pick transitions
+                            with logger.measure_time("sample_batch"):
+                                batch = next(iterator)
+
+                            # update parameters
+                            with logger.measure_time("algorithm_update"):
+                                loss = self._update_model(batch)
+
+                            # record metrics
+                            for name, val in loss.items():
+                                logger.add_metric(name, val)
+                                epoch_loss[name].append(val)
+
+                            # update progress postfix with losses
+                            if itr % 10 == 0:
+                                mean_loss = {
+                                    k: np.mean(v) for k, v in epoch_loss.items()
+                                }
+                                range_gen.set_postfix(mean_loss)
+
+                        total_step += 1
+
+                        # call callback if given
+                        if callback:
+                            callback(self, epoch, total_step)
+
+                    # save loss to loss history dict
+                    self._loss_history["epoch"].append(epoch)
+                    self._loss_history["step"].append(total_step)
+                    for name, vals in epoch_loss.items():
+                        if vals:
+                            self._loss_history[name].append(np.mean(vals))
+
+                    if scorers and eval_episodes:
+                        self._evaluate(eval_episodes, scorers, logger)
+
+                    # save metrics
+                    metrics = logger.commit(epoch, total_step)
+
+                    # save model parameters
+                    if epoch % save_interval == 0:
+                        logger.save_model(total_step, self)
+
+                    yield epoch, metrics
 
             if self._generate_type != 'siamese' and self._experience_type == 'siamese':
                 total_step = 0
