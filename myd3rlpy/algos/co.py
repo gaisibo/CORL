@@ -619,8 +619,6 @@ class CO(CQL):
             tensorboard_dir,
         )
 
-        # add reference to active logger to algo class during fit
-        self._active_logger = logger
         # save hyperparameters
         self.save_params(logger)
 
@@ -957,10 +955,6 @@ class CO(CQL):
                     logger.save_model(total_step, self)
 
                 yield epoch, metrics
-
-            # drop reference to active logger since out of fit there is no active
-            # logger
-            self._active_logger = None
 
             # for EWC
             if self._replay_type == 'agem':
@@ -1689,3 +1683,6 @@ class CO(CQL):
 
     def _is_generating_new_data(self) -> bool:
         return self._grad_step % self._rollout_interval == 0
+
+    def _get_rollout_horizon(self):
+        return self._rollout_horizon

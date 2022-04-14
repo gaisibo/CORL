@@ -18,7 +18,7 @@ from d3rlpy.models.torch.policies import squash_action
 from d3rlpy.preprocessing import ActionScaler, RewardScaler, Scaler
 from d3rlpy.torch_utility import TorchMiniBatch, soft_sync, train_api, torch_api
 from d3rlpy.dataset import TransitionMiniBatch
-from d3rlpy.algos.torch.cql_impl import CQLImpl
+from d3rlpy.algos.torch.comol_impl import COMOLImpl
 
 from myd3rlpy.models.builders import create_phi, create_psi
 from myd3rlpy.algos.torch.gem import overwrite_grad, store_grad, project2cone2
@@ -26,7 +26,7 @@ from myd3rlpy.algos.torch.agem import project
 from utils.utils import Struct
 
 
-class COImpl(CQLImpl):
+class COImpl(COMOLImpl):
     def __init__(
         self,
         observation_shape: Sequence[int],
@@ -60,6 +60,7 @@ class COImpl(CQLImpl):
         conservative_weight: float,
         n_action_samples: int,
         soft_q_backup: bool,
+        real_ratio: float,
         use_gpu: Optional[Device],
         scaler: Optional[Scaler],
         action_scaler: Optional[ActionScaler],
@@ -92,6 +93,7 @@ class COImpl(CQLImpl):
             scaler = scaler,
             action_scaler = action_scaler,
             reward_scaler = reward_scaler,
+            real_ratio = real_ratio,
         )
         self._replay_type = replay_type
         self._replay_actor_alpha = replay_actor_alpha
