@@ -23,7 +23,7 @@ def split_navigate_antmaze_medium_v2(task_split_type, top_euclid, device, dense)
     dataset_name = 'antmaze-medium-play-v2'
     task_nums = 3
     dense = dense == 'dense'
-    end_points = [np.array([5, 0]), np.array([0, 20]), np.array([20, 5])]
+    end_points = [np.array([16, 20]), np.array([0, 16]), np.array([20, 4])]
     return split_antmaze(origin_dataset, env, dataset_name, task_nums, end_points, task_split_type, top_euclid, device, dense)
 
 def split_navigate_antmaze_large_v2(task_split_type, top_euclid, device, dense):
@@ -31,7 +31,7 @@ def split_navigate_antmaze_large_v2(task_split_type, top_euclid, device, dense):
     dataset_name = 'antmaze-large-play-v2'
     task_nums = 3
     dense = dense == 'dense'
-    end_points = [np.array([0, 25]), np.array([20, 15]), np.array([35, 0])]
+    end_points = [np.array([20.0, 0.0]), np.array([16.0, 8.0]), np.array([36.0, 8.0]), np.array([4.0, 16.0]), np.array([12.0, 24.0]), np.array([20.0, 24.0]), np.array([32.0, 24.0]), ]
     return split_antmaze(origin_dataset, env, dataset_name, task_nums, end_points, task_split_type, top_euclid, device, dense)
 
 def split_antmaze(origin_dataset, env, dataset_name, task_nums, end_points, task_split_type, top_euclid, device, dense):
@@ -107,22 +107,22 @@ def split_antmaze(origin_dataset, env, dataset_name, task_nums, end_points, task
     #     plt.savefig('to_final_' + dataset_name + '_' + str(i) + '.png')
     #     plt.close('all')
 
-    nearest_indexes = {}
-    for dataset_num, dataset in task_datasets.items():
-        env = envs[dataset_num]
-        nearest_dist = 1000000000
-        nearest_index = -1
-        nearest_indexes_ = []
-        for times in range(100):
-            origin = env.reset()[:2]
-            for i in range(dataset.observations.shape[0]):
-                dist = np.linalg.norm(origin - dataset.observations[i, :2])
-                if dist < nearest_dist:
-                    nearest_index = i
-                    nearest_dist = dist
-            nearest_indexes_.append(nearest_index)
-        nearest_indexes_ = np.unique(np.array(nearest_indexes_))
-        nearest_indexes[dataset_num] = nearest_indexes_
+    # nearest_indexes = {}
+    # for dataset_num, dataset in task_datasets.items():
+    #     env = envs[dataset_num]
+    #     nearest_dist = 1000000000
+    #     nearest_index = -1
+    #     nearest_indexes_ = []
+    #     for times in range(100):
+    #         origin = env.reset()[:2]
+    #         for i in range(dataset.observations.shape[0]):
+    #             dist = np.linalg.norm(origin - dataset.observations[i, :2])
+    #             if dist < nearest_dist:
+    #                 nearest_index = i
+    #                 nearest_dist = dist
+    #         nearest_indexes_.append(nearest_index)
+    #     nearest_indexes_ = np.unique(np.array(nearest_indexes_))
+    #     nearest_indexes[dataset_num] = nearest_indexes_
     nearest_indexes = {0: np.array([0]), 1: np.array([0]), 2: np.array([0])}
 
     changed_task_datasets = dict()

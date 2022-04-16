@@ -185,8 +185,11 @@ class CO(CQL):
         n_frames: int = 1,
         n_steps: int = 1,
         gamma: float = 0.99,
-        gem_gamma: float = 1,
+        gem_alpha: float = 1,
         agem_alpha: float = 1,
+        ewc_r_walk_alpha: float = 0.5,
+        damping: float = 0.1,
+        epsilon: float = 0.1,
         tau: float = 0.005,
         n_critics: int = 2,
         initial_temperature: float = 1.0,
@@ -260,8 +263,11 @@ class CO(CQL):
         self._alpha_learning_rate = alpha_learning_rate
         self._initial_alpha = initial_alpha
         self._alpha_threshold = alpha_threshold
-        self._gem_gamma = gem_gamma
+        self._gem_alpha = gem_alpha
         self._agem_alpha = agem_alpha
+        self._ewc_r_walk_alpha = ewc_r_walk_alpha
+        self._damping = damping
+        self._epsilon = epsilon
 
         self._phi_optim_factory = phi_optim_factory
         self._psi_optim_factory = psi_optim_factory
@@ -319,8 +325,11 @@ class CO(CQL):
             replay_actor_alpha=self._replay_actor_alpha,
             replay_type=self._replay_type,
             gamma=self._gamma,
-            gem_gamma=self._gem_gamma,
+            gem_alpha=self._gem_alpha,
             agem_alpha=self._agem_alpha,
+            ewc_r_walk_alpha=self._ewc_r_walk_alpha,
+            damping=self._damping,
+            epsilon=self._epsilon,
             tau=self._tau,
             n_critics=self._n_critics,
             initial_alpha=self._initial_alpha,
@@ -961,6 +970,8 @@ class CO(CQL):
                 self._impl.agem_post_train_process(iterator)
             elif self._replay_type == 'gem':
                 self._impl.gem_post_train_process()
+            elif self._replay_type == 'r_walk':
+                self._impl.r_walk_post_train_process(iterator)
 
         else:
             replay_buffer = ReplayBuffer(real_observation_size, real_action_size)

@@ -19,7 +19,7 @@ from d3rlpy.metrics.scorer import soft_opc_scorer, initial_state_value_estimatio
 from d3rlpy.dataset import MDPDataset
 # from myd3rlpy.datasets import get_d4rl
 from utils.k_means import kmeans
-from myd3rlpy.metrics.scorer import bc_error_scorer, td_error_scorer, evaluate_on_environment
+from myd3rlpy.metrics.scorer import bc_error_scorer, td_error_scorer, evaluate_on_environment, q_diffs_scorer
 from myd3rlpy.siamese_similar import similar_psi, similar_phi
 from myd3rlpy.dynamics.probabilistic_ensemble_dynamics import ProbabilisticEnsembleDynamics
 
@@ -87,7 +87,7 @@ def main(args, device):
                 original = original[task_id],
                 real_action_size = real_action_size,
                 real_observation_size = real_observation_size,
-                eval_episodes=dataset,
+                eval_episodes=origin_datasets,
                 n_epochs=args.n_epochs if not args.test else 1,
                 n_begin_epochs=args.n_begin_epochs if not args.test else 1,
                 experiment_name=experiment_name + algos_name,
@@ -99,20 +99,21 @@ def main(args, device):
                 },
                 test=args.test,
             )
-            # scorers={
-            #     "real_env0": evaluate_on_environment(envs[0], test_id=0, render=True),
-            #     "real_env1": evaluate_on_environment(envs[1], test_id=1, render=True),
-            #     "real_env2": evaluate_on_environment(envs[2], test_id=2, render=True),
-            #     "real_env3": evaluate_on_environment(envs[3], test_id=3, render=True),
-            # }
-            # co._evaluate(dataset, scorers, co._active_logger)
+            scorers={
+                'conservitive_env': q_diffs_scorer(finish_id=task_id),
+            }
+            co._evaluate(origin_datasets, scorers, co._active_logger)
             if args.algos == 'co':
                 if args.experience_type == 'siamese':
+                    assert replay_datasets is not None
                     replay_datasets[task_id], save_datasets[task_id] = co.generate_replay_data_phi(action_datasets[task_id], original, in_task=False, max_save_num=args.max_save_num, real_action_size=real_action_size, real_observation_size=real_observation_size)
                     print(f"len(replay_datasets[task_id]): {len(replay_datasets[task_id])}")
-                else:
+                elif args.experience_type != 'none':
+                    assert replay_datasets is not None
                     replay_datasets[task_id], save_datasets[task_id] = co.generate_replay_data_random(action_datasets[task_id], max_save_num=args.max_save_num, real_action_size=real_action_size, in_task=False)
                     print(f"len(replay_datasets[task_id]): {len(replay_datasets[task_id])}")
+                else:
+                    replay_datasets = None
             else:
                 raise NotImplementedError
             co.save_model(args.model_path + algos_name + '_' + str(task_id) + '.pt')
@@ -157,8 +158,8 @@ if __name__ == '__main__':
     parser.add_argument("--n_begin_epochs", default=20, type=int)
     parser.add_argument("--n_action_samples", default=4, type=int)
     parser.add_argument('--top_euclid', default=64, type=int)
-    parser.add_argument('--replay_type', default='orl', type=str, choices=['orl', 'bc', 'ewc', 'gem', 'agem'])
-    parser.add_argument('--experience_type', default='siamese', type=str, choices=['siamese', 'random', 'max_mean', 'max_end'])
+    parser.add_argument('--replay_type', default='orl', type=str, choices=['orl', 'bc', 'ewc', 'gem', 'agem', 'r_walk', 'si'])
+    parser.add_argument('--experience_type', default='siamese', type=str, choices=['siamese', 'random', 'max_mean', 'max_end', 'none'])
     parser.add_argument('--generate_type', default='siamese', type=str, choices=['siamese', 'random'])
     parser.add_argument('--reduce_replay', default='retrain', type=str, choices=['retrain', 'no_retrain'])
     parser.add_argument('--change_reward', default='change', type=str, choices=['change', 'no_change'])
