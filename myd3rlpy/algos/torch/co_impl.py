@@ -26,6 +26,7 @@ from myd3rlpy.algos.torch.agem import project
 from utils.utils import Struct
 
 
+replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'terminals', 'means', 'std_logs', 'qs', 'phis', 'psis']
 class COImpl(COMOLImpl):
     def __init__(
         self,
@@ -37,14 +38,17 @@ class COImpl(COMOLImpl):
         alpha_learning_rate: float,
         phi_learning_rate: float,
         psi_learning_rate: float,
+        model_learning_rate: float,
         actor_optim_factory: OptimizerFactory,
         critic_optim_factory: OptimizerFactory,
         temp_optim_factory: OptimizerFactory,
         alpha_optim_factory: OptimizerFactory,
         phi_optim_factory: OptimizerFactory,
         psi_optim_factory: OptimizerFactory,
+        model_optim_factory: OptimizerFactory,
         actor_encoder_factory: EncoderFactory,
         critic_encoder_factory: EncoderFactory,
+        model_encoder_factory: EncoderFactory,
         q_func_factory: QFunctionFactory,
         replay_actor_alpha: float,
         replay_critic_alpha: float,
@@ -68,6 +72,9 @@ class COImpl(COMOLImpl):
         scaler: Optional[Scaler],
         action_scaler: Optional[ActionScaler],
         reward_scaler: Optional[RewardScaler],
+        model_n_ensembles: int,
+        use_phi: bool,
+        use_model: bool,
     ):
         super().__init__(
             observation_shape = observation_shape,
@@ -112,25 +119,49 @@ class COImpl(COMOLImpl):
         self._damping = damping
         self._epsilon = epsilon
 
+        self._use_phi = use_phi
+        self._use_model = use_model
         self._phi_learning_rate = phi_learning_rate
         self._psi_learning_rate = psi_learning_rate
         self._phi_optim_factory = phi_optim_factory
         self._psi_optim_factory = psi_optim_factory
 
+        self._model_learning_rate = model_learning_rate
+        self._model_optim_factory = model_optim_factory
+        self._model_encoder_factory = model_encoder_factory
+        self._model_n_ensembles = model_n_ensembles
+
         # initialized in build
 
     def build(self, task_id):
-        self._phi = create_phi(self._observation_shape, self._action_size, self._critic_encoder_factory)
-        self._psi = create_psi(self._observation_shape, self._actor_encoder_factory)
-        self._targ_phi = copy.deepcopy(self._phi)
-        self._targ_psi = copy.deepcopy(self._psi)
+        if self._use_phi:
+            self._phi = create_phi(self._observation_shape, self._action_size, self._critic_encoder_factory)
+            self._psi = create_psi(self._observation_shape, self._actor_encoder_factory)
+            self._targ_phi = copy.deepcopy(self._phi)
+            self._targ_psi = copy.deepcopy(self._psi)
+
+        if self._use_model:
+            self._dynamic = create_probabilistic_ensemble_dynamics_model(
+                self._observation_shape,
+                self._action_size,
+                self._model_encoder_factory,
+                n_ensembles=self._model_n_ensembles,
+                discrete_action=False,
+            )
+            self._targ_dynamic = copy.deepcopy(self._dynamic)
+
         super().build()
-        self._phi_optim = self._phi_optim_factory.create(
-            self._phi.parameters(), lr=self._phi_learning_rate
-        )
-        self._psi_optim = self._psi_optim_factory.create(
-            self._psi.parameters(), lr=self._psi_learning_rate
-        )
+        if self._use_phi:
+            self._phi_optim = self._phi_optim_factory.create(
+                self._phi.parameters(), lr=self._phi_learning_rate
+            )
+            self._psi_optim = self._psi_optim_factory.create(
+                self._psi.parameters(), lr=self._psi_learning_rate
+            )
+        if self._use_model:
+            self._model_optim = self._model_optim_factory.create(
+                self._dynamic.parameters(), lr=self._model_learning_rate
+            )
         assert self._q_func is not None
         assert self._policy is not None
         if self._replay_type in ['ewc', 'r_walk', 'si']:
@@ -138,24 +169,36 @@ class COImpl(COMOLImpl):
             self._critic_older_params = {n: p.clone().detach() for n, p in self._q_func.named_parameters() if p.requires_grad}
             # Store current parameters for the next task
             self._actor_older_params = {n: p.clone().detach() for n, p in self._policy.named_parameters() if p.requires_grad}
+            if self._use_model:
+                # Store current parameters for the next task
+                self._model_older_params = {n: p.clone().detach() for n, p in self._dynamic.named_parameters() if p.requires_grad}
             if self._replay_type in ['ewc', 'r_walk']:
                 # Store fisher information weight importance
                 self._critic_fisher = {n: torch.zeros(p.shape).to(self.device) for n, p in self._q_func.named_parameters() if p.requires_grad}
                 # Store fisher information weight importance
                 self._actor_fisher = {n: torch.zeros(p.shape).to(self.device) for n, p in self._policy.named_parameters() if p.requires_grad}
+                if self._use_model:
+                    # Store fisher information weight importance
+                    self._model_fisher = {n: torch.zeros(p.shape).to(self.device) for n, p in self._dynamic.named_parameters() if p.requires_grad}
                 if self._replay_type == 'r_walk':
                     # Page 7: "task-specific parameter importance over the entire training trajectory."
                     self._critic_w = {n: torch.zeros(p.shape).to(self.device) for n, p in self._q_func.named_parameters() if p.requires_grad}
                     self._critic_scores = {n: torch.zeros(p.shape).to(self.device) for n, p in self._q_func.named_parameters() if p.requires_grad}
-
                     # Page 7: "task-specific parameter importance over the entire training trajectory."
                     self._actor_w = {n: torch.zeros(p.shape).to(self.device) for n, p in self._policy.named_parameters() if p.requires_grad}
                     self._actor_scores = {n: torch.zeros(p.shape).to(self.device) for n, p in self._policy.named_parameters() if p.requires_grad}
-            elif self._replay_type == 'si':
-                self._critic_W = {n: p.clone().detach().zero_() for n, p in self._q_func.named_parameters() if p.requires_grad}
-                self._actor_W = {n: p.clone().detach().zero_() for n, p in self._policy.named_parameters() if p.requires_grad}
-                self._critic_omega = {n: p.clone().detach().zero_() for n, p in self._q_func.named_parameters() if p.requires_grad}
-                self._actor_omega = {n: p.clone().detach().zero_() for n, p in self._policy.named_parameters() if p.requires_grad}
+                    if self._use_model:
+                        # Page 7: "task-specific parameter importance over the entire training trajectory."
+                        self._model_w = {n: torch.zeros(p.shape).to(self.device) for n, p in self._dynamic.named_parameters() if p.requires_grad}
+                        self._model_scores = {n: torch.zeros(p.shape).to(self.device) for n, p in self._dynamic.named_parameters() if p.requires_grad}
+                elif self._replay_type == 'si':
+                    self._critic_W = {n: p.clone().detach().zero_() for n, p in self._q_func.named_parameters() if p.requires_grad}
+                    self._critic_omega = {n: p.clone().detach().zero_() for n, p in self._q_func.named_parameters() if p.requires_grad}
+                    self._actor_W = {n: p.clone().detach().zero_() for n, p in self._policy.named_parameters() if p.requires_grad}
+                    self._actor_omega = {n: p.clone().detach().zero_() for n, p in self._policy.named_parameters() if p.requires_grad}
+                    if self._use_model:
+                        self._model_W = {n: p.clone().detach().zero_() for n, p in self._dynamic.named_parameters() if p.requires_grad}
+                        self._model_omega = {n: p.clone().detach().zero_() for n, p in self._dynamic.named_parameters() if p.requires_grad}
         elif self._replay_type == 'gem':
             # Allocate temporary synaptic memory
             self._critic_grad_dims = []
@@ -169,6 +212,13 @@ class COImpl(COMOLImpl):
                 self._actor_grad_dims.append(pp.data.numel())
             self._actor_grads_cs = []
             self._actor_grads_da = torch.zeros(np.sum(self._actor_grad_dims)).to(self.device)
+
+            if self._use_model:
+                self._model_grad_dims = []
+                for pp in self._dynamic.parameters():
+                    self._model_grad_dims.append(pp.data.numel())
+                self._model_grads_cs = []
+                self._model_grads_da = torch.zeros(np.sum(self._model_grad_dims)).to(self.device)
         elif self._replay_type == 'agem':
             self._critic_grad_dims = []
             for param in self._q_func.parameters():
@@ -180,6 +230,12 @@ class COImpl(COMOLImpl):
                 self._actor_grad_dims.append(param.data.numel())
             self._actor_grad_xy = torch.Tensor(np.sum(self._actor_grad_dims)).to(self.device)
             self._actor_grad_er = torch.Tensor(np.sum(self._actor_grad_dims)).to(self.device)
+            if self._use_model:
+                self._model_grad_dims = []
+                for param in self._q_func.parameters():
+                    self._model_grad_dims.append(param.data.numel())
+                self._model_grad_xy = torch.Tensor(np.sum(self._model_grad_dims)).to(self.device)
+                self._model_grad_er = torch.Tensor(np.sum(self._model_grad_dims)).to(self.device)
 
         self._policy._mus = dict()
         self._policy._mus[task_id] = self._policy._mu
@@ -195,14 +251,35 @@ class COImpl(COMOLImpl):
         for q_func in self._targ_q_func._q_funcs:
             q_func._fcs = dict()
             q_func._fcs[task_id] = q_func._fc
+        if self._use_model:
+            for model in self._dynamic._models:
+                model._mus = dict()
+                model._mus[task_id] = model._mu
+                model._logstds = dict()
+                model._logstds[task_id] = model._logstd
+                model._max_logstds = dict()
+                model._max_logstds[task_id] = model._max_logstd
+                model._min_logstds = dict()
+                model._min_logstds[task_id] = model._min_logstd
+            for model in self._targ_dynamic._models:
+                model._mus = dict()
+                model._mus[task_id] = model._mu
+                model._logstds = dict()
+                model._logstds[task_id] = model._logstd
+                model._max_logstds = dict()
+                model._max_logstds[task_id] = model._max_logstd
+                model._min_logstds = dict()
+                model._min_logstds[task_id] = model._min_logstd
         self.change_task(task_id)
         self._impl_id = task_id
         self._using_id = task_id
         self._critic_optims = dict()
         self._actor_optims = dict()
+        if self._use_model:
+            self._model_optims = dict()
 
     @train_api
-    def begin_update_critic(self, batch_tran: TransitionMiniBatch, step=True):
+    def begin_update_critic(self, batch_tran: TransitionMiniBatch):
         batch = TorchMiniBatch(
             batch_tran,
             self.device,
@@ -216,6 +293,11 @@ class COImpl(COMOLImpl):
         self.change_task(self._impl_id)
         self._q_func.train()
         self._policy.eval()
+        if self._use_phi:
+            self._phi.eval()
+            self._psi.eval()
+        if self._use_model:
+            self._dynamic.eval()
 
         self._critic_optim.zero_grad()
 
@@ -224,8 +306,7 @@ class COImpl(COMOLImpl):
         loss = self.compute_critic_loss(batch, q_tpn)
 
         loss.backward()
-        if step:
-            self._critic_optims[self._impl_id].step()
+        self._critic_optims[self._impl_id].step()
 
         loss = loss.cpu().detach().numpy()
         self.change_task(self._impl_id)
@@ -233,7 +314,7 @@ class COImpl(COMOLImpl):
         return loss
 
     @train_api
-    def update_critic(self, batch_tran: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[torch.Tensor]]]=None, step=True):
+    def update_critic(self, batch_tran: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[torch.Tensor]]]=None):
         batch = TorchMiniBatch(
             batch_tran,
             self.device,
@@ -247,6 +328,11 @@ class COImpl(COMOLImpl):
         self.change_task(self._impl_id)
         self._q_func.train()
         self._policy.eval()
+        if self._use_phi:
+            self._phi.eval()
+            self._psi.eval()
+        if self._use_model:
+            self._dynamic.eval()
 
         if replay_batches is not None and len(replay_batches) != 0 and self._replay_type == 'gem':
             for i, replay_batch in replay_batches.items():
@@ -276,7 +362,6 @@ class COImpl(COMOLImpl):
                 self.change_task(i)
                 replay_batch = dict(zip(replay_name, replay_batch))
                 replay_batch = Struct(**replay_batch)
-                replay_loss = 0
                 if self._replay_type == "orl":
                     replay_batch.n_steps = 1
                     replay_batch.masks = None
@@ -287,15 +372,15 @@ class COImpl(COMOLImpl):
                     replay_loss += replay_cql_loss
                 elif self._replay_type == "bc":
                     with torch.no_grad():
-                        replay_observations = replay_batch.observations.to(self.device)
-                        replay_qs = replay_batch.qs.to(self.device)
-                    replay_actions = self._policy(replay_observations)
-                    q = self._q_func(replay_observations, replay_actions)
+                        replay_observations = replay_batch.observations.to(self.device).detach()
+                        replay_qs = replay_batch.qs.to(self.device).detach()
+                        replay_actions = replay_batch.actions.to(self.device).detach()
+
+                    q = self._q_func(replay_observations, replay_actions[:, :self._action_size])
                     replay_bc_loss = F.mse_loss(replay_qs, q) / len(replay_batches)
                     replay_losses.append(replay_bc_loss.cpu().detach().numpy())
                     replay_loss += replay_bc_loss
                 elif self._replay_type == "ewc":
-                    replay_loss = 0
                     for n, p in self._q_func.named_parameters():
                         if n in self._critic_fisher.keys():
                             replay_loss += torch.sum(self._critic_fisher[n] * (p - self._critic_older_params[n]).pow(2)) / 2
@@ -305,7 +390,6 @@ class COImpl(COMOLImpl):
                                    if p.grad is not None}
 
                     self._critic_optim.zero_grad()
-                    replay_loss = 0
                     # Eq. 3: elastic weight consolidation quadratic penalty
                     for n, p in self._q_func.named_parameters():
                         if n in self._critic_fisher.keys():
@@ -354,8 +438,7 @@ class COImpl(COMOLImpl):
                 # copy gradients back
                 overwrite_grad(self._q_func.parameters, self._critic_grads_da,
                                self._critic_grad_dims)
-        if step:
-            self._critic_optim.step()
+        self._critic_optim.step()
 
         if self._replay_type == 'r_walk':
             assert unreg_grads is not None
@@ -388,7 +471,7 @@ class COImpl(COMOLImpl):
         return loss + conservative_loss
 
     @train_api
-    def begin_update_actor(self, batch_tran: TransitionMiniBatch, step=True) -> np.ndarray:
+    def begin_update_actor(self, batch_tran: TransitionMiniBatch) -> np.ndarray:
         assert self._q_func is not None
         assert self._policy is not None
         assert self._actor_optim is not None
@@ -404,14 +487,18 @@ class COImpl(COMOLImpl):
         self.change_task(self._impl_id)
         self._q_func.eval()
         self._policy.train()
+        if self._use_phi:
+            self._phi.eval()
+            self._psi.eval()
+        if self._use_model:
+            self._dynamic.eval()
 
         self._actor_optim.zero_grad()
 
         loss = self.compute_actor_loss(batch)
 
         loss.backward()
-        if step:
-            self._actor_optims[self._impl_id].step()
+        self._actor_optims[self._impl_id].step()
 
         loss = loss.cpu().detach().numpy()
         self.change_task(self._impl_id)
@@ -419,7 +506,7 @@ class COImpl(COMOLImpl):
         return loss
 
     @train_api
-    def update_actor(self, batch_tran: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[torch.Tensor]]]=None, step=True) -> np.ndarray:
+    def update_actor(self, batch_tran: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[torch.Tensor]]]=None) -> np.ndarray:
         assert self._q_func is not None
         assert self._policy is not None
         assert self._actor_optim is not None
@@ -435,6 +522,11 @@ class COImpl(COMOLImpl):
         self.change_task(self._impl_id)
         self._q_func.eval()
         self._policy.train()
+        if self._use_phi:
+            self._phi.eval()
+            self._psi.eval()
+        if self._use_model:
+            self._dynamic.eval()
 
         if replay_batches is not None and len(replay_batches) != 0 and self._replay_type == 'gem':
             for i, replay_batch in replay_batches.items():
@@ -465,7 +557,7 @@ class COImpl(COMOLImpl):
                     replay_loss_ = self.compute_actor_loss(replay_batch) / len(replay_batches)
                     replay_loss += replay_loss_
                     replay_losses.append(replay_loss_.cpu().detach().numpy())
-                if self._replay_type == "bc":
+                elif self._replay_type == "bc":
                     with torch.no_grad():
                         replay_observations = replay_batch.observations.to(self.device)
                         replay_means = replay_batch.means.to(self.device)
@@ -473,56 +565,51 @@ class COImpl(COMOLImpl):
                         replay_actions = torch.distributions.normal.Normal(replay_means, torch.exp(replay_std_logs))
                     actions = self._policy.dist(replay_observations)
                     replay_loss_ = torch.distributions.kl.kl_divergence(actions, replay_actions).mean() / len(replay_batches)
-                    replay_losses.append(replay_loss.cpu().detach().numpy())
-                    replay_loss = replay_loss_
-                if self._replay_type == "ewc":
-                    replay_loss = 0
-                    for n, p in self._q_func.named_parameters():
-                        if n in self._critic_fisher.keys():
-                            replay_loss += torch.sum(self._critic_fisher[n] * (p - self._critic_older_params[n]).pow(2)) / 2
+                    replay_losses.append(replay_loss_.cpu().detach().numpy())
+                    replay_loss += replay_loss_
+                elif self._replay_type == "ewc":
+                    replay_loss_ = 0
+                    for n, p in self._policy.named_parameters():
+                        if n in self._actor_fisher.keys():
+                            replay_loss_ = torch.sum(self._actor_fisher[n] * (p - self._actor_older_params[n]).pow(2)) / 2
+                    replay_losses.append(replay_loss_)
+                    replay_loss += replay_loss_
                 elif self._replay_type == 'r_walk':
                     # store gradients without regularization term
                     unreg_grads = {n: p.grad.clone().detach() for n, p in self._policy.named_parameters()
                                    if p.grad is not None}
 
                     self._actor_optim.zero_grad()
-                    replay_loss = 0
                     # Eq. 3: elastic weight consolidation quadratic penalty
+                    replay_loss_ = 0
                     for n, p in self._policy.named_parameters():
                         if n in self._actor_fisher.keys():
-                            replay_loss += torch.sum((self._actor_fisher[n] + self._actor_scores[n]) * (p - self._actor_older_params[n]).pow(2)) / 2
+                            replay_loss_ += torch.sum((self._actor_fisher[n] + self._actor_scores[n]) * (p - self._actor_older_params[n]).pow(2)) / 2
+                    replay_losses.append(replay_loss_)
+                    replay_loss += replay_loss_
                 elif self._replay_type == 'si':
-                    for n, p in model.named_parameters():
-                        if p.grad is not None and n in self._policy_fisher.keys():
-                            self._policy_W[n].add_(-p.grad * (p.detach() - self._policy_older_params[n]))
-                        self._policy_older_params[n] = p.detach().clone()
-                    replay_loss = 0
+                    for n, p in self._policy.named_parameters():
+                        if p.grad is not None and n in self._actor_fisher.keys():
+                            self._actor_W[n].add_(-p.grad * (p.detach() - self._actor_older_params[n]))
+                        self._actor_older_params[n] = p.detach().clone()
+                    replay_loss_ = 0
                     for n, p in self.named_parameters():
                         if p.requires_grad:
-                            replay_loss += torch.sum(self._policy_omega[n] * (p - self._policy_older_params[n]) ** 2)
-                if self._replay_type == "agem":
+                            replay_loss_ += torch.sum(self._actor_omega[n] * (p - self._actor_older_params[n]) ** 2)
+                    replay_losses.append(replay_loss_)
+                    replay_loss += replay_loss_
+                elif self._replay_type == "agem":
                     store_grad(self._policy.parameters, self._actor_grad_xy, self._actor_grad_dims)
                     replay_batch = cast(TorchMiniBatch, replay_batch)
                     replay_loss_ = self.compute_actor_loss(replay_batch) / len(replay_batches)
                     replay_loss += replay_loss_
-                    replay_losses.append(replay_loss_.cpu().detach().numpy())
+                    replay_losses.append(replay_loss_)
 
             if self._replay_type in ['orl', 'bc', 'ewc', 'r_walk', 'si']:
                 loss += self._replay_actor_alpha * replay_loss
                 replay_loss = replay_loss.cpu().detach().numpy()
 
         loss.backward()
-
-        # if self._impl_id != 0:
-        #     print(f'self._impl_id: {self._impl_id}')
-        #     for q_func in self._q_func._q_funcs:
-        #         for task_id, fc in q_func._fcs.items():
-        #             print(f'self._q_func._fcs[{task_id}].weight.grad: {fc.weight.grad}')
-        #     for ((task_id, mu), (_, logstd)) in zip(self._policy._mus.items(), self._policy._logstds.items()):
-        #         print(f'self._policy._mus[{task_id}].weight.grad: {mu.weight.grad}')
-        #         print(f'self._policy._logs[{task_id}].weight.grad: {logstd.weight.grad}')
-        # else:
-        #     print(f'self._impl_id: {self._impl_id}')
 
         if self._replay_type == 'agem':
             replay_loss.backward()
@@ -544,8 +631,7 @@ class COImpl(COMOLImpl):
                 # copy gradients back
                 overwrite_grad(self._policy.parameters, self._actor_grads_da,
                                self._actor_grad_dims)
-        if step:
-            self._actor_optim.step()
+        self._actor_optim.step()
 
         if self._replay_type == 'r_walk':
             assert unreg_grads is not None
@@ -559,6 +645,201 @@ class COImpl(COMOLImpl):
         self.change_task(self._impl_id)
 
         return loss, replay_loss, replay_losses
+
+    @train_api
+    def begin_update_model(self, batch: TransitionMiniBatch):
+        assert self._dynamic is not None
+        assert self._model_optim is not None
+        batch = TorchMiniBatch(
+            batch,
+            self.device,
+            scaler=self.scaler,
+            action_scaler=self.action_scaler,
+            reward_scaler=self.reward_scaler,
+        )
+
+        self.change_task(self._impl_id)
+        self._q_func.eval()
+        self._policy.eval()
+        self._dynamic.train()
+        if self._use_phi:
+            self._phi.eval()
+            self._psi.eval()
+
+        self._model_optim.zero_grad()
+        loss = self._dynamic.compute_error(
+            observations=batch.observations,
+            actions=batch.actions,
+            rewards=batch.rewards,
+            next_observations=batch.next_observations,
+        )
+
+        self._model_optim.zero_grad()
+        loss.backward()
+        self._model_optim.step()
+
+        return loss.cpu().detach().numpy()
+
+    @train_api
+    def update_model(self, batch: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[torch.Tensor]]]=None):
+        assert self._dynamic is not None
+        assert self._model_optim is not None
+        batch = TorchMiniBatch(
+            batch,
+            self.device,
+            scaler=self.scaler,
+            action_scaler=self.action_scaler,
+            reward_scaler=self.reward_scaler,
+        )
+
+        self.change_task(self._impl_id)
+        self._q_func.eval()
+        self._policy.eval()
+        self._dynamic.train()
+        if self._use_phi:
+            self._phi.eval()
+            self._psi.eval()
+
+        if replay_batches is not None and len(replay_batches) != 0 and self._replay_type == 'gem':
+            for i, replay_batch in replay_batches.items():
+                replay_batch = dict(zip(replay_name, replay_batch))
+                replay_batch = Struct(**replay_batch)
+                replay_batch = cast(TorchMiniBatch, replay_batch)
+                replay_loss_ = self._dynamic.compute_error(
+                    observations=replay_batch.observations,
+                    actions=replay_batch.actions,
+                    rewards=replay_batch.rewards,
+                    next_observations=replay_batch.next_observations,
+                )
+                replay_loss_ /= len(replay_batches)
+                replay_loss = replay_loss_
+                replay_loss.backward()
+                store_grad(self._dynamic.parameters, self._model_grads_cs[i], self._model_grad_dims)
+        elif replay_batches is not None and len(replay_batches) != 0 and self._replay_type == 'r_walk':
+            curr_feat_ext = {n: p.clone().detach() for n, p in self._dynamic.named_parameters() if p.requires_grad}
+
+        self._model_optim.zero_grad()
+        loss = self._dynamic.compute_error(
+            observations=batch.observations,
+            actions=batch.actions,
+            rewards=batch.rewards,
+            next_observations=batch.next_observations,
+        )
+        unreg_grads = None
+        curr_feat_ext = None
+        replay_loss = 0
+        replay_losses = []
+        if replay_batches is not None and len(replay_batches) != 0:
+            for i, replay_batch in replay_batches.items():
+                self.change_task(i)
+                replay_batch = dict(zip(replay_name, replay_batch))
+                replay_batch = Struct(**replay_batch)
+                if self._replay_type == "orl":
+                    # 对于model来说没有bc和orl之分。
+                    replay_batch = cast(TorchMiniBatch, replay_batch)
+                    replay_loss_ = self._dynamic.compute_error(
+                        observations=replay_batch.observations,
+                        actions=replay_batch.actions,
+                        rewards=replay_batch.rewards,
+                        next_observations=replay_batch.next_observations,
+                    )
+                    replay_loss_ /= len(replay_batches)
+                    replay_loss += replay_loss_
+                    replay_losses.append(replay_loss_.cpu().detach().numpy())
+                elif self._replay_type == "bc":
+                    # 对于model来说没有bc和orl之分。
+                    replay_batch = cast(TorchMiniBatch, replay_batch)
+                    replay_loss_ = self._dynamic.compute_error(
+                        observations=replay_batch.observations,
+                        actions=replay_batch.actions,
+                        rewards=replay_batch.rewards,
+                        next_observations=replay_batch.next_observations,
+                    )
+                    replay_loss_ /= len(replay_batches)
+                    replay_loss += replay_loss_
+                    replay_losses.append(replay_loss_.cpu().detach().numpy())
+                elif self._replay_type == "ewc":
+                    replay_loss_ = 0
+                    for n, p in self._model_func.named_parameters():
+                        if n in self._model_fisher.keys():
+                            replay_loss_ = torch.sum(self._model_fisher[n] * (p - self._model_older_params[n]).pow(2)) / 2
+                    replay_losses.append(replay_loss_)
+                    replay_loss += replay_loss_
+                elif self._replay_type == 'r_walk':
+                    # store gradients without regularization term
+                    unreg_grads = {n: p.grad.clone().detach() for n, p in self._dynamic.named_parameters()
+                                   if p.grad is not None}
+
+                    self._model_optim.zero_grad()
+                    # Eq. 3: elastic weight consolidation quadratic penalty
+                    replay_loss_ = 0
+                    for n, p in self._model.named_parameters():
+                        if n in self._model_fisher.keys():
+                            replay_loss_ = torch.sum((self._model_fisher[n] + self._model_scores[n]) * (p - self.__model_params[n]).pow(2)) / 2
+                    replay_losses.append(replay_loss_)
+                    replay_loss += replay_loss_
+                elif self._replay_type == 'si':
+                    for n, p in self._dynamic.named_parameters():
+                        if p.grad is not None and n in self._model_fisher.keys():
+                            self._model_W[n].add_(-p.grad * (p.detach() - self._model_older_params[n]))
+                        self._model_older_params[n] = p.detach().clone()
+                    replay_loss_ = 0
+                    for n, p in self.named_parameters():
+                        if p.requires_grad:
+                            replay_loss_ += torch.sum(self._model_omega[n] * (p - self._model_older_params[n]) ** 2)
+                    replay_losses.append(replay_loss_)
+                    replay_loss += replay_loss_
+                elif self._replay_type == "agem":
+                    store_grad(self._dynamic.parameters, self._model_grad_xy, self._model_grad_dims)
+                    replay_batch = cast(TorchMiniBatch, replay_batch)
+                    replay_loss_ = self._dynamic.compute_error(
+                        observations=replay_batch.observations,
+                        actions=replay_batch.actions,
+                        rewards=replay_batch.rewards,
+                        next_observations=replay_batch.next_observations,
+                    )
+                    replay_loss_ /= len(replay_batches)
+                    replay_loss += replay_loss_
+                    replay_losses.append(replay_loss_)
+
+            if self._replay_type in ['orl', 'bc', 'ewc', 'r_walk', 'si']:
+                loss += self._replay_model_alpha * replay_loss
+                replay_loss = replay_loss.cpu().detach().numpy()
+
+        self._model_optim.zero_grad()
+        loss.backward()
+
+        if self._replay_type == 'agem':
+            replay_loss.backward()
+            store_grad(self._dynamic.parameters, self._model_grad_er, self._model_grad_dims)
+            dot_prod = torch.dot(self._model_grad_xy, self._model_grad_er)
+            if dot_prod.item() < 0:
+                g_tilde = project(gxy=self._model_grad_xy, ger=self._model_grad_er)
+                overwrite_grad(self._dynamic.parameters, g_tilde, self._model_grad_dims)
+            else:
+                overwrite_grad(self._dynamic.parameters, self._model_grad_xy, self._model_grad_dims)
+        elif self._replay_type == 'gem':
+            # copy gradient
+            store_grad(self._dynamic.parameters, self._model_grads_da, self._model_grad_dims)
+            dot_prod = torch.mm(self._model_grads_da.unsqueeze(0),
+                            torch.stack(self._model_grads_cs).T)
+            if (dot_prod < 0).sum() != 0:
+                project2cone2(self._model_grads_da.unsqueeze(1),
+                              torch.stack(self._model_grads_cs).T, margin=self._gem_gamma)
+                # copy gradients back
+                overwrite_grad(self._dynamic.parameters, self._model_grads_da,
+                               self._model_grad_dims)
+        self._model_optim.step()
+
+        if self._replay_type == 'r_walk':
+            assert unreg_grads is not None
+            assert curr_feat_ext is not None
+            with torch.no_grad():
+                for n, p in self._dynamic.named_parameters():
+                    if n in unreg_grads.keys():
+                        self._model_w[n] -= unreg_grads[n] * (p.detach() - curr_feat_ext[n])
+
+        return loss.cpu().detach().numpy()
 
     @train_api
     @torch_api()
@@ -702,6 +983,30 @@ class COImpl(COMOLImpl):
                 for p, p_targ in zip(params, targ_params):
                     p_targ.data.mul_(1 - self._tau)
                     p_targ.data.add_(self._tau * p.data)
+
+    def update_model_target(self) -> None:
+        assert self._dynamic is not None
+        assert self._targ_dynamic is not None
+        soft_sync(self._targ_dynamic, self._dynamic, self._tau)
+        with torch.no_grad():
+            for key in self._dynamic._mus:
+                params = self._dynamic._mus[key].parameters()
+                targ_params = self._targ_dynamic._mus[key].parameters()
+                for p, p_targ in zip(params, targ_params):
+                    p_targ.data.mul_(1 - self._tau)
+                    p_targ.data.add_(self._tau * p.data)
+            for key in self._dynamic._logstds:
+                params = self._dynamic._logstds[key].parameters()
+                targ_params = self._targ_dynamic._logstds[key].parameters()
+                for p, p_targ in zip(params, targ_params):
+                    p_targ.data.mul_(1 - self._tau)
+                    p_targ.data.add_(self._tau * p.data)
+            for key in self._dynamic._max_logstds:
+                self._targ_dynamic._max_logstds[key].data.mul_(1 - self._tau)
+                self._targ_dynamic._max_logstds[key].data.add_(self._tau * self._targ_dynamic._max_logstds[key].data)
+            for key in self._dynamic._min_logstds:
+                self._targ_dynamic._min_logstds[key].data.mul_(1 - self._tau)
+                self._targ_dynamic._min_logstds[key].data.add_(self._tau * self._targ_dynamic._min_logstds[key].data)
 
     def compute_fisher_matrix_diag(self, iterator, network, optimizer, update):
         # Store Fisher Information
@@ -854,18 +1159,29 @@ class COImpl(COMOLImpl):
             self._targ_policy._mus[task_id] = nn.Linear(self._targ_policy._mu.weight.shape[1], self._targ_policy._mu.weight.shape[0], bias=self._targ_policy._mu.bias is not None).to(self.device)
             self._policy._logstds[task_id] = nn.Linear(self._policy._logstd.weight.shape[1], self._policy._logstd.weight.shape[0], bias=self._policy._logstd.bias is not None).to(self.device)
             self._targ_policy._logstds[task_id] = nn.Linear(self._targ_policy._logstd.weight.shape[1], self._targ_policy._logstd.weight.shape[0], bias=self._targ_policy._logstd.bias is not None).to(self.device)
+
             for q_func in self._q_func._q_funcs:
                 q_func._fcs[task_id] = nn.Linear(q_func._fc.weight.shape[1], q_func._fc.weight.shape[0], bias=q_func._fc.bias is not None).to(self.device)
             for q_func in self._targ_q_func._q_funcs:
                 q_func._fcs[task_id] = nn.Linear(q_func._fc.weight.shape[1], q_func._fc.weight.shape[0], bias=q_func._fc.bias is not None).to(self.device)
+
             self._actor_optim.add_param_group({'params': list(self._policy._mus[task_id].parameters())})
-            if task_id != 0:
-                self._actor_optims[task_id] = self._actor_optim_factory.create(self._policy._mus[task_id].parameters(), lr=self._actor_learning_rate)
             self._actor_optim.add_param_group({'params': list(self._policy._logstds[task_id].parameters())})
+            if task_id != 0:
+                self._actor_optims[task_id] = self._actor_optim_factory.create(list(self._policy._mus[task_id].parameters()) + list(self._policy._logstds[task_id].parameters()), lr=self._actor_learning_rate)
+
             for q_func in self._q_func._q_funcs:
                 self._critic_optim.add_param_group({'params': list(q_func._fcs[task_id].parameters())})
                 if task_id != 0:
                     self._critic_optims[task_id] = self._critic_optim_factory.create(q_func._fcs[task_id].parameters(), lr=self._critic_learning_rate)
+
+            if self._use_model:
+                self._model_optim.add_param_group({'params': list(self._dynamic._mus[task_id].parameters())})
+                self._model_optim.add_param_group({'params': list(self._dynamic._logstds[task_id].parameters())})
+                self._model_optim.add_param_group({'params': [self._dynamic._max_logstds[task_id], self._dynamic._min_logstds[task_id]]})
+                for model in self._dynamic._models:
+                    self._model_optims[task_id] = self._model_optim_factory.create(list(self._dynamic._models[task_id].parameters()) + list(self._dynamic._logstds[task_id].paramters() + [self._dynamic._max_logstds[task_id], self._dynamic._min_logstds[task_id]]), lr=self._model_learning_rate)
+
         def _compute_logstd(self, h: torch.Tensor) -> torch.Tensor:
             clipped_logstd = self._logstds[task_id](h).clamp(self._min_logstd, self._max_logstd)
             return clipped_logstd
@@ -906,3 +1222,19 @@ class COImpl(COMOLImpl):
             q_func.forward = types.MethodType(forward, q_func)
         for q_func in self._targ_q_func._q_funcs:
             q_func.forward = types.MethodType(forward, q_func)
+        if self._use_model:
+            def compute_stats(
+                self, x: torch.Tensor, action: torch.Tensor
+            ) -> Tuple[torch.Tensor, torch.Tensor]:
+                h = self._encoder(x, action)
+
+                mu = self._mus[task_id](h)
+
+                # log standard deviation with bounds
+                logstd = self._logstds[task_id](h)
+                logstd = self._max_logstds[task_id] - F.softplus(self._max_logstd - logstd)
+                logstd = self._min_logstds[task_id] + F.softplus(logstd - self._min_logstd)
+
+                return mu, logstd
+            for model in self._dynamic._models:
+                model.compute_stats = types.MethodType(compute_stats, model)

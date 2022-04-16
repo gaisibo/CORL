@@ -128,7 +128,7 @@ def similar_phi(obs_batch, act_batch, obs_near, act_near, phi, input_indexes=Non
     smallest_distance, smallest_index = near_distances[:, 0], near_indexes[:, 0]
     return near_indexes, smallest_index, smallest_distance
 
-def similar_mb(mus, logstds, observations, rewards, network, topk=4, batch_size=64, input_indexes=None):
+def similar_mb(mus, logstds, observations, rewards, topk=4, batch_size=64, input_indexes=None):
     i = 0
     log_probs = []
     while i < observations.shape[0]:

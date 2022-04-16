@@ -76,7 +76,7 @@ def get_d4rl_local(dataset, timeout=300) -> MDPDataset:
 
     return mdp_dataset
 
-def split_cheetah(top_euclid, dataset_name):
+def split_cheetah(top_euclid, dataset_name, device='cuda:0'):
     origin_dataset, env = get_d4rl(dataset_name)
     names = dataset_name.split('-', 1)
     dataset_path = './dataset/gym_back/halfcheetah_wind_' + names[1][:-3].replace('-', '_') + '.h5df'
@@ -88,9 +88,9 @@ def split_cheetah(top_euclid, dataset_name):
     dataset_path = './dataset/gym_back/halfcheetah_back_' + names[1][:-3].replace('-', '_') + '.h5df'
     origin_dataset_back = get_d4rl_local(get_dataset(dataset_path, env.observation_space, env.action_space))
     env_back = HalfCheetahBackEnv()
-    return split_gym(top_euclid, dataset_name, origin_dataset, env, origin_dataset_back, env_back, origin_dataset_wind, env_wind, origin_dataset_light, env_light, compare_dim=1)
+    return split_gym(top_euclid, dataset_name, origin_dataset, env, origin_dataset_back, env_back, origin_dataset_wind, env_wind, origin_dataset_light, env_light, compare_dim=1, device=device)
 
-def split_hopper(top_euclid, dataset_name):
+def split_hopper(top_euclid, dataset_name, device='cuda:0'):
     origin_dataset, env = get_d4rl(dataset_name)
     names = dataset_name.split('-', 1)
     dataset_path = './dataset/gym_back/hopper_wind_' + names[1][:-3].replace('-', '_') + '.h5df'
@@ -102,9 +102,9 @@ def split_hopper(top_euclid, dataset_name):
     dataset_path = './dataset/gym_back/hopper_back_' + names[1][:-3].replace('-', '_') + '.h5df'
     origin_dataset_back = get_d4rl_local(get_dataset(dataset_path, env.observation_space, env.action_space))
     env_back = HopperBackEnv()
-    return split_gym(top_euclid, dataset_name, origin_dataset, env, origin_dataset_back, env_back, origin_dataset_wind, env_wind, origin_dataset_light, env_light, compare_dim=3)
+    return split_gym(top_euclid, dataset_name, origin_dataset, env, origin_dataset_back, env_back, origin_dataset_wind, env_wind, origin_dataset_light, env_light, compare_dim=3, device=device)
 
-def split_walker(top_euclid, dataset_name):
+def split_walker(top_euclid, dataset_name, device='cuda:0'):
     origin_dataset, env = get_d4rl(dataset_name)
     names = dataset_name.split('-', 1)
     dataset_path = './dataset/gym_back/walker2d_wind_' + names[1][:-3].replace('-', '_') + '.h5df'
@@ -116,9 +116,9 @@ def split_walker(top_euclid, dataset_name):
     dataset_path = './dataset/gym_back/walker2d_back_' + names[1][:-3].replace('-', '_') + '.h5df'
     origin_dataset_back = get_d4rl_local(get_dataset(dataset_path, env.observation_space, env.action_space))
     env_back = Walker2dBackEnv()
-    return split_gym(top_euclid, dataset_name, origin_dataset, env, origin_dataset_back, env_back, origin_dataset_wind, env_wind, origin_dataset_light, env_light, compare_dim=3)
+    return split_gym(top_euclid, dataset_name, origin_dataset, env, origin_dataset_back, env_back, origin_dataset_wind, env_wind, origin_dataset_light, env_light, compare_dim=3, device=device)
 
-def split_gym(top_euclid, dataset_name, origin_dataset, env, origin_dataset_back, env_back, origin_dataset_wind, env_wind, origin_dataset_light, env_light, compare_dim=3):
+def split_gym(top_euclid, dataset_name, origin_dataset, env, origin_dataset_back, env_back, origin_dataset_wind, env_wind, origin_dataset_light, env_light, compare_dim=3, device='cuda:0'):
 
     # fig = plt.figure()
     # obs = env.reset()
@@ -168,7 +168,7 @@ def split_gym(top_euclid, dataset_name, origin_dataset, env, origin_dataset_back
         transitions = [transition for episode in dataset.episodes for transition in episode]
         observations = np.stack([transition.observation for transition in transitions], axis=0)
         # print(f"observations.shape: {observations.shape}")
-        indexes_euclid = similar_euclid(torch.from_numpy(dataset.observations).cuda(), torch.from_numpy(observations).cuda(), dataset_name, dataset_num, compare_dim=compare_dim)[:dataset.actions.shape[0], :top_euclid]
+        indexes_euclid = similar_euclid(torch.from_numpy(dataset.observations).to(device), torch.from_numpy(observations).to(device), dataset_name, dataset_num, compare_dim=compare_dim)[:dataset.actions.shape[0], :top_euclid]
         # indexes_euclid = np.zeros_like(dataset.actions)
         real_action_size = dataset.actions.shape[1]
         task_id_numpy = np.eye(task_nums)[dataset_num].squeeze()

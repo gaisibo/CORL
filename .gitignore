@@ -14,3 +14,4 @@ test_*.txt
 output_*.txt
 *.hdf5
 *.log
+docker*
