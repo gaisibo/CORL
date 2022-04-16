@@ -66,12 +66,11 @@ def main(args, device):
             use_phi = True
         else:
             use_phi = False
-        co = CO(use_gpu=not args.use_cpu, batch_size=args.batch_size, id_size=task_nums, replay_type=args.replay_type, generate_type=args.generate_type, experience_type=args.experience_type, reduce_replay=args.reduce_replay, change_reward=args.change_reward, alpha_lr=args.alpha_lr, use_phi=use_phi, use_model=args.use_model)
+        co = CO(use_gpu=not args.use_cpu, batch_size=args.batch_size, id_size=task_nums, replay_type=args.replay_type, experience_type=args.experience_type, reduce_replay=args.reduce_replay, change_reward=args.change_reward, alpha_lr=args.alpha_lr, use_phi=use_phi, use_model=args.use_model)
     else:
         raise NotImplementedError
     experiment_name = "CO"
     algos_name = "_" + args.replay_type
-    algos_name += "_" + args.generate_type
     algos_name += "_" + args.experience_type
     algos_name += '_' + args.dataset
 
@@ -165,8 +164,8 @@ if __name__ == '__main__':
     parser.add_argument("--n_action_samples", default=4, type=int)
     parser.add_argument('--top_euclid', default=64, type=int)
     parser.add_argument('--replay_type', default='orl', type=str, choices=['orl', 'bc', 'ewc', 'gem', 'agem'])
-    parser.add_argument('--experience_type', default='siamese', type=str, choices=['siamese', 'model', 'random_transition', 'random_episode', 'min_reward', 'min_match', 'min_model', 'min_reward_end', 'min_reward_mean', 'min_match_end', 'min_match_mean', 'min_model_end', 'min_model_mean', 'min_reward', 'min_match', 'min_model', 'min_reward_end', 'min_reward_mean', 'min_match_end', 'min_match_mean', 'min_model_end', 'min_model_mean'])
-    parser.add_argument('--use_model', action='store_ture')
+    parser.add_argument('--experience_type', default='siamese', type=str, choices=['siamese', 'model', 'random_transition', 'random_episode', 'max_reward', 'max_match', 'max_model', 'max_reward_end', 'max_reward_mean', 'max_match_end', 'max_match_mean', 'max_model_end', 'max_model_mean', 'min_reward', 'min_match', 'min_model', 'min_reward_end', 'min_reward_mean', 'min_match_end', 'min_match_mean', 'min_model_end', 'min_model_mean'])
+    parser.add_argument('--use_model', action='store_true')
     parser.add_argument('--reduce_replay', default='retrain', type=str, choices=['retrain', 'no_retrain'])
     parser.add_argument('--change_reward', default='change', type=str, choices=['change', 'no_change'])
     parser.add_argument('--dense', default='dense', type=str)
@@ -175,13 +174,13 @@ if __name__ == '__main__':
     parser.add_argument('--use_cpu', action='store_true')
     args = parser.parse_args()
     if 'maze' in args.dataset:
-        args.model_path = 'd3rlpy_' + args.experience_type + '_' + args.generate_type + '_' + args.replay_type + '_' + args.reduce_replay + '_' + args.change_reward + '_' + args.dense + '_' + args.dataset + '_' + ('test' if args.test else ('train' if not args.eval else 'eval'))
+        args.model_path = 'd3rlpy_' + args.experience_type + '_' + args.replay_type + '_' + args.reduce_replay + '_' + args.change_reward + '_' + args.dense + '_' + args.dataset + '_' + ('test' if args.test else ('train' if not args.eval else 'eval'))
     else:
-        args.model_path = 'd3rlpy_' + args.experience_type + '_' + args.generate_type + '_' + args.replay_type + '_' + args.reduce_replay + '_' + args.change_reward + '_' + args.dataset + '_' + ('test' if args.test else ('train' if not args.eval else 'eval'))
+        args.model_path = 'd3rlpy_' + args.experience_type + '_' + args.replay_type + '_' + args.reduce_replay + '_' + args.change_reward + '_' + args.dataset + '_' + ('test' if args.test else ('train' if not args.eval else 'eval'))
     if not os.path.exists(args.model_path):
         os.makedirs(args.model_path)
     args.model_path +=  '/model_'
-    if 'model' in experienct_type:
+    if 'model' in args.experience_type:
         args.use_model = True
     global DATASET_PATH
     DATASET_PATH = './.d4rl/datasets/'

@@ -69,10 +69,9 @@ class COImpl(CQLImpl):
         scaler: Optional[Scaler],
         action_scaler: Optional[ActionScaler],
         reward_scaler: Optional[RewardScaler],
-        model_variance_type: int,
         model_n_ensembles: int,
         use_phi: bool,
-        use_dynamic: bool,
+        use_model: bool,
     ):
         super().__init__(
             observation_shape = observation_shape,
@@ -114,7 +113,7 @@ class COImpl(CQLImpl):
         self._agem_alpha = agem_alpha
 
         self._use_phi = use_phi
-        self._use_dynamic = use_dynamic
+        self._use_model = use_model
         self._phi_learning_rate = phi_learning_rate
         self._psi_learning_rate = psi_learning_rate
         self._phi_optim_factory = phi_optim_factory
@@ -122,6 +121,8 @@ class COImpl(CQLImpl):
 
         self._model_learning_rate = model_learning_rate
         self._model_optim_factory = model_optim_factory
+        self._model_encoder_factory = model_encoder_factory
+        self._model_n_ensembles = model_n_ensembles
 
         # initialized in build
 
@@ -132,13 +133,13 @@ class COImpl(CQLImpl):
             self._targ_phi = copy.deepcopy(self._phi)
             self._targ_psi = copy.deepcopy(self._psi)
 
-        if self._use_dynamic:
+        if self._use_model:
             self._dynamic = create_probabilistic_ensemble_dynamics_model(
                 self._observation_shape,
                 self._action_size,
-                self._encoder_factory,
-                n_ensembles=self._n_ensembles,
-                discrete_action=self._discrete_action,
+                self._model_encoder_factory,
+                n_ensembles=self._model_n_ensembles,
+                discrete_action=False,
             )
             self._targ_dynamic = copy.deepcopy(self._dynamic)
 
@@ -150,7 +151,7 @@ class COImpl(CQLImpl):
             self._psi_optim = self._psi_optim_factory.create(
                 self._psi.parameters(), lr=self._psi_learning_rate
             )
-        if self._use_dynamic:
+        if self._use_model:
             self._model_optim = self._model_optim_factory.create(
                 self._dynamic.parameters(), lr=self._model_learning_rate
             )
@@ -165,7 +166,7 @@ class COImpl(CQLImpl):
             self._actor_fisher = {n: torch.zeros(p.shape).to(self.device) for n, p in self._policy.named_parameters() if p.requires_grad}
             # Store current parameters for the next task
             self._actor_older_params = {n: p.clone().detach() for n, p in self._policy.named_parameters() if p.requires_grad}
-            if self._use_dynamic:
+            if self._use_model:
                 # Store fisher information weight importance
                 self._model_fisher = {n: torch.zeros(p.shape).to(self.device) for n, p in self._dynamic.named_parameters() if p.requires_grad}
                 # Store current parameters for the next task
@@ -177,7 +178,7 @@ class COImpl(CQLImpl):
                 # Page 7: "task-specific parameter importance over the entire training trajectory."
                 self._actor_w = {n: torch.zeros(p.shape).to(self.device) for n, p in self._policy.named_parameters() if p.requires_grad}
                 self._actor_scores = {n: torch.zeros(p.shape).to(self.device) for n, p in self._policy.named_parameters() if p.requires_grad}
-                if self._use_dynamic:
+                if self._use_model:
                     # Page 7: "task-specific parameter importance over the entire training trajectory."
                     self._model_w = {n: torch.zeros(p.shape).to(self.device) for n, p in self._dynamic.named_parameters() if p.requires_grad}
                     self._model_scores = {n: torch.zeros(p.shape).to(self.device) for n, p in self._dynamic.named_parameters() if p.requires_grad}
@@ -195,7 +196,7 @@ class COImpl(CQLImpl):
             self._actor_grads_cs = []
             self._actor_grads_da = torch.zeros(np.sum(self._actor_grad_dims)).to(self.device)
 
-            if self._use_dynamic:
+            if self._use_model:
                 self._model_grad_dims = []
                 for pp in self._dynamic.parameters():
                     self._model_grad_dims.append(pp.data.numel())
@@ -212,7 +213,7 @@ class COImpl(CQLImpl):
                 self._actor_grad_dims.append(param.data.numel())
             self._actor_grad_xy = torch.Tensor(np.sum(self._actor_grad_dims)).to(self.device)
             self._actor_grad_er = torch.Tensor(np.sum(self._actor_grad_dims)).to(self.device)
-            if self._use_dynamic:
+            if self._use_model:
                 self._model_grad_dims = []
                 for param in self._q_func.parameters():
                     self._model_grad_dims.append(param.data.numel())
@@ -233,7 +234,7 @@ class COImpl(CQLImpl):
         for q_func in self._targ_q_func._q_funcs:
             q_func._fcs = dict()
             q_func._fcs[task_id] = q_func._fc
-        if self._use_dynamic:
+        if self._use_model:
             for model in self._dynamic._models:
                 model._mus = dict()
                 model._mus[task_id] = model._mu
@@ -257,7 +258,7 @@ class COImpl(CQLImpl):
         self._using_id = task_id
         self._critic_optims = dict()
         self._actor_optims = dict()
-        if self._use_dynamic:
+        if self._use_model:
             self._model_optims = dict()
 
     @train_api
@@ -498,7 +499,7 @@ class COImpl(CQLImpl):
         if self._use_phi:
             self._phi.eval()
             self._psi.eval()
-        if self._use_dynamic:
+        if self._use_model:
             self._dynamic.eval()
 
         if replay_batches is not None and len(replay_batches) != 0 and self._replay_type == 'gem':
@@ -607,7 +608,7 @@ class COImpl(CQLImpl):
         return loss, replay_loss, replay_losses
 
     @train_api
-    def begin_update_model(self, batch: TransitionMiniBatch)
+    def begin_update_model(self, batch: TransitionMiniBatch):
         assert self._dynamic is not None
         assert self._model_optim is not None
         batch = TorchMiniBatch(
@@ -641,7 +642,7 @@ class COImpl(CQLImpl):
         return loss.cpu().detach().numpy()
 
     @train_api
-    def update_model(self, batch: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[torch.Tensor]]]=None)
+    def update_model(self, batch: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[torch.Tensor]]]=None):
         assert self._dynamic is not None
         assert self._model_optim is not None
         batch = TorchMiniBatch(
@@ -1059,7 +1060,7 @@ class COImpl(CQLImpl):
                 if task_id != 0:
                     self._critic_optims[task_id] = self._critic_optim_factory.create(q_func._fcs[task_id].parameters(), lr=self._critic_learning_rate)
 
-            if self._use_dynamic:
+            if self._use_model:
                 self._model_optim.add_param_group({'params': list(self._dynamic._mus[task_id].parameters())})
                 self._model_optim.add_param_group({'params': list(self._dynamic._logstds[task_id].parameters())})
                 self._model_optim.add_param_group({'params': [self._dynamic._max_logstds[task_id], self._dynamic._min_logstds[task_id]]})
@@ -1106,7 +1107,7 @@ class COImpl(CQLImpl):
             q_func.forward = types.MethodType(forward, q_func)
         for q_func in self._targ_q_func._q_funcs:
             q_func.forward = types.MethodType(forward, q_func)
-        if self._use_dynamic:
+        if self._use_model:
             def compute_stats(
                 self, x: torch.Tensor, action: torch.Tensor
             ) -> Tuple[torch.Tensor, torch.Tensor]:

@@ -166,14 +166,17 @@ class CO(CQL):
         alpha_learning_rate: float = 0,
         phi_learning_rate: float = 1e-4,
         psi_learning_rate: float = 1e-4,
+        model_learning_rate: float = 1e-3,
         actor_optim_factory: OptimizerFactory = AdamFactory(),
         critic_optim_factory : OptimizerFactory = AdamFactory(),
         temp_optim_factory: OptimizerFactory = AdamFactory(),
         alpha_optim_factory: OptimizerFactory = AdamFactory(),
         phi_optim_factory: OptimizerFactory = AdamFactory(),
         psi_optim_factory: OptimizerFactory = AdamFactory(),
+        model_optim_factory: OptimizerFactory = AdamFactory(),
         actor_encoder_factory: EncoderArg = "default",
         critic_encoder_factory: EncoderArg = "default",
+        model_encoder_factory: EncoderArg = "default",
         q_func_factory: QFuncArg = "mean",
         replay_actor_alpha = 1,
         replay_critic_alpha = 1,
@@ -214,6 +217,7 @@ class CO(CQL):
         phi_topk = 20,
         retrain_topk = 4,
         log_prob_topk = 10,
+        model_n_ensembles = 5,
         experience_type = 'random_transition',
         change_reward = 'change',
         reduce_replay = 'retrain',
@@ -295,6 +299,10 @@ class CO(CQL):
         self._begin_grad_step = 0
 
         self._dynamics = None
+        self._model_learning_rate = model_learning_rate
+        self._model_optim_factory = model_optim_factory
+        self._model_encoder_factory = model_encoder_factory
+        self._model_n_ensembles = model_n_ensembles
         self._use_phi = use_phi
         self._use_model = use_model
 
@@ -311,14 +319,17 @@ class CO(CQL):
             alpha_learning_rate=self._alpha_learning_rate,
             phi_learning_rate=self._phi_learning_rate,
             psi_learning_rate=self._psi_learning_rate,
+            model_learning_rate=self._model_learning_rate,
             actor_optim_factory=self._actor_optim_factory,
             critic_optim_factory=self._critic_optim_factory,
             temp_optim_factory=self._temp_optim_factory,
             alpha_optim_factory=self._alpha_optim_factory,
             phi_optim_factory=self._phi_optim_factory,
             psi_optim_factory=self._psi_optim_factory,
+            model_optim_factory=self._model_optim_factory,
             actor_encoder_factory=self._actor_encoder_factory,
             critic_encoder_factory=self._critic_encoder_factory,
+            model_encoder_factory=self._model_encoder_factory,
             q_func_factory=self._q_func_factory,
             replay_critic_alpha=self._replay_critic_alpha,
             replay_actor_alpha=self._replay_actor_alpha,
@@ -338,6 +349,9 @@ class CO(CQL):
             scaler=self._scaler,
             action_scaler=self._action_scaler,
             reward_scaler=self._reward_scaler,
+            model_n_ensembles=self._model_n_ensembles,
+            use_phi=self._use_phi,
+            use_model=self._use_model,
         )
         self._impl.build(task_id)
 
@@ -1655,7 +1669,6 @@ class CO(CQL):
                     logstds = torch.stack(logstds, dim=1)
                     mus = mus[torch.arange(start_observations.shape[0]), torch.randint(len(self._dynamics._impl._dynamics._models), size=(start_observations.shape[0],))]
                     logstds = logstds[torch.arange(start_observations.shape[0]), torch.randint(len(self._dynamics._impl._dynamics._models), size=(start_observations.shape[0],))]
-                    dist = Normal(mus, torch.exp(logstds))
 
                 near_indexes_list = []
                 if start_indexes.shape[0] > 0:
@@ -1806,7 +1819,7 @@ class CO(CQL):
             transition_next_observations = torch.from_numpy(transition_next_observations).to(self._impl.device)
             mus, logstds = [], []
             for model in self._impl._dynamic._models:
-                mu, logstd = model.compute_stats(transition_observations, transition_actions).to(self._impl.device))
+                mu, logstd = model.compute_stats(transition_observations, transition_actions).to(self._impl.device)
                 mus.append(mu)
                 logstds.append(logstd)
             mus = torch.stack(mus, dim=1)
@@ -1883,7 +1896,7 @@ class CO(CQL):
                 episodes = sorted(episodes, key=lambda x: x.log_prob)
             for episode in episodes:
                 del episode.log_prob
-        elif self._experience_type[4:] in ['model_end', 'model_mean']
+        elif self._experience_type[4:] in ['model_end', 'model_mean']:
             for episode in episodes:
                 transitions = episode.transitions
                 transition_observations = np.stack([transition.observation for transition in transitions])
@@ -1896,7 +1909,7 @@ class CO(CQL):
                 transition_next_observations = torch.from_numpy(transition_next_observations).to(self._impl.device)
                 mus, logstds = [], []
                 for model in self._impl._dynamic._models:
-                    mu, logstd = model.compute_stats(transition_observations, transition_actions).to(self._impl.device))
+                    mu, logstd = model.compute_stats(transition_observations, transition_actions).to(self._impl.device)
                     mus.append(mu)
                     logstds.append(logstd)
                 mus = torch.stack(mus, dim=1)
