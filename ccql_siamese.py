@@ -19,7 +19,7 @@ from d3rlpy.metrics.scorer import soft_opc_scorer, initial_state_value_estimatio
 from d3rlpy.dataset import MDPDataset
 # from myd3rlpy.datasets import get_d4rl
 from utils.k_means import kmeans
-from myd3rlpy.metrics.scorer import bc_error_scorer, td_error_scorer, evaluate_on_environment, q_diffs_scorer
+from myd3rlpy.metrics.scorer import bc_error_scorer, td_error_scorer, evaluate_on_environment
 from myd3rlpy.siamese_similar import similar_psi, similar_phi
 from myd3rlpy.dynamics.probabilistic_ensemble_dynamics import ProbabilisticEnsembleDynamics
 
@@ -92,6 +92,7 @@ def main(args, device):
                 real_observation_size = real_observation_size,
                 eval_episodes=origin_datasets,
                 n_epochs=args.n_epochs if not args.test else 1,
+                n_dynamic_epochs=args.n_dynamic_epochs if not args.test else 1,
                 n_begin_epochs=args.n_begin_epochs if not args.test else 1,
                 experiment_name=experiment_name + algos_name,
                 scorers={
@@ -102,19 +103,15 @@ def main(args, device):
                 },
                 test=args.test,
             )
-            scorers={
-                'conservitive_env': q_diffs_scorer(finish_id=task_id),
-            }
-            co._evaluate(origin_datasets, scorers, co._active_logger)
             if args.algos == 'co':
-                if args.experience_type in ['siamese', 'model']:
-                    replay_datasets[task_id], save_datasets[task_id] = co.generate_replay_data_phi(action_datasets[task_id], original, in_task=False, max_save_num=args.max_save_num, real_action_size=real_action_size, real_observation_size=real_observation_size)
+                if args.experience_type in 'model':
+                    replay_datasets[task_id], save_datasets[task_id] = co.generate_replay_data_trajectory(action_datasets[task_id], original, max_save_num=args.max_save_num, real_action_size=real_action_size, real_observation_size=real_observation_size)
                     print(f"len(replay_datasets[task_id]): {len(replay_datasets[task_id])}")
                 elif args.experience_type in ['random_transition', 'max_reward', 'max_match', 'max_model', 'min_reward', 'min_match', 'min_model']:
-                    replay_datasets[task_id], save_datasets[task_id] = co.generate_replay_data_transition(action_datasets[task_id], max_save_num=args.max_save_num, real_action_size=real_action_size, in_task=False)
+                    replay_datasets[task_id], save_datasets[task_id] = co.generate_replay_data_transition(action_datasets[task_id], max_save_num=args.max_save_num, real_action_size=real_action_size)
                     print(f"len(replay_datasets[task_id]): {len(replay_datasets[task_id])}")
                 elif args.experience_type in ['random_episode', 'max_reward_end', 'max_reward_mean', 'max_match_end', 'max_match_mean', 'max_model_end', 'max_model_mean', 'min_reward_end', 'min_reward_mean', 'min_match_end', 'min_match_mean', 'min_model_end', 'min_model_mean']:
-                    replay_datasets[task_id], save_datasets[task_id] = co.generate_replay_data_episode(action_datasets[task_id], max_save_num=args.max_save_num, real_action_size=real_action_size, in_task=False)
+                    replay_datasets[task_id], save_datasets[task_id] = co.generate_replay_data_episode(action_datasets[task_id], max_save_num=args.max_save_num, real_action_size=real_action_size)
                     print(f"len(replay_datasets[task_id]): {len(replay_datasets[task_id])}")
                 else:
                     replay_datasets = None
@@ -159,6 +156,7 @@ if __name__ == '__main__':
     parser.add_argument('--eval', action='store_true')
     parser.add_argument('--test', action='store_true')
     parser.add_argument("--n_epochs", default=100, type=int)
+    parser.add_argument("--n_dynamic_epochs", default=100, type=int)
     parser.add_argument("--n_begin_epochs", default=20, type=int)
     parser.add_argument("--n_action_samples", default=4, type=int)
     parser.add_argument('--top_euclid', default=64, type=int)

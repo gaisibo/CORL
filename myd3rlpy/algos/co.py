@@ -276,6 +276,7 @@ class CO(CQL):
         self._ewc_r_walk_alpha = ewc_r_walk_alpha
         self._damping = damping
         self._epsilon = epsilon
+        self._real_ratio = real_ratio
 
         self._phi_optim_factory = phi_optim_factory
         self._psi_optim_factory = psi_optim_factory
@@ -361,6 +362,7 @@ class CO(CQL):
             model_n_ensembles=self._model_n_ensembles,
             use_phi=self._use_phi,
             use_model=self._use_model,
+            real_ratio=self._real_ratio,
         )
         self._impl.build(task_id)
 
@@ -443,8 +445,8 @@ class CO(CQL):
         return metrics
 
     def _update_model(self, batch: TransitionMiniBatch):
-        assert self._dynamics._impl is not None
-        loss = self._dynamics._impl.update(batch)
+        assert self._impl is not None
+        loss = self._impl.update_model(batch)
         return {"loss": loss}
 
     def fit(
@@ -1055,12 +1057,12 @@ class CO(CQL):
             self._active_logger = None
 
             # for EWC
-            if self._replay_type == 'agem':
-                self._impl.agem_post_train_process(iterator)
+            if self._replay_type in ['r_walk', 'ewc']:
+                self._impl.ewc_r_walk_post_train_process(iterator)
+            elif self._replay_type == 'si':
+                self._impl.si_post_train_process
             elif self._replay_type == 'gem':
-                self._impl.gem_post_train_process()
-            elif self._replay_type == 'r_walk':
-                self._impl.r_walk_post_train_process(iterator)
+                self._impl.gem_post_train_process
 
         else:
             replay_buffer = ReplayBuffer(real_observation_size, real_action_size)
@@ -1943,53 +1945,6 @@ class CO(CQL):
                 episodes = sorted(episodes, key=lambda x: x.log_prob)
             for episode in episodes:
                 del episode.log_prob
-        else:
-            raise NotImplementedError
-        transitions = [transition for episode in episodes for transition in episode.transitions]
-        transitions = transitions[:max_save_num]
-        new_transitions = []
-        for transition in transitions:
-            new_transitions.append(
-                transition
-            )
-
-        replay_observations = torch.stack([torch.from_numpy(transition.observation) for transition in new_transitions], dim=0)
-        replay_actions = torch.stack([torch.from_numpy(transition.action) for transition in new_transitions], dim=0)
-        replay_rewards = torch.stack([torch.from_numpy(np.array([transition.reward])) for transition in new_transitions], dim=0)
-        replay_next_observations = torch.stack([torch.from_numpy(transition.next_observation) for transition in new_transitions], dim=0)
-        replay_terminals = torch.stack([torch.from_numpy(np.array([transition.terminal])) for transition in new_transitions], dim=0)
-        if self._replay_type != 'bc':
-            replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals)
-            return new_transitions, replay_dataset
-        elif self._replay_type == 'bc':
-            replay_dists = self._impl._policy.dist(replay_observations.to(self._impl.device))
-            replay_means, replay_std_logs = replay_dists.mean.detach(), replay_dists.stddev.detach()
-            replay_qs = self._impl._q_func(replay_observations.to(self._impl.device), replay_actions[:, :real_action_size].to(self._impl.device)).detach()
-            replay_phis = self._impl._phi(replay_observations.to(self._impl.device), replay_actions[:, :real_action_size].to(self._impl.device)).detach()
-            replay_psis = self._impl._psi(replay_observations.to(self._impl.device)).detach()
-            replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals, replay_means, replay_std_logs, replay_qs, replay_phis, replay_psis)
-            return replay_dataset, replay_dataset
-
-    def generate_replay_data_episode(self, dataset, max_save_num=1000, real_action_size=1):
-        if isinstance(dataset, MDPDataset):
-            episodes = dataset.episodes
-        else:
-            episodes = dataset
-        if self._experience_type == 'random_episode':
-            random.shuffle(episodes)
-        elif self._experience_type == 'max_reward_end':
-            episodes = sorted(episodes, key=lambda x: x.rewards[-1], reversed=True)
-        elif self._experience_type == 'max_reward_mean':
-            episodes = sorted(episodes, key=lambda x: sum(x.rewards) / len(x.rewards), reversed=True)
-        elif self._experience_type in ['max_match_end', 'max_match_mean']:
-            for episode in episodes:
-                for transition in episode.transitions:
-                    transition_dists = self._impl._policy.dist(torch.from_numpy(transition.observations).to(self._impl.device))
-                    transition.log_prob = transition_dists.log_prob(torch.from_numpy(transition.actions[:, :real_action_size]).to(self._impl.device)).sum(dim=1)
-            if self._experience_type == 'max_match_end':
-                episodes = sorted(trainsitions, key=lambda x: x.log_prob[-1], reversed=True)
-            elif self._experience_type == 'max_match_mean':
-                episodes = sorted(trainsitions, key=lambda x: sum(x.log_prob) / len(x.log_prob), reversed=True)
         else:
             raise NotImplementedError
         transitions = [transition for episode in episodes for transition in episode.transitions]
