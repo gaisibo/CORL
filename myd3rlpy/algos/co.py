@@ -774,7 +774,9 @@ class CO(CQL):
 
                         iterator.reset()
 
-                        for itr in range_gen:
+                        for batch_num, itr in enumerate(range_gen):
+                            if batch_num > 1000 and test:
+                                break
 
                             with logger.measure_time("step"):
                                 # pick transitions
@@ -911,7 +913,9 @@ class CO(CQL):
                 else:
                     replay_iterators = None
 
-                for itr in range_gen:
+                for batch_num, itr in enumerate(range_gen):
+                    if batch_num > 1000 and test:
+                        break
 
                     # generate new transitions with dynamics models
                     if self._use_model in model_type:
@@ -1678,15 +1682,15 @@ class CO(CQL):
                         logstds.append(logstd)
                     mus = torch.stack(mus, dim=1)
                     logstds = torch.stack(logstds, dim=1)
-                    mus = mus[torch.arange(start_observations.shape[0]), torch.randint(len(self._dynamics._impl._dynamics._models), size=(start_observations.shape[0],))]
-                    logstds = logstds[torch.arange(start_observations.shape[0]), torch.randint(len(self._dynamics._impl._dynamics._models), size=(start_observations.shape[0],))]
+                    mus = mus[torch.arange(start_observations.shape[0]), torch.randint(len(self._impl._dynamic._models), size=(start_observations.shape[0],))]
+                    logstds = logstds[torch.arange(start_observations.shape[0]), torch.randint(len(self._impl._dynamic._models), size=(start_observations.shape[0],))]
 
                 near_indexes_list = []
                 if start_indexes.shape[0] > 0:
                     if self._experience_type == 'siamese':
-                        near_indexes, _, _ = similar_phi(start_observations, start_actions[:, :real_action_size], near_observations, near_actions, self._impl._phi, indexes_euclid, topk=self._phi_topk)
+                        near_indexes, _, _ = similar_phi(start_observations, start_actions[:, :real_action_size], near_observations, near_actions, self._impl._phi, input_indexes=indexes_euclid, topk=self._phi_topk)
                     elif self._experience_type == 'model':
-                        near_indexes, _, _ = similar_mb(mus[0], logstds[0], near_observations, np.expand_dims(near_rewards, axis=1), topk=self._phi_topk, input_indexes=line_indexes)
+                        near_indexes, _, _ = similar_mb(mus, logstds, near_observations, np.expand_dims(near_rewards, axis=2), topk=self._phi_topk, input_indexes=indexes_euclid)
                     for i in range(near_indexes.shape[0]):
                         near_indexes_list.append(near_indexes[i])
                 near_indexes_list.reverse()
