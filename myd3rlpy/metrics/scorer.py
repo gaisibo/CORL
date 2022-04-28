@@ -160,7 +160,7 @@ def td_error_scorer(real_action_size: int) -> Callable[..., Callable[...,float]]
 # 
 
 def evaluate_on_environment(
-    env: gym.Env, test_id: int, n_trials: int = 10, epsilon: float = 0.0, render: bool = False
+    env: gym.Env, test_id: int, n_trials: int = 100, epsilon: float = 0.0, render: bool = False
 ) -> Callable[..., float]:
     """Returns scorer function of evaluation on environment.
     This function returns scorer function, which is suitable to the standard
@@ -237,4 +237,24 @@ def evaluate_on_environment(
         algo._impl.change_task(save_id)
         return float(np.mean(episode_rewards))
 
+    return scorer
+
+def q_error_scorer(real_action_size: int, test_id: int) -> Callable[..., float]:
+    def scorer(algo, replay_iterator):
+        with torch.no_grad():
+            save_id = algo._impl._impl_id
+            algo._impl.change_task(test_id)
+            total_errors = []
+            for batch in replay_iterator:
+                batch = dict(zip(replay_name, batch))
+                batch = Struct(**batch)
+                observations = batch.observations.to(algo._impl.device)
+                actions = batch.policy_actions.to(algo._impl.device)[:, :real_action_size]
+                qs = batch.qs.to(algo._impl.device)
+                rebuild_qs = algo._impl._q_func.forward(observations, actions)
+                loss = F.mse_loss(rebuild_qs, qs)
+                total_errors.append(loss)
+            total_errors = torch.stack(total_errors, dim=0)
+            algo._impl.change_task(save_id)
+        return float(torch.mean(total_errors).detach().cpu().numpy())
     return scorer

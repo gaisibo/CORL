@@ -17,9 +17,10 @@ import d3rlpy
 from d3rlpy.ope import FQE
 from d3rlpy.metrics.scorer import soft_opc_scorer, initial_state_value_estimation_scorer
 from d3rlpy.dataset import MDPDataset
+from d3rlpy.torch_utility import get_state_dict, set_state_dict
 # from myd3rlpy.datasets import get_d4rl
 from utils.k_means import kmeans
-from myd3rlpy.metrics.scorer import bc_error_scorer, td_error_scorer, evaluate_on_environment
+from myd3rlpy.metrics.scorer import bc_error_scorer, td_error_scorer, evaluate_on_environment, q_error_scorer
 from myd3rlpy.siamese_similar import similar_psi, similar_phi
 from myd3rlpy.dynamics.probabilistic_ensemble_dynamics import ProbabilisticEnsembleDynamics
 
@@ -66,34 +67,44 @@ def main(args, device):
             use_phi = True
         else:
             use_phi = False
-        co = CO(use_gpu=not args.use_cpu, batch_size=args.batch_size, id_size=task_nums, replay_type=args.replay_type, experience_type=args.experience_type, reduce_replay=args.reduce_replay, change_reward=args.change_reward, alpha_lr=args.alpha_lr, use_phi=use_phi, use_model=args.use_model)
+        co = CO(use_gpu=not args.use_cpu, batch_size=args.batch_size, id_size=task_nums, replay_type=args.replay_type, experience_type=args.experience_type, sample_type=args.sample_type, reduce_replay=args.reduce_replay, change_transition=args.change_transition, use_phi=use_phi, use_model=args.use_model, replay_critic=args.replay_critic, replay_model=args.replay_model, generate_step=args.generate_step, model_noise=args.model_noise)
     else:
         raise NotImplementedError
     experiment_name = "CO"
-    algos_name = "_" + args.replay_type
-    algos_name += "_" + args.experience_type
-    algos_name += '_' + args.dataset
+    # algos_name = "_" + args.replay_type
+    # algos_name += "_" + args.experience_type
+    # algos_name += '_' + args.dataset
+    # algos_name += '_' + str(args.max_save_num)
+    algos_name = args.dataset
 
     if not args.eval:
         replay_datasets = dict()
         save_datasets = dict()
         eval_datasets = dict()
         for task_id, dataset in action_datasets.items():
+            start_time = time.perf_counter()
+            print(f'Start Training {task_id}')
             eval_datasets[task_id] = dataset
             draw_path = args.model_path + algos_name + '_trajectories_' + str(task_id)
+            dynamic_path = args.model_path + algos_name + '_' + str(task_id) + '_dynamic.pt'
+            dynamic_state_dict = torch.load(dynamic_path, map_location=device)
 
             # train
             co.fit(
                 task_id,
                 dataset,
                 replay_datasets,
-                original = original[task_id],
                 real_action_size = real_action_size,
                 real_observation_size = real_observation_size,
                 eval_episodes=origin_datasets,
-                n_epochs=args.n_epochs if not args.test else 1,
-                n_dynamic_epochs=args.n_dynamic_epochs if not args.test else 1,
-                n_begin_epochs=args.n_begin_epochs if not args.test else 1,
+                # n_epochs=args.n_epochs if not args.test else 1,
+                n_steps=args.n_steps,
+                n_steps_per_epoch=args.n_steps_per_epoch,
+                n_dynamic_steps=args.n_dynamic_steps,
+                n_dynamic_steps_per_epoch=args.n_dynamic_steps_per_epoch,
+                n_begin_steps=args.n_begin_steps,
+                n_begin_steps_per_epoch=args.n_begin_steps_per_epoch,
+                dynamic_state_dict=dynamic_state_dict,
                 experiment_name=experiment_name + algos_name,
                 scorers={
                     "real_env0": evaluate_on_environment(envs[0], test_id=0),
@@ -103,8 +114,14 @@ def main(args, device):
                 },
                 test=args.test,
             )
+            print(f'Training task {task_id} time: {time.perf_counter() - start_time}')
+            co.save_model(args.model_path + algos_name + '_' + str(task_id) + '.pt')
+
+            if args.experience_type in ['model', 'siamese'] and args.sample_type == 'retrain':
+                state_dict = get_state_dict(co._impl)
             if args.algos == 'co':
-                if args.experience_type in 'model':
+                start_time = time.perf_counter()
+                if args.experience_type in ['model', 'siamese']:
                     replay_datasets[task_id], save_datasets[task_id] = co.generate_replay_data_trajectory(action_datasets[task_id], original, max_save_num=args.max_save_num, real_action_size=real_action_size, real_observation_size=real_observation_size)
                     print(f"len(replay_datasets[task_id]): {len(replay_datasets[task_id])}")
                 elif args.experience_type in ['random_transition', 'max_reward', 'max_match', 'max_model', 'min_reward', 'min_match', 'min_model']:
@@ -115,8 +132,11 @@ def main(args, device):
                     print(f"len(replay_datasets[task_id]): {len(replay_datasets[task_id])}")
                 else:
                     replay_datasets = None
+                print(f'Select Replay Buffer Time: {time.perf_counter() - start_time}')
             else:
                 raise NotImplementedError
+            if args.experience_type in ['model', 'siamese'] and args.sample_type == 'retrain':
+                set_state_dict(co._impl, state_dict)
             co.save_model(args.model_path + algos_name + '_' + str(task_id) + '.pt')
             if args.test and task_id >= 1:
                 break
@@ -148,32 +168,43 @@ if __name__ == '__main__':
     parser.add_argument('--near_threshold', default=1, type=float)
     parser.add_argument('--siamese_threshold', default=1, type=float)
     parser.add_argument('--eval_batch_size', default=256, type=int)
-    parser.add_argument('--batch_size', default=256, type=int)
+    parser.add_argument('--batch_size', default=1024, type=int)
     parser.add_argument('--topk', default=4, type=int)
     parser.add_argument('--max_save_num', default=1000, type=int)
     parser.add_argument('--task_split_type', default='undirected', type=str)
     parser.add_argument('--algos', default='co', type=str)
     parser.add_argument('--eval', action='store_true')
     parser.add_argument('--test', action='store_true')
-    parser.add_argument("--n_epochs", default=100, type=int)
-    parser.add_argument("--n_dynamic_epochs", default=100, type=int)
-    parser.add_argument("--n_begin_epochs", default=20, type=int)
+    parser.add_argument("--n_steps", default=500000, type=int)
+    parser.add_argument("--n_steps_per_epoch", default=5000, type=int)
+    parser.add_argument("--n_dynamic_steps", default=500000, type=int)
+    parser.add_argument("--n_dynamic_steps_per_epoch", default=5000, type=int)
+    parser.add_argument("--n_begin_steps", default=50000, type=int)
+    parser.add_argument("--n_begin_steps_per_epoch", default=5000, type=int)
     parser.add_argument("--n_action_samples", default=4, type=int)
     parser.add_argument('--top_euclid', default=64, type=int)
     parser.add_argument('--replay_type', default='orl', type=str, choices=['orl', 'bc', 'ewc', 'gem', 'agem', 'r_walk', 'si'])
     parser.add_argument('--experience_type', default='siamese', type=str, choices=['siamese', 'model', 'random_transition', 'random_episode', 'max_reward', 'max_match', 'max_model', 'max_reward_end', 'max_reward_mean', 'max_match_end', 'max_match_mean', 'max_model_end', 'max_model_mean', 'min_reward', 'min_match', 'min_model', 'min_reward_end', 'min_reward_mean', 'min_match_end', 'min_match_mean', 'min_model_end', 'min_model_mean'])
+    parser.add_argument('--sample_type', default='retrain', type=str, choices=['retrain', 'noise'])
     parser.add_argument('--use_model', action='store_true')
     parser.add_argument('--reduce_replay', default='retrain', type=str, choices=['retrain', 'no_retrain'])
-    parser.add_argument('--change_reward', default='change', type=str, choices=['change', 'no_change'])
+    parser.add_argument('--change_transition', default='change', type=str, choices=['change_reward', 'no_change'])
     parser.add_argument('--dense', default='dense', type=str)
-    parser.add_argument("--alpha_lr", default=1e-4, type=float)
     parser.add_argument('--sum', default='no_sum', type=str)
+    parser.add_argument('--replay_critic', action='store_true')
+    parser.add_argument('--replay_model', action='store_true')
+    parser.add_argument('--generate_step', default=0, type=int)
+    parser.add_argument('--model_noise', default=0, type=float)
     parser.add_argument('--use_cpu', action='store_true')
     args = parser.parse_args()
+    # if 'maze' in args.dataset:
+    #     args.model_path = 'd3rlpy_' + args.experience_type + '_' + args.replay_type + '_' + args.reduce_replay + '_' + args.change_transition + '_' + args.dense + '_' + args.dataset + '_' + ('test' if args.test else ('train' if not args.eval else 'eval'))
+    # else:
+    #     args.model_path = 'd3rlpy_' + args.experience_type + '_' + args.replay_type + '_' + args.reduce_replay + '_' + args.change_transition + '_' + args.dataset + '_' + ('test' if args.test else ('train' if not args.eval else 'eval'))
     if 'maze' in args.dataset:
-        args.model_path = 'd3rlpy_' + args.experience_type + '_' + args.replay_type + '_' + args.reduce_replay + '_' + args.change_reward + '_' + args.dense + '_' + args.dataset + '_' + ('test' if args.test else ('train' if not args.eval else 'eval'))
+        args.model_path = 'd3rlpy' + '_' + args.dense + '_' + args.dataset
     else:
-        args.model_path = 'd3rlpy_' + args.experience_type + '_' + args.replay_type + '_' + args.reduce_replay + '_' + args.change_reward + '_' + args.dataset + '_' + ('test' if args.test else ('train' if not args.eval else 'eval'))
+        args.model_path = 'd3rlpy' + '_' + args.dataset
     if not os.path.exists(args.model_path):
         os.makedirs(args.model_path)
     args.model_path +=  '/model_'

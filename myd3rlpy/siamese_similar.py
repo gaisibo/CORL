@@ -129,17 +129,11 @@ def similar_phi(obs_batch, act_batch, obs_near, act_near, phi, input_indexes=Non
     return near_indexes, smallest_index, smallest_distance
 
 def similar_mb(mus, logstds, observations, rewards, topk=4, batch_size=64, input_indexes=None):
-    log_probs = []
-    for i in range(observations.shape[0]):
-        normal = Normal(mus[i], torch.exp(logstds[i]))
-        log_prob = normal.log_prob(torch.cat([torch.from_numpy(observations[i]), torch.from_numpy(rewards[i])], dim=1).to(mus.device))
-        log_prob = log_prob.sum(dim=1)
-        log_probs.append(log_prob)
-    log_prob = torch.stack(log_probs, dim=0)
-    near_distances, near_indexes = torch.topk(log_prob, topk)
-    near_indexes = near_indexes.cpu().detach().numpy()
+    normal = Normal(mus, torch.exp(logstds))
+    log_prob = normal.log_prob(torch.cat([torch.from_numpy(observations), torch.from_numpy(rewards)], dim=1).to(mus.device))
+    log_prob = log_prob.sum(dim=1)
+    category = torch.distributions.categorical.Categorical(logits=log_prob)
+    near_index = category.sample()
     if input_indexes is not None:
-        for i in range(near_indexes.shape[0]):
-            near_indexes[i, :] = input_indexes[i, near_indexes[i, :]]
-    smallest_distance, smallest_index = near_distances[0], near_indexes[0]
-    return near_indexes, smallest_index, smallest_distance
+        near_index = input_indexes[near_index]
+    return near_index
