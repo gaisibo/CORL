@@ -69,6 +69,7 @@ class COImpl(TD3PlusBCImpl):
         use_model: bool,
         replay_model: bool,
         replay_critic: bool,
+        replay_alpha: float,
     ):
         super().__init__(
             observation_shape = observation_shape,
@@ -101,6 +102,7 @@ class COImpl(TD3PlusBCImpl):
 
         self._use_phi = use_phi
         self._use_model = use_model
+        self._replay_alpha = replay_alpha
         self._replay_critic = replay_critic
         self._replay_model = replay_model
         self._phi_learning_rate = phi_learning_rate
@@ -445,7 +447,7 @@ class COImpl(TD3PlusBCImpl):
                     replay_losses.append(replay_loss_.cpu().detach().numpy())
 
             if self._replay_type in ['orl', 'bc', 'ewc', 'r_walk', 'si']:
-                loss += replay_loss / len(replay_batches)
+                loss += self._replay_alpha * replay_loss / len(replay_batches)
                 replay_loss = replay_loss.cpu().detach().numpy()
 
         loss.backward()
@@ -628,7 +630,7 @@ class COImpl(TD3PlusBCImpl):
                     replay_losses.append(replay_loss_)
 
             if self._replay_type in ['orl', 'bc', 'ewc', 'r_walk', 'si']:
-                loss += replay_loss / len(replay_batches)
+                loss += self._replay_alpha * replay_loss / len(replay_batches)
                 replay_loss = replay_loss.cpu().detach().numpy()
 
         loss.backward()
@@ -866,7 +868,7 @@ class COImpl(TD3PlusBCImpl):
                     replay_losses.append(replay_loss_)
 
             if self._replay_type in ['orl', 'bc', 'ewc', 'r_walk', 'si']:
-                loss += replay_loss / len(replay_batches)
+                loss += self._replay_alpha * replay_loss / len(replay_batches)
                 replay_loss = replay_loss.cpu().detach().numpy()
 
         self._model_optim.zero_grad()
