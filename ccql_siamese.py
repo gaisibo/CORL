@@ -67,7 +67,7 @@ def main(args, device):
             use_phi = True
         else:
             use_phi = False
-        co = CO(use_gpu=not args.use_cpu, batch_size=args.batch_size, id_size=task_nums, replay_type=args.replay_type, experience_type=args.experience_type, sample_type=args.sample_type, reduce_replay=args.reduce_replay, change_transition=args.change_transition, use_phi=use_phi, use_model=args.use_model, replay_critic=args.replay_critic, replay_model=args.replay_model, generate_step=args.generate_step, model_noise=args.model_noise)
+        co = CO(use_gpu=not args.use_cpu, batch_size=args.batch_size, id_size=task_nums, replay_type=args.replay_type, experience_type=args.experience_type, sample_type=args.sample_type, reduce_replay=args.reduce_replay, change_transition=args.change_transition, use_phi=use_phi, use_model=args.use_model, replay_critic=args.replay_critic, replay_model=args.replay_model, generate_step=args.generate_step, model_noise=args.model_noise, retrain_time=args.retrain_time, orl_alpha=args.orl_alpha)
     else:
         raise NotImplementedError
     experiment_name = "CO"
@@ -195,6 +195,8 @@ if __name__ == '__main__':
     parser.add_argument('--replay_model', action='store_true')
     parser.add_argument('--generate_step', default=0, type=int)
     parser.add_argument('--model_noise', default=0, type=float)
+    parser.add_argument('--train_time', type=int, default=1)
+    parser.add_argument('--orl_alpha', type=float, default=1)
     parser.add_argument('--use_cpu', action='store_true')
     args = parser.parse_args()
     # if 'maze' in args.dataset:
