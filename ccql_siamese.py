@@ -67,7 +67,7 @@ def main(args, device):
             use_phi = True
         else:
             use_phi = False
-        co = CO(use_gpu=not args.use_cpu, batch_size=args.batch_size, id_size=task_nums, replay_type=args.replay_type, experience_type=args.experience_type, sample_type=args.sample_type, reduce_replay=args.reduce_replay, use_phi=use_phi, use_model=args.use_model, replay_critic=args.replay_critic, replay_model=args.replay_model, generate_step=args.generate_step, model_noise=args.model_noise, retrain_time=args.retrain_time, orl_alpha=args.orl_alpha)
+        co = CO(use_gpu=not args.use_cpu, batch_size=args.batch_size, id_size=task_nums, replay_type=args.replay_type, experience_type=args.experience_type, sample_type=args.sample_type, reduce_replay=args.reduce_replay, use_phi=use_phi, use_model=args.use_model, replay_critic=args.replay_critic, replay_model=args.replay_model, replay_alpha=args.replay_alpha, generate_step=args.generate_step, model_noise=args.model_noise, retrain_time=args.retrain_time, orl_alpha=args.orl_alpha)
     else:
         raise NotImplementedError
     experiment_name = "CO"
@@ -76,7 +76,7 @@ def main(args, device):
     algos_name += '_' + args.sample_type
     algos_name += '_' + args.dataset
     algos_name += '_' + str(args.max_save_num)
-    algos_name += '_' + str(args.orl_alpha)
+    algos_name += '_' + str(args.replay_alpha)
     algos_name = args.dataset
 
     pretrain_name = args.model_path
@@ -86,18 +86,21 @@ def main(args, device):
         save_datasets = dict()
         eval_datasets = dict()
         for task_id, dataset in action_datasets.items():
+            task_id = str(task_id)
             start_time = time.perf_counter()
             print(f'Start Training {task_id}')
             eval_datasets[task_id] = dataset
             draw_path = args.model_path + algos_name + '_trajectories_' + str(task_id)
-            dynamic_path = args.model_path + '_' + str(task_id) + '_dynamic.pt'
+            dynamic_path = args.model_path + args.dataset + '_' + str(task_id) + '_dynamic.pt'
             dynamic_state_dict = torch.load(dynamic_path, map_location=device)
-            if task_id == 0:
-                pretrain_path = args.model_path + '_' + str(task_id) + '.pt'
+            if task_id == '0':
+                pretrain_path = args.model_path + args.dataset + '_' + str(task_id) + '.pt'
                 try:
                     pretrain_state_dict = torch.load(pretrain_path, map_location=device)
                 except:
                     pretrain_state_dict = None
+            else:
+                pretrain_state_dict = None
 
             # train
             co.fit(
@@ -207,6 +210,7 @@ if __name__ == '__main__':
     parser.add_argument('--model_noise', default=0, type=float)
     parser.add_argument('--retrain_time', type=int, default=1)
     parser.add_argument('--orl_alpha', type=float, default=1)
+    parser.add_argument('--replay_alpha', type=float, default=1)
     parser.add_argument('--use_cpu', action='store_true')
     args = parser.parse_args()
     # if 'maze' in args.dataset:
@@ -214,12 +218,11 @@ if __name__ == '__main__':
     # else:
     #     args.model_path = 'd3rlpy_' + args.experience_type + '_' + args.replay_type + '_' + args.reduce_replay + '_' + args.dataset + '_' + ('test' if args.test else ('train' if not args.eval else 'eval'))
     if 'maze' in args.dataset:
-        args.model_path = 'd3rlpy' + '_' + args.dense + '_' + args.dataset
+        args.model_path = 'd3rlpy' + '_' + args.dense + '_' + args.dataset + '/model_'
     else:
-        args.model_path = 'd3rlpy' + '_' + args.dataset
+        args.model_path = 'd3rlpy' + '_' + args.dataset + '/model_'
     if not os.path.exists(args.model_path):
         os.makedirs(args.model_path)
-    args.model_path +=  '/model_'
     if 'model' in args.experience_type:
         args.use_model = True
     global DATASET_PATH

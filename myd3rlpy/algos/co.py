@@ -209,6 +209,7 @@ class CO(TD3PlusBC):
         model_noise = 0,
         retrain_time = 10,
         orl_alpha = 1,
+        replay_alpha = 1,
 
         task_id = 0,
         **kwargs: Any
@@ -279,6 +280,7 @@ class CO(TD3PlusBC):
         self._model_noise = model_noise
         self._orl_alpha = orl_alpha
         self._retrain_time = retrain_time
+        self._replay_alpha = replay_alpha
 
     def _create_impl(
         self, observation_shape: Sequence[int], action_size: int, task_id: int
@@ -322,6 +324,7 @@ class CO(TD3PlusBC):
             use_model=self._use_model,
             replay_critic=self._replay_critic,
             replay_model=self._replay_model,
+            replay_alpha=self._replay_alpha,
         )
         self._impl.build(task_id)
 
@@ -726,18 +729,23 @@ class CO(TD3PlusBC):
             # update model
             if dynamic_state_dict is not None:
                 for key, value in dynamic_state_dict.items():
+                    print(f'dynamic: {key}: {value.shape}')
+                print()
+                for key, value in self._impl.named_parameters():
+                    print(f'impl: {key}: {value.shape}')
+                assert False
+                for key, value in dynamic_state_dict.items():
                     try:
                         obj = getattr(self._impl, key)
                         if isinstance(obj, (torch.nn.Module)):
                             obj = getattr(self._impl, key)
                             obj.load_state_dict(dynamic_state_dict[key])
                     except:
-                        print(f'error key: {key}')
+                        key = str(key)
                         obj = getattr(self._impl, key)
-                        print(obj.state_dict()['state'].keys())
-                        print()
-                        print(dynamic_state_dict[key]['state'].keys())
-                        obj.load_state_dict(dynamic_state_dict[key])
+                        if isinstance(obj, (torch.nn.Module)):
+                            obj = getattr(self._impl, key)
+                            obj.load_state_dict(dynamic_state_dict[key])
             else:
                 total_step = 0
                 for epoch in range(1, n_dynamic_epochs + 1):
