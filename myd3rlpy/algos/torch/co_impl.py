@@ -222,37 +222,45 @@ class COImpl(TD3PlusBCImpl):
                 self._model_grad_xy = torch.Tensor(np.sum(self._model_grad_dims)).to(self.device)
                 self._model_grad_er = torch.Tensor(np.sum(self._model_grad_dims)).to(self.device)
 
-        self._policy._fcs = dict()
-        self._policy._fcs[task_id] = self._policy._fc
+        _fcs = dict()
+        _fcs[task_id] = self._policy._fc
+        self._policy._fcs = nn.ModuleDict(_fcs)
         self._policy.forwards = dict()
         self._policy.forwards[task_id] = self._policy.forward
-        self._targ_policy._fcs = dict()
-        self._targ_policy._fcs[task_id] = self._targ_policy._fc
+        _fcs = dict()
+        _fcs[task_id] = self._targ_policy._fc
+        self._targ_policy._fcs = nn.ModuleDict(_fcs)
         self._targ_policy.forwards = dict()
         self._targ_policy.forwards[task_id] = self._targ_policy.forward
         self._actor_optims = dict()
         if self._replay_critic:
             for q_func in self._q_func._q_funcs:
-                q_func._fcs = dict()
-                q_func._fcs[task_id] = q_func._fc
+                _fcs = dict()
+                _fcs[task_id] = q_func._fc
+                q_func._fcs = nn.ModuleDict(_fcs)
                 q_func.forwards = dict()
                 q_func.forwards[task_id] = q_func.forward
             for q_func in self._targ_q_func._q_funcs:
-                q_func._fcs = dict()
-                q_func._fcs[task_id] = q_func._fc
+                _fcs = dict()
+                _fcs[task_id] = q_func._fc
+                q_func._fcs = nn.ModuleDict(_fcs)
                 q_func.forwards = dict()
                 q_func.forwards[task_id] = q_func.forward
             self._critic_optims = dict()
         if self._use_model and self._replay_model:
             for model in self._dynamic._models:
-                model._mus = dict()
-                model._mus[task_id] = model._mu
-                model._logstds = dict()
-                model._logstds[task_id] = model._logstd
-                model._max_logstds = dict()
-                model._max_logstds[task_id] = model._max_logstd
-                model._min_logstds = dict()
-                model._min_logstds[task_id] = model._min_logstd
+                _mus = dict()
+                _mus[task_id] = model._mu
+                model._mus = nn.ModuleDict(_mus)
+                _logstds = dict()
+                _logstds[task_id] = model._logstd
+                model._logstds = nn.ModuleDict(_mus)
+                _max_logstds = dict()
+                _max_logstds[task_id] = model._max_logstd
+                model._max_logstds = nn.ParameterDict(_mus)
+                _min_logstds = dict()
+                _min_logstds[task_id] = model._min_logstd
+                model._min_logstds = nn.ParameterDict(_mus)
                 model.compute_statses = dict()
                 model.compute_statses[task_id] = model.compute_stats
             self._model_optims = dict()
@@ -1186,8 +1194,14 @@ class COImpl(TD3PlusBCImpl):
             self._policy._fcs[task_id] = nn.Linear(self._policy._fc.weight.shape[1], self._policy._fc.weight.shape[0], bias=self._policy._fc.bias is not None).to(self.device)
             self._targ_policy._fcs[task_id] = nn.Linear(self._targ_policy._fc.weight.shape[1], self._targ_policy._fc.weight.shape[0], bias=self._targ_policy._fc.bias is not None).to(self.device)
 
-            self._actor_optim.add_param_group({'params': list(self._policy._fcs[task_id].parameters())})
-            if task_id != 0:
+            # self._actor_optim.add_param_group({'params': list(self._policy._fcs[task_id].parameters())})
+            self._actor_optim = self._actor_optim_factory.create(
+                self._policy.parameters(), lr=self._actor_learning_rate
+            )
+            for name, param in self._policy.named_parameters():
+                print(f'{name}: {param.shape}')
+            assert False
+            if tmin_id != 0:
                 self._actor_optims[task_id] = self._actor_optim_factory.create(list(self._policy._fcs[task_id].parameters()), lr=self._actor_learning_rate)
 
             def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -1209,7 +1223,10 @@ class COImpl(TD3PlusBCImpl):
                         model._min_logstds[task_id] = nn.Parameter(torch.empty(1, model._logstd.weight.shape[0], dtype=torch.float32).fill_(-10.0).to(self.device))
 
                 for q_func, targ_q_func in zip(self._q_func._q_funcs, self._targ_q_func._q_funcs):
-                    self._critic_optim.add_param_group({'params': list(q_func._fcs[task_id].parameters())})
+                    # self._critic_optim.add_param_group({'params': list(q_func._fcs[task_id].parameters())})
+                    self._critic_optim = self._critic_optim_factory.create(
+                        self._q_func.parameters(), lr=self._critic_learning_rate
+                    )
                     if task_id != 0:
                         self._critic_optims[task_id] = self._critic_optim_factory.create(q_func._fcs[task_id].parameters(), lr=self._critic_learning_rate)
                     def forward(self, x: torch.Tensor, action: torch.Tensor) -> torch.Tensor:
@@ -1219,9 +1236,10 @@ class COImpl(TD3PlusBCImpl):
 
             if self._use_model and self._replay_model:
                 for model in self._dynamic._models:
-                    self._model_optim.add_param_group({'params': list(model._mus[task_id].parameters())})
-                    self._model_optim.add_param_group({'params': list(model._logstds[task_id].parameters())})
-                    self._model_optim.add_param_group({'params': [model._max_logstds[task_id], model._min_logstds[task_id]]})
+                    # self._model_optim.add_param_group({'params': list(model._mus[task_id].parameters())})
+                    # self._model_optim.add_param_group({'params': list(model._logstds[task_id].parameters())})
+                    # self._model_optim.add_param_group({'params': [model._max_logstds[task_id], model._min_logstds[task_id]]})
+                    self._model_optim = self._model_optim_factory.create(self._dynamic.parameters(), lr=self._model_learning_rate)
                     def compute_stats(
                         self, x: torch.Tensor, action: torch.Tensor
                     ) -> Tuple[torch.Tensor, torch.Tensor]:

@@ -132,7 +132,6 @@ class CO(TD3PlusBC):
     _critic_encoder_factory: EncoderFactory
     _q_func_factory: QFunctionFactory
     # actor必须被重放，没用选择。
-    _replay_critic: bool
     _replay_phi: bool
     _replay_psi: bool
     _tau: float
@@ -146,7 +145,6 @@ class CO(TD3PlusBC):
     _rollout_horizon: int
     _rollout_batch_size: int
     _use_gpu: Optional[Device]
-    _change_transition: str
     _reduce_replay: str
     _replay_critic: bool
     _replay_model: bool
@@ -203,7 +201,6 @@ class CO(TD3PlusBC):
         model_n_ensembles = 5,
         experience_type = 'random_transition',
         sample_type = 'retrain',
-        change_transition = 'change_reward',
         reduce_replay = 'retrain',
         use_phi = False,
         use_model = False,
@@ -212,7 +209,7 @@ class CO(TD3PlusBC):
         generate_step = 0,
         model_noise = 0,
         retrain_time = 10,
-        orl_time = 1,
+        orl_alpha = 1,
 
         task_id = 0,
         **kwargs: Any
@@ -264,7 +261,6 @@ class CO(TD3PlusBC):
         self._log_prob_topk = log_prob_topk
         self._experience_type = experience_type
         self._sample_type = sample_type
-        self._change_transition = change_transition
         self._reduce_replay = reduce_replay
 
         self._task_id = task_id
@@ -375,7 +371,7 @@ class CO(TD3PlusBC):
         metrics = {}
 
 
-        if self._replay_critic:
+        if not self._replay_critic:
             critic_loss = self._impl.only_update_critic(batch)
             metrics.update({"critic_loss": critic_loss})
         else:
@@ -410,7 +406,7 @@ class CO(TD3PlusBC):
         assert self._impl is not None
         metrics = {}
 
-        if self._replay_model:
+        if not self._replay_model:
             model_loss = self._impl.only_update_model(batch)
             metrics.update({"model_loss": model_loss})
         else:
@@ -436,6 +432,7 @@ class CO(TD3PlusBC):
         n_begin_steps: Optional[int] = None,
         n_begin_steps_per_epoch: int = 10000,
         dynamic_state_dict: Optional[Dict[str, Any]] = None,
+        pretrain_state_dict: Optional[Dict[str, Any]] = None,
         save_metrics: bool = True,
         experiment_name: Optional[str] = None,
         with_timestamp: bool = True,
@@ -507,6 +504,7 @@ class CO(TD3PlusBC):
                 n_dynamic_steps,
                 n_dynamic_steps_per_epoch,
                 dynamic_state_dict,
+                pretrain_state_dict,
                 save_metrics,
                 experiment_name,
                 with_timestamp,
@@ -548,6 +546,7 @@ class CO(TD3PlusBC):
         n_dynamic_steps: Optional[int] = 500000,
         n_dynamic_steps_per_epoch: int = 5000,
         dynamic_state_dict: Optional[Dict[str, Any]] = None,
+        pretrain_state_dict: Optional[Dict[str, Any]] = None,
         save_metrics: bool = True,
         experiment_name: Optional[str] = None,
         with_timestamp: bool = True,
@@ -801,34 +800,49 @@ class CO(TD3PlusBC):
 
                     yield epoch, metrics
 
-            if n_begin_epochs is None and n_begin_steps is not None:
-                assert n_begin_steps >= n_begin_steps_per_epoch
-                n_begin_epochs = n_begin_steps // n_begin_steps_per_epoch
-                begin_iterator = RandomIterator(
-                    transitions,
-                    n_begin_steps_per_epoch,
-                    batch_size=self._batch_size,
-                    n_steps=self._n_steps,
-                    gamma=self._gamma,
-                    n_frames=self._n_frames,
-                    real_ratio=self._real_ratio,
-                    generated_maxlen=self._generated_maxlen,
-                )
-            elif n_begin_epochs is not None and n_begin_steps is None:
-                begin_iterator = RoundIterator(
-                    transitions,
-                    batch_size=self._batch_size,
-                    n_steps=self._n_steps,
-                    gamma=self._gamma,
-                    n_frames=self._n_frames,
-                    real_ratio=self._real_ratio,
-                    generated_maxlen=self._generated_maxlen,
-                    shuffle=shuffle,
-                )
-            else:
-                raise ValueError("Either of n_epochs or n_steps must be given.")
+            if task_id == 0 and pretrain_state_dict is not None:
+                for key, value in pretrain_state_dict.items():
+                    try:
+                        obj = getattr(self._impl, key)
+                        if isinstance(obj, (torch.nn.Module)):
+                            obj = getattr(self._impl, key)
+                            obj.load_state_dict(pretrain_state_dict[key])
+                    except:
+                        print(f'error key: {key}')
+                        obj = getattr(self._impl, key)
+                        print(obj.state_dict()['state'].keys())
+                        print()
+                        print(pretrain_state_dict[key]['state'].keys())
+                        obj.load_state_dict(pretrain_state_dict[key])
+                return
 
-            if task_id != 0:
+            else:
+                if n_begin_epochs is None and n_begin_steps is not None:
+                    assert n_begin_steps >= n_begin_steps_per_epoch
+                    n_begin_epochs = n_begin_steps // n_begin_steps_per_epoch
+                    begin_iterator = RandomIterator(
+                        transitions,
+                        n_begin_steps_per_epoch,
+                        batch_size=self._batch_size,
+                        n_steps=self._n_steps,
+                        gamma=self._gamma,
+                        n_frames=self._n_frames,
+                        real_ratio=self._real_ratio,
+                        generated_maxlen=self._generated_maxlen,
+                    )
+                elif n_begin_epochs is not None and n_begin_steps is None:
+                    begin_iterator = RoundIterator(
+                        transitions,
+                        batch_size=self._batch_size,
+                        n_steps=self._n_steps,
+                        gamma=self._gamma,
+                        n_frames=self._n_frames,
+                        real_ratio=self._real_ratio,
+                        generated_maxlen=self._generated_maxlen,
+                        shuffle=shuffle,
+                    )
+                else:
+                    raise ValueError("Either of n_epochs or n_steps must be given.")
 
                 total_step = 0
                 if n_begin_epochs is not None:
@@ -1814,31 +1828,6 @@ class CO(TD3PlusBC):
         with torch.no_grad():
             assert self._impl is not None
             assert self._impl._policy is not None
-            if self._change_transition == 'change_reward':
-                assert self._impl._q_func is not None
-                orl_transitions_ = []
-                orl_observations = torch.from_numpy(np.stack([orl_transition.observation for orl_transition in orl_transitions], axis=0)).to(self._impl.device)
-                orl_actions = torch.from_numpy(np.stack([orl_transition.action for orl_transition in orl_transitions], axis=0)).to(self._impl.device)
-                orl_next_observations = torch.from_numpy(np.stack([orl_transition.next_observation for orl_transition in orl_transitions], axis=0)).to(self._impl.device)
-                orl_next_actions = self._impl._policy(orl_next_observations)
-                orl_terminals = torch.from_numpy(np.stack([orl_transition.terminal for orl_transition in orl_transitions], axis=0)).to(self._impl.device)
-                orl_q = self._impl._q_func(orl_observations, orl_actions[:, :real_action_size]).squeeze()
-                orl_diff_q = orl_q - self.gamma * self._impl._q_func(orl_next_observations, orl_next_actions[:, :real_action_size]).squeeze()
-                orl_rewards = torch.where(orl_terminals == 0, orl_diff_q, orl_q)
-                for i, transition in enumerate(orl_transitions):
-                    orl_transition = Transition(
-                        observation_shape=transition.get_observation_shape(),
-                        action_size=transition.get_action_size(),
-                        observation=transition.observation,
-                        action=transition.action,
-                        reward=orl_rewards[i].cpu().detach().numpy(),
-                        next_observation=transition.next_observation,
-                        next_transition = transitions[i].next_transition,
-                        prev_transition = transitions[i].prev_transition,
-                        terminal=transition.terminal,
-                    )
-                    orl_transitions_.append(orl_transition)
-                orl_transitions = orl_transitions_
 
             replay_observations = torch.stack([torch.from_numpy(transition.observation) for transition in orl_transitions], dim=0)
             replay_actions = torch.stack([torch.from_numpy(transition.action) for transition in orl_transitions], dim=0)
