@@ -51,7 +51,6 @@ import gym
 from online.utils import ReplayBuffer
 from online.eval_policy import eval_policy
 
-from myd3rlpy.models.encoders import LargeVectorEncoderFactory
 from myd3rlpy.siamese_similar import similar_mb, similar_phi, similar_psi
 # from myd3rlpy.dynamics.probabilistic_ensemble_dynamics import ProbabilisticEnsembleDynamics
 from myd3rlpy.algos.torch.co_impl import COImpl
