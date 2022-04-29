@@ -71,10 +71,10 @@ def main(args, device):
     else:
         raise NotImplementedError
     experiment_name = "CO"
-    # algos_name = "_" + args.replay_type
-    # algos_name += "_" + args.experience_type
-    # algos_name += '_' + args.dataset
-    # algos_name += '_' + str(args.max_save_num)
+    algos_name = "_" + args.replay_type
+    algos_name += "_" + args.experience_type
+    algos_name += '_' + args.dataset
+    algos_name += '_' + str(args.max_save_num)
     algos_name = args.dataset
 
     if not args.eval:
@@ -185,7 +185,7 @@ if __name__ == '__main__':
     parser.add_argument('--top_euclid', default=64, type=int)
     parser.add_argument('--replay_type', default='orl', type=str, choices=['orl', 'bc', 'ewc', 'gem', 'agem', 'r_walk', 'si'])
     parser.add_argument('--experience_type', default='siamese', type=str, choices=['siamese', 'model', 'random_transition', 'random_episode', 'max_reward', 'max_match', 'max_model', 'max_reward_end', 'max_reward_mean', 'max_match_end', 'max_match_mean', 'max_model_end', 'max_model_mean', 'min_reward', 'min_match', 'min_model', 'min_reward_end', 'min_reward_mean', 'min_match_end', 'min_match_mean', 'min_model_end', 'min_model_mean'])
-    parser.add_argument('--sample_type', default='retrain', type=str, choices=['retrain', 'noise'])
+    parser.add_argument('--sample_type', default='noise', type=str, choices=['retrain', 'noise'])
     parser.add_argument('--use_model', action='store_true')
     parser.add_argument('--reduce_replay', default='retrain', type=str, choices=['retrain', 'no_retrain'])
     parser.add_argument('--change_transition', default='change', type=str, choices=['change_reward', 'no_change'])

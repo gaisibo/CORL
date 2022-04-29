@@ -1634,96 +1634,99 @@ class CO(TD3PlusBC):
         assert self._impl._policy is not None
         assert self._impl._q_func is not None
 
-        with torch.no_grad():
-            if isinstance(dataset, MDPDataset):
-                episodes = dataset.episodes
-            else:
-                episodes = dataset
-            # 关键算法
+        if isinstance(dataset, MDPDataset):
+            episodes = dataset.episodes
+        else:
+            episodes = dataset
+        # 关键算法
 
-            transitions = np.array([transition for episode in dataset.episodes for transition in episode])
-            transition_observations = np.stack([transition.observation for transition in transitions])
-            transition_observations = torch.from_numpy(transition_observations).to(self._impl.device)
-            transition_actions = np.stack([transition.action for transition in transitions])
-            transition_actions = torch.from_numpy(transition_actions).to(self._impl.device)[:, :real_action_size]
-            transition_rewards = np.stack([transition.reward for transition in transitions])
-            transition_rewards = torch.from_numpy(transition_rewards).to(self._impl.device)
+        transitions = np.array([transition for episode in dataset.episodes for transition in episode])
+        transition_observations = np.stack([transition.observation for transition in transitions])
+        transition_observations = torch.from_numpy(transition_observations).to(self._impl.device)
+        transition_actions = np.stack([transition.action for transition in transitions])
+        transition_actions = torch.from_numpy(transition_actions).to(self._impl.device)[:, :real_action_size]
+        transition_rewards = np.stack([transition.reward for transition in transitions])
+        transition_rewards = torch.from_numpy(transition_rewards).to(self._impl.device)
 
-            orl_indexes = []
-            for original_index in original_indexes:
-                start_index = original_index
+        orl_indexes = []
+        for original_index in original_indexes:
+            start_index = original_index
 
-                export_time = 0
-                while len(orl_indexes) < max_save_num:
-                    export_step = 0
-                    result_indexes = []
-                    while export_step < max_export_step:
-                        start_observations = torch.from_numpy(dataset._observations[start_index]).to(self._impl.device).unsqueeze(dim=0)
-                        start_actions = self._impl._policy(start_observations)
+            export_time = 0
+            while len(orl_indexes) < max_save_num:
+                export_step = 0
+                result_indexes = []
+                while export_step < max_export_step:
+                    start_observations = torch.from_numpy(dataset._observations[start_index]).to(self._impl.device).unsqueeze(dim=0)
+                    start_actions = self._impl._policy(start_observations)
+                    if self._sample_type == 'noise':
+                        noise = 0.1 * max(1, (export_time / max_export_time)) * torch.randn(start_actions.shape, device=self._impl.device)
+                        start_actions += noise
+                    elif self._sample_type == 'retrain':
+                        pass
+
+
+                    indexes_euclid = np.array(dataset._actions[start_index, real_action_size:], dtype=np.int64)
+                    near_observations = dataset._observations[indexes_euclid]
+                    near_actions = dataset._actions[indexes_euclid][:, :real_action_size]
+                    near_rewards = dataset._rewards[indexes_euclid]
+
+                    if self._experience_type == 'model':
+                        mus, logstds = [], []
+                        for model in self._impl._dynamic._models:
+                            mu, logstd = model.compute_stats(start_observations, start_actions)
+                            mus.append(mu)
+                            logstds.append(logstd)
+                        mus = torch.stack(mus, dim=1)
+                        mus += self._model_noise * torch.randn(mus.shape, device=self._impl.device)
+                        logstds = torch.stack(logstds, dim=1)
                         if self._sample_type == 'noise':
-                            noise = 0.1 * max(1, (export_time / max_export_time)) * torch.randn(start_actions.shape, device=self._impl.device)
-                            start_actions += noise
-
-                        indexes_euclid = np.array(dataset._actions[start_index, real_action_size:], dtype=np.int64)
-                        near_observations = dataset._observations[indexes_euclid]
-                        near_actions = dataset._actions[indexes_euclid][:, :real_action_size]
-                        near_rewards = dataset._rewards[indexes_euclid]
-
-                        if self._experience_type == 'model':
-                            mus, logstds = [], []
-                            for model in self._impl._dynamic._models:
-                                mu, logstd = model.compute_stats(start_observations, start_actions)
-                                mus.append(mu)
-                                logstds.append(logstd)
-                            mus = torch.stack(mus, dim=1)
-                            mus += self._model_noise * torch.randn(mus.shape, device=self._impl.device)
-                            logstds = torch.stack(logstds, dim=1)
                             noise = 0.1 * max(1, (export_time / max_export_time))
                             logstds += noise
-                            mus = mus[torch.arange(start_observations.shape[0]), torch.randint(len(self._impl._dynamic._models), size=(start_observations.shape[0],))]
-                            logstds = logstds[torch.arange(start_observations.shape[0]), torch.randint(len(self._impl._dynamic._models), size=(start_observations.shape[0],))]
+                        mus = mus[torch.arange(start_observations.shape[0]), torch.randint(len(self._impl._dynamic._models), size=(start_observations.shape[0],))]
+                        logstds = logstds[torch.arange(start_observations.shape[0]), torch.randint(len(self._impl._dynamic._models), size=(start_observations.shape[0],))]
 
-                        if self._experience_type == 'siamese':
-                            near_index, _, _ = similar_phi(start_observations, start_actions[:, :real_action_size], near_observations, near_actions, self._impl._phi, input_indexes=indexes_euclid, topk=1)
-                        elif self._experience_type == 'model':
-                            near_index = similar_mb(mus, logstds, near_observations, np.expand_dims(near_rewards, axis=1), topk=1, input_indexes=indexes_euclid)
-                        else:
-                            raise NotImplementedError
-                        # near_indexes_list.reverse()
-                        # # 附近的所有点都会留下来作为orl的数据集。
-                        # for start_indexes in near_indexes_list:
-                        # if near_index in result_indexes:
-                        #     break
-                        result_indexes.append(near_index)
-                        start_index = near_index
-                        orl_indexes.append(start_index.astype(np.int64))
-                        orl_indexes = list(set(orl_indexes))
-                        # # 第一个非空的将作为接下来衍生的起点被保留，同时也用作replay的数据集。
-                        # for start_indexes in near_indexes_list:
-                        #     new_start_indexes = np.setdiff1d(start_indexes, replay_indexes, True)
-                        #     if new_start_indexes.shape[0] != 0:
-                        #         start_indexes = new_start_indexes
-                        #     else:
-                        #         continue
-                        # if start_indexes is None:
-                        #     break
-                        # start_rewards = transition_rewards[start_indexes]
-                        # if max_reward is not None:
-                        #     start_indexes = start_indexes[start_rewards >= max_reward]
-                        # replay_indexes = np.concatenate([replay_indexes, start_indexes], axis=0)
-                        export_step += 1
-                    export_time += 1
+                    if self._experience_type == 'siamese':
+                        near_index, _, _ = similar_phi(start_observations, start_actions[:, :real_action_size], near_observations, near_actions, self._impl._phi, input_indexes=indexes_euclid, topk=1)
+                    elif self._experience_type == 'model':
+                        near_index = similar_mb(mus, logstds, near_observations, np.expand_dims(near_rewards, axis=1), topk=1, input_indexes=indexes_euclid)
+                    else:
+                        raise NotImplementedError
+                    # near_indexes_list.reverse()
+                    # # 附近的所有点都会留下来作为orl的数据集。
+                    # for start_indexes in near_indexes_list:
+                    # if near_index in result_indexes:
+                    #     break
+                    result_indexes.append(near_index)
+                    start_index = near_index
+                    orl_indexes.append(start_index.astype(np.int64))
+                    orl_indexes = list(set(orl_indexes))
+                    # # 第一个非空的将作为接下来衍生的起点被保留，同时也用作replay的数据集。
+                    # for start_indexes in near_indexes_list:
+                    #     new_start_indexes = np.setdiff1d(start_indexes, replay_indexes, True)
+                    #     if new_start_indexes.shape[0] != 0:
+                    #         start_indexes = new_start_indexes
+                    #     else:
+                    #         continue
+                    # if start_indexes is None:
+                    #     break
+                    # start_rewards = transition_rewards[start_indexes]
+                    # if max_reward is not None:
+                    #     start_indexes = start_indexes[start_rewards >= max_reward]
+                    # replay_indexes = np.concatenate([replay_indexes, start_indexes], axis=0)
+                    export_step += 1
+                export_time += 1
+        random.shuffle(orl_indexes)
+        orl_indexes = orl_indexes[:max_save_num]
+        orl_transitions = [transitions[orl_index] for orl_index in orl_indexes]
 
+        with torch.no_grad():
             # if self._reduce_replay == 'retrain':
             #     orl_indexes = self.generate_replay_data_reduce(orl_indexes, orl_transitions, real_action_size)
 
             # orl_indexes = np.concatenate(orl_indexes, axis=0)
             # orl_indexes = np.unique(orl_indexes)
             # orl_transitions = [transitions[orl_index] for orl_index in orl_indexes]
-
-            random.shuffle(orl_indexes)
-            orl_indexes = orl_indexes[:max_save_num]
-            orl_transitions = [transitions[orl_index] for orl_index in orl_indexes]
 
             assert self._impl is not None
             assert self._impl._policy is not None
