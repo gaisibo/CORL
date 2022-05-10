@@ -160,7 +160,7 @@ def td_error_scorer(real_action_size: int) -> Callable[..., Callable[...,float]]
 # 
 
 def evaluate_on_environment(
-    env: gym.Env, test_id: int, n_trials: int = 100, epsilon: float = 0.0, render: bool = False
+    env: gym.Env, test_id: str, n_trials: int = 100, epsilon: float = 0.0, render: bool = False, mix: bool = False,
 ) -> Callable[..., float]:
     """Returns scorer function of evaluation on environment.
     This function returns scorer function, which is suitable to the standard
@@ -190,6 +190,10 @@ def evaluate_on_environment(
 
     def scorer(algo: AlgoProtocol, *args: Any) -> float:
         print(f"test_id: {test_id}")
+        try:
+            env.reset_task(int(test_id))
+        except:
+            pass
         if is_image:
             stacked_observation = StackedObservation(
                 observation_shape, algo.n_frames
@@ -200,6 +204,9 @@ def evaluate_on_environment(
         episode_rewards = []
         for _ in range(n_trials):
             observation = env.reset()
+            if mix:
+                observation = np.concatenate([observation, np.zeros([observation.shape[0], 6], dtype=np.float32)], axis=1)
+                observation = np.pad(observation, ((0, 0), (0, 6)), 'constant', constant_values=(0, 0))
             episode_reward = 0.0
 
             # frame stacking

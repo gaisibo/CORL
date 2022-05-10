@@ -32,6 +32,7 @@ class HopperBackEnv(mujoco_env.MujocoEnv, utils.EzPickle):
         )
 
     def reset_model(self):
+        self.init_qpos[0] -= 1
         qpos = self.init_qpos + self.np_random.uniform(
             low=-0.005, high=0.005, size=self.model.nq
         )

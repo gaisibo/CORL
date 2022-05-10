@@ -132,7 +132,11 @@ def similar_mb(mus, logstds, observations, rewards, topk=4, batch_size=64, input
     normal = Normal(mus, torch.exp(logstds))
     log_prob = normal.log_prob(torch.cat([torch.from_numpy(observations), torch.from_numpy(rewards)], dim=1).to(mus.device))
     log_prob = log_prob.sum(dim=1)
-    category = torch.distributions.categorical.Categorical(logits=log_prob)
+    try:
+        category = torch.distributions.categorical.Categorical(logits=log_prob)
+    except:
+        print(f'log_prob: {log_prob}')
+        category = torch.distributions.categorical.Categorical(logits=log_prob)
     near_index = category.sample()
     if input_indexes is not None:
         near_index = input_indexes[near_index]

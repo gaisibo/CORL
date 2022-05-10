@@ -29,6 +29,7 @@ class HalfCheetahBackEnv(mujoco_env.MujocoEnv, utils.EzPickle):
         )
 
     def reset_model(self):
+        self.init_qpos[0] -= 1
         qpos = self.init_qpos + self.np_random.uniform(
             low=-0.1, high=0.1, size=self.model.nq
         )
