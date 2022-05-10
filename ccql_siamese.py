@@ -7,7 +7,6 @@ from collections import namedtuple
 import pickle
 import time
 from functools import partial
-from dataset.d4rl import cut_antmaze
 from envs import HalfCheetahDirEnv
 from utils.utils import ReplayBuffer
 import numpy as np
@@ -29,26 +28,7 @@ replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'termi
 # 暂时只练出来一个。
 def main(args, device):
     np.set_printoptions(precision=1, suppress=True)
-    if args.dataset in ['antmaze_umaze', 'antmaze_medium', 'antmaze_large', 'maze2d_open', 'maze2d_umaze', 'maze2d_medium', 'maze2d_large']:
-        if args.dataset == 'antmaze_umaze':
-            from dataset.split_antmaze import split_navigate_antmaze_umaze_v2 as split_navigate
-        elif args.dataset == 'antmaze_medium':
-            from dataset.split_antmaze import split_navigate_antmaze_medium_v2 as split_navigate
-        elif args.dataset == 'antmaze_large':
-            from dataset.split_antmaze import split_navigate_antmaze_large_v2 as split_navigate
-        elif args.dataset == 'maze2d_open':
-            from dataset.split_maze import split_navigate_maze2d_open_v0 as split_navigate
-        elif args.dataset == 'maze2d_umaze':
-            from dataset.split_maze import split_navigate_maze2d_umaze_v1 as split_navigate
-        elif args.dataset == 'maze2d_medium':
-            from dataset.split_maze import split_navigate_maze2d_medium_v1 as split_navigate
-        elif args.dataset == 'maze2d_large':
-            from dataset.split_maze import split_navigate_maze2d_large_v1 as split_navigate
-        else:
-            raise NotImplementedError
-        # task_datasets, origin_datasets, taskid_datasets, action_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums = split_gym(args.top_euclid, args.dataset.replace('_', '-'), device=device)
-        origin_datasets, taskid_datasets, envs, end_points, original, real_action_size, real_observation_size, task_nums = split_gym(args.top_euclid, args.dataset.replace('_', '-'), device=device)
-    elif args.dataset in ['hopper_expert_v0', 'hopper_medium_v0', 'hopper_medium_expert_v0', 'hopper_medium_replay_v0', 'hopper_random_v0', 'halfcheetah_expert_v0', 'halfcheetah_medium_v0', 'halfcheetah_medium_expert_v0', 'halfcheetah_medium_replay_v0', 'halfcheetah_random_v0', 'walker2d_expert_v0', 'walker2d_medium_v0', 'walker2d_medium_expert_v0', 'walker2d_medium_replay_v0', 'walker2d_random_v0', 'mix_expert_v0', 'mix_medium_expert_v0', 'mix_medium_v0', 'mix_random_v0']:
+    if args.dataset in ['hopper_expert_v0', 'hopper_medium_v0', 'hopper_medium_expert_v0', 'hopper_medium_replay_v0', 'hopper_random_v0', 'halfcheetah_expert_v0', 'halfcheetah_medium_v0', 'halfcheetah_medium_expert_v0', 'halfcheetah_medium_replay_v0', 'halfcheetah_random_v0', 'walker2d_expert_v0', 'walker2d_medium_v0', 'walker2d_medium_expert_v0', 'walker2d_medium_replay_v0', 'walker2d_random_v0', 'mix_expert_v0', 'mix_medium_expert_v0', 'mix_medium_v0', 'mix_random_v0']:
         if args.dataset in ['hopper_expert_v0', 'hopper_medium_v0', 'hopper_medium_expert_v0', 'hopper_medium_replay_v0', 'hopper_random_v0']:
             from dataset.split_gym import split_hopper as split_gym
         elif args.dataset in ['halfcheetah_expert_v0', 'halfcheetah_medium_v0', 'halfcheetah_medium_expert_v0', 'halfcheetah_medium_replay_v0', 'halfcheetah_random_v0']:
@@ -203,7 +183,7 @@ def main(args, device):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Experimental evaluation of lifelong PG learning')
     parser.add_argument('--add_name', default='', type=str)
-    parser.add_argument("--dataset", default='ant_maze', type=str, choices=['hopper_expert_v0', 'hopper_medium_v0', 'hopper_medium_expert_v0', 'hopper_medium_replay_v0', 'hopper_random_v0', 'halfcheetah_expert_v0', 'halfcheetah_medium_v0', 'halfcheetah_medium_expert_v0', 'halfcheetah_medium_replay_v0', 'halfcheetah_random_v0', 'walker2d_expert_v0', 'walker2d_medium_v0', 'walker2d_medium_expert_v0', 'walker2d_medium_replay_v0', 'walker2d_random_v0', 'mix_expert_v0', 'mix_medium_v0', 'mix_medium_expert_v0', 'mix_random_v0', 'walker_dir', 'ant_dir', 'cheetah_dir', 'cheetah_vel'])
+    parser.add_argument("--dataset", default='ant_dir', type=str, choices=['hopper_expert_v0', 'hopper_medium_v0', 'hopper_medium_expert_v0', 'hopper_medium_replay_v0', 'hopper_random_v0', 'halfcheetah_expert_v0', 'halfcheetah_medium_v0', 'halfcheetah_medium_expert_v0', 'halfcheetah_medium_replay_v0', 'halfcheetah_random_v0', 'walker2d_expert_v0', 'walker2d_medium_v0', 'walker2d_medium_expert_v0', 'walker2d_medium_replay_v0', 'walker2d_random_v0', 'mix_expert_v0', 'mix_medium_v0', 'mix_medium_expert_v0', 'mix_random_v0', 'walker_dir', 'ant_dir', 'cheetah_dir', 'cheetah_vel'])
     parser.add_argument('--inner_path', default='', type=str)
     parser.add_argument('--env_path', default=None, type=str)
     parser.add_argument('--inner_buffer_size', default=-1, type=int)
@@ -246,14 +226,8 @@ if __name__ == '__main__':
     parser.add_argument('--use_cpu', action='store_true')
     parser.add_argument('--gpu', type=str, default='0')
     args = parser.parse_args()
-    # if 'maze' in args.dataset:
-    #     args.model_path = 'd3rlpy_' + args.experience_type + '_' + args.replay_type + '_' + args.reduce_replay + '_' + args.dense + '_' + args.dataset + '_' + ('test' if args.test else ('train' if not args.eval else 'eval'))
-    # else:
-    #     args.model_path = 'd3rlpy_' + args.experience_type + '_' + args.replay_type + '_' + args.reduce_replay + '_' + args.dataset + '_' + ('test' if args.test else ('train' if not args.eval else 'eval'))
-    if 'maze' in args.dataset:
-        args.model_path = 'd3rlpy' + '_' + args.dense + '_' + args.dataset + '/model_'
-    else:
-        args.model_path = 'd3rlpy' + '_' + args.dataset + '/model_'
+    args.model_path = 'd3rlpy_' + args.experience_type + '_' + args.replay_type + '_' + args.reduce_replay + '_' + args.dataset + '_' + ('test' if args.test else ('train' if not args.eval else 'eval'))
+    args.model_path = 'd3rlpy' + '_' + args.dataset + '/model_'
     if not os.path.exists(args.model_path):
         os.makedirs(args.model_path)
     if 'model' in args.experience_type:
