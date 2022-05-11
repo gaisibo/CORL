@@ -159,7 +159,7 @@ class CO(TD3PlusBC):
         self,
         *,
         actor_learning_rate: float = 3e-4,
-        critic_learning_rate: float = 3e-4,
+        critic_learning_rate: float = 3e-3,
         phi_learning_rate: float = 1e-4,
         psi_learning_rate: float = 1e-4,
         model_learning_rate: float = 1e-4,
@@ -1665,9 +1665,10 @@ class CO(TD3PlusBC):
     ) -> Tuple[np.ndarray, np.ndarray]:
         return observations, rewards
 
-    def generate_new_data(self, dataset, original_indexes, max_save_num=1000, max_export_time=100, max_export_step=1000, max_reward=None, real_action_size=1, real_observation_size=1, n_epochs=None, n_steps=500000,n_steps_per_epoch=5000, shuffle=True, save_metrics=True, experiment_name=None, with_timestamp=True, logdir='d3rlpy_logs', verbose=True, tensorboard_dir=None):
+    def generate_new_data(self, dataset, original_indexes=None, max_save_num=1000, max_export_time=100, max_export_step=1000, max_reward=None, real_action_size=1, real_observation_size=1, n_epochs=None, n_steps=500000,n_steps_per_epoch=5000, shuffle=True, save_metrics=True, experiment_name=None, with_timestamp=True, logdir='d3rlpy_logs', verbose=True, tensorboard_dir=None):
         assert self._impl, IMPL_NOT_INITIALIZED_ERROR
-        assert self._impl._policy, self._impl._q_func
+        assert self._impl._policy
+        assert self._impl._q_func
 
         if isinstance(dataset, MDPDataset):
             episodes = dataset.episodes
@@ -1676,11 +1677,14 @@ class CO(TD3PlusBC):
         # 关键算法
 
 
-        start_observations = torch.from_numpy(dataset._observations[original_indexes]).to(self._impl.device)
+        if original_indexes is not None:
+            start_observations = torch.from_numpy(dataset.observations[original_indexes]).to(self._impl.device)
+        else:
+            start_observations = torch.from_numpy(dataset.observations).to(self._impl.device)
         start_actions = self._impl._policy(start_observations)
         if self._sample_type == 'retrain':
-            policy_state_dict = self._impl._policy.state_dict()
-            q_func_state_dict = self._impl._q_func.state_dict()
+            policy_state_dict = deepcopy(self._impl._policy.state_dict())
+            q_func_state_dict = deepcopy(self._impl._q_func.state_dict())
             assert dataset is not None
             transitions = []
             if isinstance(dataset, MDPDataset):
@@ -1832,7 +1836,6 @@ class CO(TD3PlusBC):
         transition_rewards = torch.from_numpy(transition_rewards).to(self._impl.device)
 
         orl_indexes = []
-        orl_steps = []
         for orl_index in original_indexes:
             start_index = orl_index
 
@@ -2063,7 +2066,7 @@ class CO(TD3PlusBC):
                     replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals, replay_policy_actions, replay_qs)
                 return replay_dataset, replay_dataset
 
-    def generate_replay_data_transition(self, dataset, max_save_num=1000, real_observation_size=1, real_action_size=1, batch_size=16, with_generate=False):
+    def generate_replay_data_transition(self, dataset, max_save_num=1000, start_num=50, real_observation_size=1, real_action_size=1, batch_size=16, with_generate=False):
         with torch.no_grad():
             if isinstance(dataset, MDPDataset):
                 episodes = dataset.episodes
@@ -2136,23 +2139,19 @@ class CO(TD3PlusBC):
                     transitions = [i for i, _ in sorted(zip(transitions, transition_log_probs), key=lambda x: x[1])]
             else:
                 raise NotImplementedError
-            transitions = transitions[:max_save_num]
-            new_transitions = []
-            for transition in transitions:
-                new_transitions.append(
-                    transition
-                )
             if with_generate:
-                return self.generate_new_data(new_transitions, max_save_num, real_observation_size, real_action_size)
+                transitions = transitions[:start_num]
+                return self.generate_new_data(transitions, max_save_num, real_observation_size, real_action_size)
 
-            replay_observations = torch.stack([torch.from_numpy(transition.observation) for transition in new_transitions], dim=0).to('cpu')
-            replay_actions = torch.stack([torch.from_numpy(transition.action) for transition in new_transitions], dim=0).to('cpu')
-            replay_rewards = torch.stack([torch.from_numpy(np.array([transition.reward])) for transition in new_transitions], dim=0).to('cpu')
-            replay_next_observations = torch.stack([torch.from_numpy(transition.next_observation) for transition in new_transitions], dim=0).to('cpu')
-            replay_terminals = torch.stack([torch.from_numpy(np.array([transition.terminal])) for transition in new_transitions], dim=0).to('cpu')
+            transitions = transitions[:max_save_num]
+            replay_observations = torch.stack([torch.from_numpy(transition.observation) for transition in transitions], dim=0).to('cpu')
+            replay_actions = torch.stack([torch.from_numpy(transition.action) for transition in transitions], dim=0).to('cpu')
+            replay_rewards = torch.stack([torch.from_numpy(np.array([transition.reward])) for transition in transitions], dim=0).to('cpu')
+            replay_next_observations = torch.stack([torch.from_numpy(transition.next_observation) for transition in transitions], dim=0).to('cpu')
+            replay_terminals = torch.stack([torch.from_numpy(np.array([transition.terminal])) for transition in transitions], dim=0).to('cpu')
             if self._replay_type != 'bc':
                 replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals)
-                return new_transitions, replay_dataset
+                return transitions, replay_dataset
             else:
                 replay_policy_actions = self._impl._policy(replay_observations.to(self._impl.device)).to('cpu')
                 replay_qs = self._impl._q_func(replay_observations.to(self._impl.device), replay_actions[:, :real_action_size].to(self._impl.device)).detach().to('cpu')
@@ -2170,7 +2169,7 @@ class CO(TD3PlusBC):
     def _get_rollout_horizon(self):
         return self._rollout_horizon
 
-    def generate_replay_data_episode(self, dataset, max_save_num=1000, real_observation_size=1, real_action_size=1, batch_size=16, with_generate=False):
+    def generate_replay_data_episode(self, dataset, max_save_num=1000, start_num=1, real_observation_size=1, real_action_size=1, batch_size=16, with_generate=False):
         with torch.no_grad():
             if isinstance(dataset, MDPDataset):
                 episodes = dataset.episodes
@@ -2198,7 +2197,7 @@ class CO(TD3PlusBC):
                     transition_log_probs = torch.sum((transition_dists - transition_actions) ** 2)
                     if self._experience_type[4:] == 'match_end':
                         episode_log_probs.append(transition_log_probs[-1])
-                    elif self._experience_type[4:] == 'max_match_mean':
+                    elif self._experience_type[4:] == 'match_mean':
                         episode_log_probs.append(torch.mean(transition_log_probs))
                 if self._experience_type[:3] == 'max':
                     episodes = [i for i, _ in sorted(zip(episodes, episode_log_probs), key=lambda x: x[1], reverse=True)]
@@ -2260,24 +2259,20 @@ class CO(TD3PlusBC):
                     episodes = [i for i, _ in sorted(zip(episodes, episode_log_probs), key=lambda x: x[1])]
             else:
                 raise NotImplementedError
+            if with_generate:
+                transitions = [transition for transition in episodes[0].transitions]
+                return self.generate_new_data(transitions, max_save_num, real_observation_size, real_action_size)
+
             transitions = [transition for episode in episodes for transition in episode.transitions]
             transitions = transitions[:max_save_num]
-            new_transitions = []
-            for transition in transitions:
-                new_transitions.append(
-                    transition
-                )
-            if with_generate:
-                return self.generate_new_data(orl_transitions, max_save_num, real_observation_size, real_action_size)
-
-            replay_observations = torch.stack([torch.from_numpy(transition.observation) for transition in new_transitions], dim=0).to('cpu')
-            replay_actions = torch.stack([torch.from_numpy(transition.action) for transition in new_transitions], dim=0).to('cpu')
-            replay_rewards = torch.stack([torch.from_numpy(np.array([transition.reward])) for transition in new_transitions], dim=0).to('cpu')
-            replay_next_observations = torch.stack([torch.from_numpy(transition.next_observation) for transition in new_transitions], dim=0).to('cpu')
-            replay_terminals = torch.stack([torch.from_numpy(np.array([transition.terminal])) for transition in new_transitions], dim=0).to('cpu')
+            replay_observations = torch.stack([torch.from_numpy(transition.observation) for transition in transitions], dim=0).to('cpu')
+            replay_actions = torch.stack([torch.from_numpy(transition.action) for transition in transitions], dim=0).to('cpu')
+            replay_rewards = torch.stack([torch.from_numpy(np.array([transition.reward])) for transition in transitions], dim=0).to('cpu')
+            replay_next_observations = torch.stack([torch.from_numpy(transition.next_observation) for transition in transitions], dim=0).to('cpu')
+            replay_terminals = torch.stack([torch.from_numpy(np.array([transition.terminal])) for transition in transitions], dim=0).to('cpu')
             if self._replay_type != 'bc':
                 replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals)
-                return new_transitions, replay_dataset
+                return transitions, replay_dataset
             else:
                 replay_policy_actions = self._impl._policy(replay_observations.to(self._impl.device)).to('cpu')
                 # replay_qs = self._impl._q_func(replay_observations.to(self._impl.device), replay_actions[:, :real_action_size].to(self._impl.device)).detach().to('cpu')

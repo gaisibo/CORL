@@ -563,8 +563,7 @@ class COImpl(TD3PlusBCImpl):
                 if self._replay_type == "orl":
                     replay_batch = cast(TorchMiniBatch, replay_batch)
                     replay_loss_ = self.compute_actor_loss(replay_batch) / len(replay_batches)
-                    replay_loss_ *= self._replay_alpha
-                    replay_loss += replay_loss_
+                    replay_loss = replay_loss + replay_loss_
                     replay_losses.append(replay_loss_.cpu().detach().numpy())
                 elif self._replay_type == "bc":
                     with torch.no_grad():
@@ -572,16 +571,15 @@ class COImpl(TD3PlusBCImpl):
                         replay_policy_actions = replay_batch.policy_actions.to(self.device)
                     actions = self._policy(replay_observations)
                     replay_loss_ = torch.mean((replay_policy_actions - actions) ** 2)
-                    replay_loss_ *= self._replay_alpha
                     replay_losses.append(replay_loss_.cpu().detach().numpy())
-                    replay_loss += replay_loss_
+                    replay_loss = replay_loss + replay_loss_
                 elif self._replay_type == "ewc":
                     replay_loss_ = 0
                     for n, p in self._policy.named_parameters():
                         if n in self._actor_fisher.keys():
                             replay_loss_ = torch.mean(self._actor_fisher[n] * (p - self._actor_older_params[n]).pow(2)) / 2
                     replay_losses.append(replay_loss_)
-                    replay_loss += replay_loss_
+                    replay_loss = replay_loss + replay_loss_
                 elif self._replay_type == 'r_walk':
                     curr_feat_ext = {n: p.clone().detach() for n, p in self._policy.named_parameters() if p.requires_grad}
                     # store gradients without regularization term
@@ -593,9 +591,9 @@ class COImpl(TD3PlusBCImpl):
                     replay_loss_ = 0
                     for n, p in self._policy.named_parameters():
                         if n in self._actor_fisher.keys():
-                            replay_loss_ += torch.mean((self._actor_fisher[n] + self._actor_scores[n]) * (p - self._actor_older_params[n]).pow(2)) / 2
+                            replay_loss_ = replay_loss_  + torch.mean((self._actor_fisher[n] + self._actor_scores[n]) * (p - self._actor_older_params[n]).pow(2)) / 2
                     replay_losses.append(replay_loss_)
-                    replay_loss += replay_loss_
+                    replay_loss = replay_loss + replay_loss_
                 elif self._replay_type == 'si':
                     for n, p in self._policy.named_parameters():
                         if p.grad is not None and n in self._actor_fisher.keys():
@@ -604,9 +602,9 @@ class COImpl(TD3PlusBCImpl):
                     replay_loss_ = 0
                     for n, p in self.named_parameters():
                         if p.requires_grad:
-                            replay_loss_ += torch.mean(self._actor_omega[n] * (p - self._actor_older_params[n]) ** 2)
+                            replay_loss_ = replay_loss_ + torch.mean(self._actor_omega[n] * (p - self._actor_older_params[n]) ** 2)
                     replay_losses.append(replay_loss_)
-                    replay_loss += replay_loss_
+                    replay_loss = replay_loss + replay_loss_
                 elif self._replay_type == 'gem':
                     replay_batch = cast(TorchMiniBatch, replay_batch)
                     replay_loss_ = self.compute_actor_loss(replay_batch) / len(replay_batches)
@@ -620,7 +618,7 @@ class COImpl(TD3PlusBCImpl):
                     replay_loss += replay_loss_
                     replay_losses.append(replay_loss_)
             if self._replay_type in ['orl', 'bc', 'ewc', 'r_walk', 'si']:
-                # time_replay_loss = self._replay_alpha * replay_loss
+                time_replay_loss = self._replay_alpha * replay_loss
                 time_replay_loss = replay_loss
                 self._actor_optim.zero_grad()
                 time_replay_loss.backward()
