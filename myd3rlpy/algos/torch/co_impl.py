@@ -71,6 +71,7 @@ class COImpl(TD3PlusBCImpl):
         replay_model: bool,
         replay_critic: bool,
         replay_alpha: float,
+        retrain_model_alpha: float,
         single_head: bool,
     ):
         super().__init__(
@@ -116,6 +117,7 @@ class COImpl(TD3PlusBCImpl):
         self._model_optim_factory = model_optim_factory
         self._model_encoder_factory = model_encoder_factory
         self._model_n_ensembles = model_n_ensembles
+        self._retrain_model_alpha = retrain_model_alpha
 
         single_head = False
         self._single_head = single_head
@@ -271,32 +273,33 @@ class COImpl(TD3PlusBCImpl):
         return loss
 
     @train_api
-    def inner_update_critic(self, batch: TorchMiniBatch):
+    def retrain_update_critic(self, batch: TorchMiniBatch):
         assert self._critic_optim is not None
         assert self._q_func is not None
         assert self._policy is not None
-        self.change_task(self._impl_id)
-        self._q_func.train()
-        self._policy.eval()
-        if self._use_phi:
-            self._phi.eval()
-            self._psi.eval()
-        if self._use_model:
-            self._dynamic.eval()
+        with torch.enable_grad():
+            self.change_task(self._impl_id)
+            self._q_func.train()
+            self._policy.eval()
+            if self._use_phi:
+                self._phi.eval()
+                self._psi.eval()
+            if self._use_model:
+                self._dynamic.eval()
 
-        self._critic_optim.zero_grad()
+            self._critic_optim.zero_grad()
 
-        q_tpn = self.compute_target(batch)
+            q_tpn = self.compute_target(batch)
 
-        loss = self.compute_critic_loss(batch, q_tpn)
+            loss = self.compute_critic_loss(batch, q_tpn)
 
-        loss.backward()
-        self._critic_optim.step()
+            loss.backward()
+            self._critic_optim.step()
 
-        loss = loss.cpu().detach().numpy()
-        self.change_task(self._impl_id)
+            loss = loss.cpu().detach().numpy()
+            self.change_task(self._impl_id)
 
-        return loss
+            return loss
 
     @train_api
     def update_critic(self, batch_tran: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[torch.Tensor]]]=None):
@@ -338,7 +341,7 @@ class COImpl(TD3PlusBCImpl):
                     q_tpn = self.compute_target(replay_batch)
                     replay_cql_loss = self.compute_critic_loss(replay_batch, q_tpn)
                     replay_losses.append(replay_cql_loss.cpu().detach().numpy())
-                    replay_loss += replay_cql_loss
+                    replay_loss = replay_loss + replay_cql_loss
                 elif self._replay_type == "bc":
                     with torch.no_grad():
                         replay_observations = replay_batch.observations.to(self.device).detach()
@@ -348,14 +351,14 @@ class COImpl(TD3PlusBCImpl):
                     q = self._q_func(replay_observations, replay_actions[:, :self._action_size])
                     replay_bc_loss = F.mse_loss(replay_qs, q) / len(replay_batches)
                     replay_losses.append(replay_bc_loss.cpu().detach().numpy())
-                    replay_loss += replay_bc_loss
+                    replay_loss = replay_loss + replay_bc_loss
                 elif self._replay_type == "ewc":
                     replay_loss_ = 0
                     for n, p in self._q_func.named_parameters():
                         if n in self._critic_fisher.keys():
-                            replay_loss += torch.mean(self._critic_fisher[n] * (p - self._critic_older_params[n]).pow(2)) / 2
+                            replay_loss = replay_loss + torch.mean(self._critic_fisher[n] * (p - self._critic_older_params[n]).pow(2)) / 2
                     replay_losses.append(replay_loss_.cpu().detach().numpy())
-                    replay_loss += replay_loss_
+                    replay_loss = replay_loss + replay_loss_
                 elif self._replay_type == 'r_walk':
                     curr_feat_ext = {n: p.clone().detach() for n, p in self._q_func.named_parameters() if p.requires_grad}
                     # store gradients without regularization term
@@ -367,9 +370,9 @@ class COImpl(TD3PlusBCImpl):
                     replay_loss_ = 0
                     for n, p in self._q_func.named_parameters():
                         if n in self._critic_fisher.keys():
-                            replay_loss_ += torch.mean((self._critic_fisher[n] + self._critic_scores[n]) * (p - self._critic_older_params[n]).pow(2)) / 2
+                            replay_loss_ = replay_loss_ + torch.mean((self._critic_fisher[n] + self._critic_scores[n]) * (p - self._critic_older_params[n]).pow(2)) / 2
                     replay_losses.append(replay_loss_.cpu().detach().numpy())
-                    replay_loss += replay_loss_
+                    replay_loss = replay_loss + replay_loss_
                 elif self._replay_type == 'si':
                     for n, p in model.named_parameters():
                         if p.grad is not None and n in self._critic_fisher.keys():
@@ -378,9 +381,9 @@ class COImpl(TD3PlusBCImpl):
                     replay_loss_ = 0
                     for n, p in self.named_parameters():
                         if p.requires_grad:
-                            replay_loss_ += torch.mean(self._critic_omega[n] * (p - self._critic_older_params[n]) ** 2)
+                            replay_loss_ = replay_loss_ + torch.mean(self._critic_omega[n] * (p - self._critic_older_params[n]) ** 2)
                     replay_losses.append(replay_loss_.cpu().detach().numpy())
-                    replay_loss += replay_loss_
+                    replay_loss = replay_loss + replay_loss_
                 elif self._replay_type == 'gem':
                     replay_batch = cast(TorchMiniBatch, replay_batch)
                     q_tpn = self.compute_target(replay_batch)
@@ -397,21 +400,19 @@ class COImpl(TD3PlusBCImpl):
                     q_tpn = self.compute_target(replay_batch)
                     replay_loss_ = self.compute_critic_loss(replay_batch, q_tpn)
                     replay_losses.append(replay_cql_loss.cpu().detach().numpy())
-                    replay_loss += replay_loss_
+                    replay_loss = replay_loss + replay_loss_
                     replay_losses.append(replay_loss_.cpu().detach().numpy())
             if self._replay_type in ['orl', 'bc', 'ewc', 'r_walk', 'si']:
                 time_replay_loss = self._replay_alpha * replay_loss
                 self._critic_optim.zero_grad()
                 time_replay_loss.backward()
                 self._critic_optim.step()
-                # else:
-                #     loss += time_replay_loss
                 replay_loss = replay_loss.cpu().detach().numpy()
 
         self.change_task(save_id)
         self._critic_optim.zero_grad()
         q_tpn = self.compute_target(batch)
-        loss += self.compute_critic_loss(batch, q_tpn)
+        loss = self.compute_critic_loss(batch, q_tpn)
         loss.backward()
         if replay_batches is not None and len(replay_batches) != 0:
             if self._replay_type == 'agem':
@@ -466,31 +467,32 @@ class COImpl(TD3PlusBCImpl):
         return loss
 
     @train_api
-    def inner_update_actor(self, batch: TorchMiniBatch) -> np.ndarray:
+    def retrain_update_actor(self, batch: TorchMiniBatch) -> np.ndarray:
         assert self._q_func is not None
         assert self._policy is not None
         assert self._actor_optim is not None
 
         # Q function should be inference mode for stability
-        self.change_task(self._impl_id)
-        self._q_func.eval()
-        self._policy.train()
-        if self._use_phi:
-            self._phi.eval()
-            self._psi.eval()
-        if self._use_model:
-            self._dynamic.eval()
+        with torch.enable_grad():
+            self.change_task(self._impl_id)
+            self._q_func.eval()
+            self._policy.train()
+            if self._use_phi:
+                self._phi.eval()
+                self._psi.eval()
+            if self._use_model:
+                self._dynamic.eval()
 
-        self._actor_optim.zero_grad()
+            self._actor_optim.zero_grad()
 
-        loss = self.compute_actor_loss(batch)
+            loss = self.compute_actor_loss(batch)
 
-        loss.backward()
-        self._actor_optim.step()
+            loss.backward()
+            self._actor_optim.step()
 
-        loss = loss.cpu().detach().numpy()
+            loss = loss.cpu().detach().numpy()
 
-        return loss
+            return loss
 
     @train_api
     def begin_update_actor(self, batch_tran: TransitionMiniBatch) -> np.ndarray:
@@ -615,7 +617,7 @@ class COImpl(TD3PlusBCImpl):
                     store_grad(self._policy.parameters, self._actor_grad_xy, self._actor_grad_dims)
                     replay_batch = cast(TorchMiniBatch, replay_batch)
                     replay_loss_ = self.compute_actor_loss(replay_batch) / len(replay_batches)
-                    replay_loss += replay_loss_
+                    replay_loss = replay_loss + replay_loss_
                     replay_losses.append(replay_loss_)
             if self._replay_type in ['orl', 'bc', 'ewc', 'r_walk', 'si']:
                 time_replay_loss = self._replay_alpha * replay_loss
@@ -623,8 +625,6 @@ class COImpl(TD3PlusBCImpl):
                 self._actor_optim.zero_grad()
                 time_replay_loss.backward()
                 self._actor_optim.step()
-                # else:
-                #     loss += time_replay_loss
                 replay_loss = replay_loss.cpu().detach().numpy()
 
         self.change_task(save_id)
@@ -712,7 +712,7 @@ class COImpl(TD3PlusBCImpl):
         loss = loss.cpu().detach().numpy()
 
         return loss
- 
+
     @train_api
     def only_update_model(self, batch: TransitionMiniBatch):
         assert self._dynamic is not None
@@ -747,6 +747,49 @@ class COImpl(TD3PlusBCImpl):
         loss = loss.cpu().detach().numpy()
 
         return loss
+ 
+    @train_api
+    def retrain_update_model(self, batch: TransitionMiniBatch, retrain_batch: TransitionMiniBatch):
+        assert self._dynamic is not None
+        assert self._model_optim is not None
+        batch = TorchMiniBatch(
+            batch,
+            self.device,
+            scaler=self.scaler,
+            action_scaler=self.action_scaler,
+            reward_scaler=self.reward_scaler,
+        )
+        with torch.enable_grad():
+
+            self._q_func.eval()
+            self._policy.eval()
+            self._dynamic.train()
+            if self._use_phi:
+                self._phi.eval()
+                self._psi.eval()
+
+            self._model_optim.zero_grad()
+            loss = self._dynamic.compute_error(
+                observations=batch.observations,
+                actions=batch.actions[:, :self._action_size],
+                rewards=batch.rewards,
+                next_observations=batch.next_observations,
+            )
+            retrain_loss = self._dynamic.compute_error(
+                observations=retrain_batch.observations,
+                actions=retrain_batch.actions[:, :self._action_size],
+                rewards=retrain_batch.rewards,
+                next_observations=retrain_batch.next_observations,
+            )
+            loss = loss - self._retrain_model_alpha * retrain_loss
+
+            self._model_optim.zero_grad()
+            loss.backward()
+            self._model_optim.step()
+
+            loss = loss.cpu().detach().numpy()
+
+            return loss
 
     @train_api
     def update_model(self, batch: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[torch.Tensor]]]=None):
@@ -793,7 +836,7 @@ class COImpl(TD3PlusBCImpl):
                         rewards=replay_rewards,
                         next_observations=replay_next_observations,
                     )
-                    replay_loss += replay_loss_
+                    replay_loss = replay_loss + replay_loss_
                     replay_losses.append(replay_loss_.cpu().detach().numpy())
                 elif self._replay_type == "ewc":
                     replay_loss_ = 0
@@ -801,7 +844,7 @@ class COImpl(TD3PlusBCImpl):
                         if n in self._model_fisher.keys():
                             replay_loss_ = torch.sum(self._model_fisher[n] * (p - self._model_older_params[n]).pow(2)) / 2
                     replay_losses.append(replay_loss_)
-                    replay_loss += replay_loss_
+                    replay_loss = replay_loss + replay_loss_
                 elif self._replay_type == 'r_walk':
                     curr_feat_ext = {n: p.clone().detach() for n, p in self._dynamic.named_parameters() if p.requires_grad}
                     # store gradients without regularization term
@@ -815,7 +858,7 @@ class COImpl(TD3PlusBCImpl):
                         if n in self._model_fisher.keys():
                             replay_loss_ = torch.sum((self._model_fisher[n] + self._model_scores[n]) * (p - self.__model_params[n]).pow(2)) / 2
                     replay_losses.append(replay_loss_)
-                    replay_loss += replay_loss_
+                    replay_loss = replay_loss + replay_loss_
                 elif self._replay_type == 'si':
                     for n, p in self._dynamic.named_parameters():
                         if p.grad is not None and n in self._model_fisher.keys():
@@ -824,9 +867,9 @@ class COImpl(TD3PlusBCImpl):
                     replay_loss_ = 0
                     for n, p in self.named_parameters():
                         if p.requires_grad:
-                            replay_loss_ += torch.sum(self._model_omega[n] * (p - self._model_older_params[n]) ** 2)
+                            replay_loss_ = replay_loss_ + torch.sum(self._model_omega[n] * (p - self._model_older_params[n]) ** 2)
                     replay_losses.append(replay_loss_)
-                    replay_loss += replay_loss_
+                    replay_loss = replay_loss + replay_loss_
                 elif self._replay_type == 'gem':
                     with torch.no_grad():
                         replay_observations = replay_batch.observations.to(self.device)
@@ -839,7 +882,7 @@ class COImpl(TD3PlusBCImpl):
                         rewards=replay_rewards,
                         next_observations=replay_next_observations,
                     )
-                    replay_loss_ /= len(replay_batches)
+                    replay_loss_ = replay_loss_ / len(replay_batches)
                     replay_loss = replay_loss_
                     replay_loss.backward()
                     store_grad(self._dynamic.parameters, self._model_grads_cs[i], self._model_grad_dims)
@@ -852,21 +895,19 @@ class COImpl(TD3PlusBCImpl):
                         rewards=replay_batch.rewards,
                         next_observations=replay_batch.next_observations,
                     )
-                    replay_loss_ /= len(replay_batches)
-                    replay_loss += replay_loss_
+                    replay_loss_ = replay_loss_ / len(replay_batches)
+                    replay_loss = replay_loss + replay_loss_
                     replay_losses.append(replay_loss_)
             if self._replay_type in ['orl', 'bc', 'ewc', 'r_walk', 'si']:
                 time_replay_loss = self._replay_alpha * replay_loss
                 self._model_optim.zero_grad()
                 time_replay_loss.backward()
                 self._model_optim.step()
-                # else:
-                #     loss += time_replay_loss
                 replay_loss = replay_loss.cpu().detach().numpy()
 
         self.change_task(save_id)
         self._model_optim.zero_grad()
-        loss += self._dynamic.compute_error(
+        loss = self._dynamic.compute_error(
             observations=batch.observations,
             actions=batch.actions[:, :self._action_size],
             rewards=batch.rewards,

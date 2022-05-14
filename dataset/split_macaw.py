@@ -53,10 +53,10 @@ def get_dataset(h5path):
 
 def get_d4rl_local(dataset, timeout=300) -> MDPDataset:
 
-    observations = dataset["observations"]
-    actions = dataset["actions"]
-    rewards = dataset["rewards"]
-    terminals = np.array(dataset["terminals"], dtype=np.float32)
+    observations = np.flip((dataset["observations"]), axis=0)
+    actions = np.flip((dataset["actions"]), axis=0)
+    rewards = np.flip((dataset["rewards"]), axis=0)
+    terminals = np.flip((np.array(dataset["terminals"], dtype=np.float32)), axis=0)
     episode_terminals = np.zeros_like(terminals)
     i = timeout - 1
     while i < terminals.shape[0]:

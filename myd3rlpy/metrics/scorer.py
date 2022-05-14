@@ -160,7 +160,7 @@ def td_error_scorer(real_action_size: int) -> Callable[..., Callable[...,float]]
 # 
 
 def evaluate_on_environment(
-    env: gym.Env, test_id: str, n_trials: int = 100, epsilon: float = 0.0, render: bool = False, mix: bool = False,
+    env: gym.Env, test_id: str, n_trials: int = 100, epsilon: float = 0.0, render: bool = False, mix: bool = False, add_on: bool = False,
 ) -> Callable[..., float]:
     """Returns scorer function of evaluation on environment.
     This function returns scorer function, which is suitable to the standard
@@ -242,7 +242,10 @@ def evaluate_on_environment(
                 i += 1
             episode_rewards.append(episode_reward)
         algo._impl.change_task(save_id)
-        return float(np.mean(episode_rewards))
+        if add_on:
+            return float(np.mean(episode_rewards))
+        else:
+            return float(np.max(episode_rewards))
 
     return scorer
 

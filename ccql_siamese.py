@@ -48,6 +48,14 @@ def main(args, device):
         env_paths = ['dataset/macaw/' + args.env_path.replace('num', str(i)) for i in range(args.task_nums)]
         origin_datasets, taskid_datasets, env, end_points, original, real_action_size, real_observation_size = split_macaw(args.top_euclid, args.dataset.replace('_', '-'), inner_paths, env_paths, device=device)
         envs = None
+    elif args.dataset in ['ant_umaze_random', 'ant_umaze_medium', 'ant_umaze_expert']:
+        strs = args.dataset.split('_')
+        if strs[1] == 'umaze':
+            from dataset.split_antmaze import split_navigate_antmaze_umaze_v2
+            origin_datasets, taskid_datasets, envs, end_points, original, real_action_size, real_observation_size, task_nums = split_navigate_antmaze_umaze_v2(args.top_euclid, device, strs[2])
+        else:
+            raise NotImplementedError
+        env = None
 
     else:
         raise NotImplementedError
@@ -102,9 +110,9 @@ def main(args, device):
 
             # train
             if env is not None:
-                scorers = dict(zip(['real_env' + str(n) for n in origin_datasets.keys()], [evaluate_on_environment(env, test_id=str(n), mix='mix' in args.dataset and n == '0') for n in learned_tasks]))
+                scorers = dict(zip(['real_env' + str(n) for n in origin_datasets.keys()], [evaluate_on_environment(env, test_id=str(n), mix='mix' in args.dataset and n == '0', add_on=args.add_on) for n in learned_tasks]))
             elif envs is not None:
-                scorers = dict(zip(['real_env' + str(n) for n in origin_datasets.keys()], [evaluate_on_environment(envs[str(n)], test_id=str(n), mix='mix' in args.dataset and n == '0') for n in learned_tasks]))
+                scorers = dict(zip(['real_env' + str(n) for n in origin_datasets.keys()], [evaluate_on_environment(envs[str(n)], test_id=str(n), mix='mix' in args.dataset and n == '0', add_on=args.add_on) for n in learned_tasks]))
             else:
                 raise NotImplementedError
             co.fit(
@@ -117,9 +125,8 @@ def main(args, device):
                 # n_epochs=args.n_epochs if not args.test else 1,
                 n_steps=args.n_steps,
                 n_steps_per_epoch=args.n_steps_per_epoch,
-                n_dynamic_epochs=100,
-                # n_dynamic_steps=args.n_dynamic_steps,
-                # n_dynamic_steps_per_epoch=args.n_dynamic_steps_per_epoch,
+                n_dynamic_steps=args.n_dynamic_steps,
+                n_dynamic_steps_per_epoch=args.n_dynamic_steps_per_epoch,
                 n_begin_steps=args.n_begin_steps,
                 n_begin_steps_per_epoch=args.n_begin_steps_per_epoch,
                 dynamic_state_dict=dynamic_state_dict,
@@ -129,7 +136,7 @@ def main(args, device):
                 test=args.test,
             )
             print(f'Training task {task_id} time: {time.perf_counter() - start_time}')
-            # co.save_model(args.model_path + algos_name + '_' + str(task_id) + '.pt')
+            co.save_model(args.model_path + algos_name + '_' + str(task_id) + '_dynamic.pt')
 
             if args.algos == 'co':
                 start_time = time.perf_counter()
@@ -141,7 +148,7 @@ def main(args, device):
                         replay_datasets[task_id], save_datasets[task_id] = co.generate_replay_data_trajectory(origin_datasets[task_id], original[task_id], max_save_num=args.max_save_num, real_action_size=real_action_size, real_observation_size=real_observation_size)
                         print(f"len(replay_datasets[task_id]): {len(replay_datasets[task_id])}")
                 elif args.experience_type in ['random_transition', 'max_reward', 'max_match', 'max_model', 'min_reward', 'min_match', 'min_model']:
-                    replay_datasets[task_id], save_datasets[task_id] = co.generate_replay_data_transition(origin_datasets[task_id], max_save_num=args.max_save_num, real_action_size=real_action_size, real_observation_size=real_observation_size, with_generate=arg.generate=='generate')
+                    replay_datasets[task_id], save_datasets[task_id] = co.generate_replay_data_transition(origin_datasets[task_id], max_save_num=args.max_save_num, real_action_size=real_action_size, real_observation_size=real_observation_size, with_generate=args.generate=='generate')
                     print(f"len(replay_datasets[task_id]): {len(replay_datasets[task_id])}")
                 elif args.experience_type in ['random_episode', 'max_reward_end', 'max_reward_mean', 'max_match_end', 'max_match_mean', 'max_model_end', 'max_model_mean', 'min_reward_end', 'min_reward_mean', 'min_match_end', 'min_match_mean', 'min_model_end', 'min_model_mean']:
                     replay_datasets[task_id], save_datasets[task_id] = co.generate_replay_data_episode(origin_datasets[task_id], max_save_num=args.max_save_num, real_action_size=real_action_size, real_observation_size=real_observation_size, with_generate=args.generate=='generate')
@@ -154,7 +161,7 @@ def main(args, device):
                 print(f'Select Replay Buffer Time: {time.perf_counter() - start_time}')
             else:
                 raise NotImplementedError
-            # co.save_model(args.model_path + algos_name + '_' + str(task_id) + '.pt')
+            co.save_model(args.model_path + algos_name + '_' + str(task_id) + '.pt')
             if args.test and int(task_id) >= 1:
                 break
         torch.save(save_datasets, f=args.model_path + algos_name + '_datasets.pt')
@@ -179,7 +186,7 @@ def main(args, device):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Experimental evaluation of lifelong PG learning')
     parser.add_argument('--add_name', default='', type=str)
-    parser.add_argument("--dataset", default='ant_dir', type=str, choices=['hopper_expert_v0', 'hopper_medium_v0', 'hopper_medium_expert_v0', 'hopper_medium_replay_v0', 'hopper_random_v0', 'halfcheetah_expert_v0', 'halfcheetah_medium_v0', 'halfcheetah_medium_expert_v0', 'halfcheetah_medium_replay_v0', 'halfcheetah_random_v0', 'walker2d_expert_v0', 'walker2d_medium_v0', 'walker2d_medium_expert_v0', 'walker2d_medium_replay_v0', 'walker2d_random_v0', 'mix_expert_v0', 'mix_medium_v0', 'mix_medium_expert_v0', 'mix_random_v0', 'walker_dir', 'ant_dir', 'cheetah_dir', 'cheetah_vel'])
+    parser.add_argument("--dataset", default='ant_dir', type=str, choices=['hopper_expert_v0', 'hopper_medium_v0', 'hopper_medium_expert_v0', 'hopper_medium_replay_v0', 'hopper_random_v0', 'halfcheetah_expert_v0', 'halfcheetah_medium_v0', 'halfcheetah_medium_expert_v0', 'halfcheetah_medium_replay_v0', 'halfcheetah_random_v0', 'walker2d_expert_v0', 'walker2d_medium_v0', 'walker2d_medium_expert_v0', 'walker2d_medium_replay_v0', 'walker2d_random_v0', 'mix_expert_v0', 'mix_medium_v0', 'mix_medium_expert_v0', 'mix_random_v0', 'walker_dir', 'ant_dir', 'cheetah_dir', 'cheetah_vel', 'ant_umaze_random', 'ant_umaze_medium', 'ant_umaze_expert'])
     parser.add_argument('--inner_path', default='', type=str)
     parser.add_argument('--env_path', default=None, type=str)
     parser.add_argument('--inner_buffer_size', default=-1, type=int)
@@ -195,7 +202,7 @@ if __name__ == '__main__':
     parser.add_argument('--algos', default='co', type=str)
     parser.add_argument('--eval', action='store_true')
     parser.add_argument('--test', action='store_true')
-    parser.add_argument("--n_steps", default=500000, type=int)
+    parser.add_argument("--n_steps", default=200000, type=int)
     parser.add_argument("--n_steps_per_epoch", default=5000, type=int)
     parser.add_argument("--n_dynamic_steps", default=500000, type=int)
     parser.add_argument("--n_dynamic_steps_per_epoch", default=5000, type=int)
@@ -206,14 +213,14 @@ if __name__ == '__main__':
     parser.add_argument('--replay_type', default='orl', type=str, choices=['orl', 'bc', 'ewc', 'gem', 'agem', 'r_walk', 'si'])
     parser.add_argument('--experience_type', default='siamese', type=str, choices=['siamese', 'generate', 'model', 'random_transition', 'random_episode', 'max_reward', 'max_match', 'max_model', 'max_reward_end', 'max_reward_mean', 'max_match_end', 'max_match_mean', 'max_model_end', 'max_model_mean', 'min_reward', 'min_match', 'min_model', 'min_reward_end', 'min_reward_mean', 'min_match_end', 'min_match_mean', 'min_model_end', 'min_model_mean'])
     parser.add_argument('--generate', default='', type=str)
-    parser.add_argument('--sample_type', default='none', type=str, choices=['retrain', 'noise', 'none'])
+    parser.add_argument('--sample_type', default='none', type=str, choices=['retrain_model', 'retrain_actor', 'noise', 'none'])
     parser.add_argument('--use_model', action='store_true')
     parser.add_argument('--reduce_replay', default='retrain', type=str, choices=['retrain', 'no_retrain'])
     parser.add_argument('--dense', default='dense', type=str)
     parser.add_argument('--sum', default='no_sum', type=str)
     parser.add_argument('--replay_critic', action='store_true')
     parser.add_argument('--replay_model', action='store_true')
-    parser.add_argument('--generate_step', default=1000, type=int)
+    parser.add_argument('--generate_step', default=10, type=int)
     parser.add_argument('--model_noise', default=0, type=float)
     parser.add_argument('--retrain_time', type=int, default=1)
     parser.add_argument('--orl_alpha', type=float, default=1)
@@ -224,13 +231,21 @@ if __name__ == '__main__':
     parser.add_argument('--gpu', type=str, default='0')
     args = parser.parse_args()
     args.model_path = 'd3rlpy_' + args.experience_type + '_' + args.replay_type + '_' + args.reduce_replay + '_' + args.dataset + '_' + ('test' if args.test else ('train' if not args.eval else 'eval'))
-    args.model_path = 'd3rlpy' + '_' + args.dataset + '/model_'
+    args.model_path = 'd3rlpy' + '_' + args.dataset
     if not os.path.exists(args.model_path):
         os.makedirs(args.model_path)
-    if 'model' in args.experience_type:
+    args.model_path += '/model_'
+    if 'model' in args.experience_type or args.experience_type == 'generate':
+        args.use_model = True
+    if args.generate == 'generate':
         args.use_model = True
     if args.replay_type == 'orl':
         args.replay_critic = True
+    if 'maze' in args.dataset:
+        args.add_on = False
+    else:
+        args.add_on = True
+
     global DATASET_PATH
     DATASET_PATH = './.d4rl/datasets/'
     if args.use_cpu:

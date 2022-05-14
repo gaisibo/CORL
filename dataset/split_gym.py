@@ -60,6 +60,8 @@ def get_d4rl_local(dataset, timeout=300) -> MDPDataset:
     actions = dataset["actions"]
     rewards = dataset["rewards"]
     terminals = np.array(dataset["terminals"], dtype=np.float32)
+    print(terminals[0])
+    assert False
     episode_terminals = np.zeros_like(terminals)
     i = timeout - 1
     while i < terminals.shape[0]:
