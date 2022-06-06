@@ -20,7 +20,7 @@ from d3rlpy.models.torch.policies import squash_action
 from d3rlpy.preprocessing import ActionScaler, RewardScaler, Scaler
 from d3rlpy.torch_utility import TorchMiniBatch, soft_sync, train_api, torch_api
 from d3rlpy.dataset import TransitionMiniBatch
-from d3rlpy.algos.torch.td3_plus_bc_impl import TD3PlusBCImpl
+from d3rlpy.algos.torch.combo_impl import COMBOImpl
 from d3rlpy.models.builders import create_probabilistic_ensemble_dynamics_model
 
 from myd3rlpy.models.builders import create_phi, create_psi
@@ -30,18 +30,20 @@ from utils.utils import Struct
 
 
 replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'terminals', 'policy_actions', 'qs', 'phis', 'psis']
-class COImpl(TD3PlusBCImpl):
+class COImpl(COMBOImpl):
     def __init__(
         self,
         observation_shape: Sequence[int],
         action_size: int,
         actor_learning_rate: float,
         critic_learning_rate: float,
+        temp_learning_rate: float,
         phi_learning_rate: float,
         psi_learning_rate: float,
         model_learning_rate: float,
         actor_optim_factory: OptimizerFactory,
         critic_optim_factory: OptimizerFactory,
+        temp_optim_factory: OptimizerFactory,
         phi_optim_factory: OptimizerFactory,
         psi_optim_factory: OptimizerFactory,
         model_optim_factory: OptimizerFactory,
@@ -58,9 +60,11 @@ class COImpl(TD3PlusBCImpl):
         epsilon: float,
         tau: float,
         n_critics: int,
-        target_smoothing_sigma: float,
-        target_smoothing_clip: float,
-        alpha: float,
+        initial_temperature: float,
+        conservative_weight: float,
+        n_action_samples: int,
+        real_ratio: float,
+        soft_q_backup: bool,
         use_gpu: Optional[Device],
         scaler: Optional[Scaler],
         action_scaler: Optional[ActionScaler],
@@ -79,17 +83,21 @@ class COImpl(TD3PlusBCImpl):
             action_size = action_size,
             actor_learning_rate = actor_learning_rate,
             critic_learning_rate = critic_learning_rate,
+            temp_learning_rate = temp_learning_rate,
             actor_optim_factory = actor_optim_factory,
             critic_optim_factory = critic_optim_factory,
+            temp_optim_factory = temp_optim_factory,
             actor_encoder_factory = actor_encoder_factory,
             critic_encoder_factory = critic_encoder_factory,
             q_func_factory = q_func_factory,
             gamma = gamma,
             tau = tau,
             n_critics = n_critics,
-            target_smoothing_sigma = target_smoothing_sigma,
-            target_smoothing_clip = target_smoothing_clip,
-            alpha = alpha,
+            initial_temperature = initial_temperature,
+            conservative_weight = conservative_weight,
+            n_action_samples = n_action_samples,
+            real_ratio = real_ratio,
+            soft_q_backup = soft_q_backup,
             use_gpu = use_gpu,
             scaler = scaler,
             action_scaler = action_scaler,
@@ -483,7 +491,30 @@ class COImpl(TD3PlusBCImpl):
             terminals=batch.terminals,
             gamma=self._gamma ** batch.n_steps,
         )
+        loss += self._compute_conservative_loss(batch.observations, batch.actions[:, :self._action_size], batch.next_observations)
         return loss
+
+    def update_alpha(self, batch: TorchMiniBatch) -> np.ndarray:
+        assert self._alpha_optim is not None
+        assert self._q_func is not None
+        assert self._log_alpha is not None
+
+        # Q function should be inference mode for stability
+        self._q_func.eval()
+
+        self._alpha_optim.zero_grad()
+
+        # the original implementation does scale the loss value
+        loss = -self._compute_conservative_loss(
+            batch.observations, batch.actions[:, :self._action_size], batch.next_observations
+        )
+
+        loss.backward()
+        self._alpha_optim.step()
+
+        cur_alpha = self._log_alpha().exp().cpu().detach().numpy()[0][0]
+
+        return loss.cpu().detach().numpy(), cur_alpha
 
     @train_api
     def retrain_update_actor(self, batch: TorchMiniBatch) -> np.ndarray:
@@ -541,7 +572,7 @@ class COImpl(TD3PlusBCImpl):
         loss = self.compute_actor_loss(batch)
 
         loss.backward()
-        self._actor_optims[self._impl_id].step()
+        self._actor_optim.step()
 
         loss = loss.cpu().detach().numpy()
 
@@ -687,15 +718,6 @@ class COImpl(TD3PlusBCImpl):
         loss = loss.cpu().detach().numpy()
 
         return loss, replay_loss, replay_losses
-
-    def compute_actor_loss(self, batch: TorchMiniBatch) -> torch.Tensor:
-        assert self._policy is not None
-        assert self._q_func is not None
-        action = self._policy(batch.observations)
-        q_t = self._q_func(batch.observations, action, "none")[0]
-        lam = self._alpha / (q_t.abs().mean()).detach()
-        return lam * -q_t.mean() + ((batch.actions[:, :self._action_size] - action) ** 2).mean()
-
 
     @train_api
     def begin_update_model(self, batch: TransitionMiniBatch):
@@ -1246,18 +1268,26 @@ class COImpl(TD3PlusBCImpl):
 
     def change_task_multihead(self, task_id):
         assert self._policy is not None
+        assert self._targ_policy is not None
+        assert self._q_func is not None
+        assert self._targ_q_func is not None
+        assert self._dynamic is not None
         if self._impl_id is not None and self._impl_id == task_id:
             return
         if "_fcs" not in self._policy.__dict__.keys():
-            self._policy._fcs = dict()
-            self._policy._fcs[task_id] = self._policy._fc
+            self._policy._mus = dict()
+            self._policy._mus[task_id] = self._policy._mu
+            self._policy._logstds = dict()
+            self._policy._logstds[task_id] = self._policy._logstds
             if self._replay_critic:
                 for q_func in self._q_func._q_funcs:
                     q_func._fcs = dict()
                     q_func._fcs[task_id] = q_func._fc
             if self._replay_type == 'orl':
-                self._targ_policy._fcs = dict()
-                self._targ_policy._fcs[task_id] = self._targ_policy._fc
+                self._targ_policy._mus = dict()
+                self._targ_policy._mus[task_id] = self._targ_policy._mu
+                self._targ_policy._logstds = dict()
+                self._targ_policy._logstds[task_id] = self._targ_policy._logstds
                 if self._replay_critic:
                     for q_func in self._targ_q_func._q_funcs:
                         q_func._fcs = dict()
@@ -1274,14 +1304,22 @@ class COImpl(TD3PlusBCImpl):
                     model._min_logstds[task_id] = model._min_logstd
             self._impl_id = task_id
         # self._using_id = task_id
-        if task_id not in self._policy._fcs.keys():
+        if task_id not in self._policy._mus.keys():
             print(f'add new id: {task_id}')
             if self._replay_critic:
                 for q_func in self._q_func._q_funcs:
                     assert task_id not in q_func._fcs.keys()
-            self._policy._fcs[task_id] = deepcopy(nn.Linear(self._policy._fc.weight.shape[1], self._policy._fc.weight.shape[0], bias=self._policy._fc.bias is not None).to(self.device).state_dict())
+            self._policy._mus[task_id] = deepcopy(nn.Linear(self._policy._mu.weight.shape[1], self._policy._mu.weight.shape[0], bias=self._policy._mu.bias is not None).to(self.device).state_dict())
+            if isinstance(self._policy._logstd, torch.nn.parameter.Parameter):
+                self._policy._logstds[task_id] = deepcopy(nn.Parameter(torch.empty(torch.zeros(1, self._policy._logstd.weight.shape[0], dtype=torch.float32).to(self.device))))
+            else:
+                self._policy._logstds[task_id] = deepcopy(nn.Linear(self._policy._logstd.weight.shape[1], self._policy._logstd.shape[1], bias=self._policy._logstd.bias is not None).to(self.device).state_dict())
             if self._replay_type == 'orl':
-                self._targ_policy._fcs[task_id] = deepcopy(nn.Linear(self._targ_policy._fc.weight.shape[1], self._targ_policy._fc.weight.shape[0], bias=self._targ_policy._fc.bias is not None).to(self.device).state_dict())
+                self._targ_policy._mus[task_id] = deepcopy(nn.Linear(self._targ_policy._mu.weight.shape[1], self._targ_policy._mu.weight.shape[0], bias=self._targ_policy._mu.bias is not None).to(self.device).state_dict())
+                if isinstance(self._policy._logstd, torch.nn.parameter.Parameter):
+                    self._targ_policy._logstds[task_id] = deepcopy(nn.Parameter(torch.empty(torch.zeros(1, self._targ_policy._logstd.weight.shape[0], dtype=torch.float32).to(self.device))))
+                else:
+                    self._targ_policy._logstds[task_id] = deepcopy(nn.Linear(self._targ_policy._logstd.weight.shape[1], self._targ_policy._logstd.shape[1], bias=self._targ_policy._logstd.bias is not None).to(self.device).state_dict())
 
             if self._replay_critic:
                 for q_func in self._q_func._q_funcs:
@@ -1296,8 +1334,14 @@ class COImpl(TD3PlusBCImpl):
                         model._max_logstds[task_id] = deepcopy(nn.Parameter(torch.empty(1, model._logstd.weight.shape[0], dtype=torch.float32).fill_(2.0).to(self.device)))
                         model._min_logstds[task_id] = deepcopy(nn.Parameter(torch.empty(1, model._logstd.weight.shape[0], dtype=torch.float32).fill_(-10.0).to(self.device)))
         if self._impl_id != task_id:
-            self._policy._fcs[self._impl_id] = deepcopy(self._policy._fc.state_dict())
-            self._policy._fc.load_state_dict(self._policy._fcs[task_id])
+            self._policy._mus[task_id] = deepcopy(self._policy._mu.state_dict())
+            self._policy._mu.load_state_dict(self._policy._mus[task_id])
+            if isinstance(self._policy._logstd, torch.nn.parameter.Parameter):
+                self._policy._logstds[task_id] = deepcopy(self._policy._logstd)
+                self._policy._logstd.copy_(self._policy._logstds[task_id])
+            else:
+                self._policy._logstds[task_id] = deepcopy(self._policy._logstd.state_dict())
+                self._policy._logstd.load_state_dict(self._policy._logstds[task_id])
             if self._replay_type == 'orl':
                 self._targ_policy._fcs[self._impl_id] = deepcopy(self._targ_policy._fc.state_dict())
                 self._targ_policy._fc.load_state_dict(self._targ_policy._fcs[task_id])
@@ -1326,124 +1370,5 @@ class COImpl(TD3PlusBCImpl):
                 self._dynamic.parameters(), lr=self._model_learning_rate
             )
         self._impl_id = task_id
-
-    #def change_task(self, task_id):
-    #    if self._impl_id is not None and self._impl_id == task_id:
-    #        return
-    #    self._impl_id = task_id
-    #    if task_id not in self._policy._fcs.keys():
-    #        print(f'add new id: {task_id}')
-    #        if self._replay_critic:
-    #            for q_func in self._q_func._q_funcs:
-    #                assert task_id not in q_func._fcs.keys()
-    #        self._policy._fcs[task_id] = nn.Linear(self._policy._fc.weight.shape[1], self._policy._fc.weight.shape[0], bias=self._policy._fc.bias is not None).to(self.device)
-    #        self._targ_policy._fcs[task_id] = nn.Linear(self._targ_policy._fc.weight.shape[1], self._targ_policy._fc.weight.shape[0], bias=self._targ_policy._fc.bias is not None).to(self.device)
-
-    #        # self._actor_optim.add_param_group({'params': list(self._policy._fcs[task_id].parameters())})
-    #        self._actor_optim = self._actor_optim_factory.create(
-    #            self._policy.parameters(), lr=self._actor_learning_rate
-    #        )
-    #        if task_id != 0:
-    #            self._actor_optims[task_id] = self._actor_optim_factory.create(list(self._policy._fcs[task_id].parameters()), lr=self._actor_learning_rate)
-
-    #        def forward(self, x: torch.Tensor) -> torch.Tensor:
-    #            h=self._encoder(x)
-    #            return torch.tanh(self._fcs[task_id](h))
-    #        self._policy.forwards[task_id] = forward
-    #        self._targ_policy.forwards[task_id] = forward
-
-    #        if self._replay_critic:
-    #            for q_func in self._q_func._q_funcs:
-    #                q_func._fcs[task_id] = nn.Linear(q_func._fc.weight.shape[1], q_func._fc.weight.shape[0], bias=q_func._fc.bias is not None).to(self.device)
-    #            for q_func in self._targ_q_func._q_funcs:
-    #                q_func._fcs[task_id] = nn.Linear(q_func._fc.weight.shape[1], q_func._fc.weight.shape[0], bias=q_func._fc.bias is not None).to(self.device)
-    #            if self._use_model:
-    #                for model in self._dynamic._models:
-    #                    model._mus[task_id] = nn.Linear(model._mu.weight.shape[1], model._mu.weight.shape[0], bias=model._mu.bias is not None).to(self.device)
-    #                    model._logstds[task_id] = nn.Linear(model._logstd.weight.shape[1], model._logstd.weight.shape[0], bias=model._logstd.bias is not None).to(self.device)
-    #                    model._max_logstds[task_id] = nn.Parameter(torch.empty(1, model._logstd.weight.shape[0], dtype=torch.float32).fill_(2.0).to(self.device))
-    #                    model._min_logstds[task_id] = nn.Parameter(torch.empty(1, model._logstd.weight.shape[0], dtype=torch.float32).fill_(-10.0).to(self.device))
-
-    #            for q_func, targ_q_func in zip(self._q_func._q_funcs, self._targ_q_func._q_funcs):
-    #                # self._critic_optim.add_param_group({'params': list(q_func._fcs[task_id].parameters())})
-    #                self._critic_optim = self._critic_optim_factory.create(
-    #                    self._q_func.parameters(), lr=self._critic_learning_rate
-    #                )
-    #                if task_id != 0:
-    #                    self._critic_optims[task_id] = self._critic_optim_factory.create(q_func._fcs[task_id].parameters(), lr=self._critic_learning_rate)
-    #                def forward(self, x: torch.Tensor, action: torch.Tensor) -> torch.Tensor:
-    #                    return cast(torch.Tensor, self._fcs[task_id](self._encoder(x, action)))
-    #                q_func.forwards[task_id] = forward
-    #                targ_q_func.forwards[task_id] = forward
-
-    #        if self._use_model and self._replay_model:
-    #            for model in self._dynamic._models:
-    #                # self._model_optim.add_param_group({'params': list(model._mus[task_id].parameters())})
-    #                # self._model_optim.add_param_group({'params': list(model._logstds[task_id].parameters())})
-    #                # self._model_optim.add_param_group({'params': [model._max_logstds[task_id], model._min_logstds[task_id]]})
-    #                self._model_optim = self._model_optim_factory.create(self._dynamic.parameters(), lr=self._model_learning_rate)
-    #                def compute_stats(
-    #                    self, x: torch.Tensor, action: torch.Tensor
-    #                ) -> Tuple[torch.Tensor, torch.Tensor]:
-    #                    h = self._encoder(x, action)
-
-    #                    mu = self._mus[task_id](h)
-
-    #                    # log standard deviation with bounds
-    #                    logstd = self._logstds[task_id](h)
-    #                    logstd = self._max_logstds[task_id] - F.softplus(self._max_logstd - logstd)
-    #                    logstd = self._min_logstds[task_id] + F.softplus(logstd - self._min_logstd)
-
-    #                    return mu, logstd
-    #                model.compute_statses[task_id] = compute_stats
-    #            if task_id != 0:
-    #                model_param_list = []
-    #                for model in self._dynamic._models:
-    #                    model_param_list += list(model._mus[task_id].parameters()) + list(model._logstds[task_id].parameters()) + [model._max_logstds[task_id], model._min_logstds[task_id]]
-    #                self._model_optims[task_id] = self._model_optim_factory.create(model_param_list, lr=self._model_learning_rate)
-    #    else:
-    #        # 这里不知道为什么compute_stats的参数个数对不上。
-    #        def forward(self, x: torch.Tensor) -> torch.Tensor:
-    #            h=self._encoder(x)
-    #            return torch.tanh(self._fcs[task_id](h))
-    #        self._policy.forwards[task_id] = forward
-    #        self._targ_policy.forwards[task_id] = forward
-    #        if self._replay_critic:
-    #            add_param = []
-    #            for q_func, targ_q_func in zip(self._q_func._q_funcs, self._targ_q_func._q_funcs):
-    #                self._critic_optim.add_param_group({'params': list(q_func.parameters())})
-    #                add_param += list(q_func.parameters())
-    #                def forward(self, x: torch.Tensor, action: torch.Tensor) -> torch.Tensor:
-    #                    return cast(torch.Tensor, self._fcs[task_id](self._encoder(x, action)))
-    #                q_func.forwards[task_id] = forward
-    #                targ_q_func.forwards[task_id] = forward
-    #            self._critic_optims[task_id] = self._critic_optim_factory.create(add_param, lr=self._critic_learning_rate)
-    #        if self._use_model and self._replay_model:
-    #            for model in self._dynamic._models:
-    #                def compute_stats(
-    #                    self, x: torch.Tensor, action: torch.Tensor
-    #                ) -> Tuple[torch.Tensor, torch.Tensor]:
-    #                    h = self._encoder(x, action)
-
-    #                    mu = self._mus[task_id](h)
-
-    #                    # log standard deviation with bounds
-    #                    logstd = self._logstds[task_id](h)
-    #                    logstd = self._max_logstds[task_id] - F.softplus(self._max_logstd - logstd)
-    #                    logstd = self._min_logstds[task_id] + F.softplus(logstd - self._min_logstd)
-
-    #                    return mu, logstd
-    #                model.compute_statses[task_id] = compute_stats
-
-    #    self._policy.forward = types.MethodType(self._policy.forwards[task_id], self._policy)
-    #    self._targ_policy.forward = types.MethodType(self._targ_policy.forwards[task_id], self._targ_policy)
-    #    if self._replay_critic:
-    #        for q_func in self._q_func._q_funcs:
-    #            q_func.forward = types.MethodType(q_func.forwards[task_id], q_func)
-    #        for q_func in self._targ_q_func._q_funcs:
-    #            q_func.forward = types.MethodType(q_func.forwards[task_id], q_func)
-    #    if self._use_model and self._replay_model:
-    #        for model in self._dynamic._models:
-    #            model.compute_stats = types.MethodType(model.compute_statses[task_id], model)
     def change_task_singlehead(self, task_id):
         self._impl_id = task_id

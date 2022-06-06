@@ -14,7 +14,7 @@ def compute_vector_norm(tensor1, tensor2):
     tensor1.half()
     tensor2.half()
     ret = torch.linalg.vector_norm(tensor1 - tensor2, dim = 2)
-    return ret.cpu()
+    return ret
 def similar_euclid(obs_all, obs_transition, dataset_name, dataset_num, input_indexes=None, eval_batch_size=1000, topk=256, compare_dim=2):
     filename = 'near_indexes/near_indexes_' + dataset_name + '/near_indexes_' + dataset_name + '_' + str(dataset_num) + '.pt'
     if os.path.exists(filename):
@@ -29,12 +29,12 @@ def similar_euclid(obs_all, obs_transition, dataset_name, dataset_num, input_ind
                 if j + eval_batch_size < obs_transition.shape[0]:
                     tensor1 = obs_all[i: i + eval_batch_size, :compare_dim].unsqueeze(dim=1).expand(-1, eval_batch_size, -1)
                     tensor2 = obs_transition[j: j + eval_batch_size, :compare_dim].unsqueeze(dim=0).expand(eval_batch_size, -1, -1)
-                    siamese_distance = compute_vector_norm(tensor1, tensor2)
+                    siamese_distance = compute_vector_norm(tensor1, tensor2).cpu()
                     in_results.append(siamese_distance)
                 else:
                     tensor1 = obs_all[i: i + eval_batch_size, :compare_dim].unsqueeze(dim=1).expand(-1, obs_transition.shape[0] - j, -1)
                     tensor2 = obs_transition[j:, :compare_dim].unsqueeze(dim=0).expand(eval_batch_size, -1, -1)
-                    siamese_distance = compute_vector_norm(tensor1, tensor2)
+                    siamese_distance = compute_vector_norm(tensor1, tensor2).cpu()
                     in_results.append(siamese_distance)
                 j += eval_batch_size
         else:
@@ -42,12 +42,12 @@ def similar_euclid(obs_all, obs_transition, dataset_name, dataset_num, input_ind
                 if j + eval_batch_size < obs_transition.shape[0]:
                     tensor1 = obs_all[i:, :compare_dim].unsqueeze(dim=1).expand(-1, eval_batch_size, -1)
                     tensor2 = obs_transition[j: j + eval_batch_size, :compare_dim].unsqueeze(dim=0).expand(obs_all.shape[0] - i, -1, -1)
-                    siamese_distance = compute_vector_norm(tensor1, tensor2)
+                    siamese_distance = compute_vector_norm(tensor1, tensor2).cpu()
                     in_results.append(siamese_distance)
                 else:
                     tensor1 = obs_all[i:, :compare_dim].unsqueeze(dim=1).expand(-1, obs_transition.shape[0] - j, -1)
                     tensor2 = obs_transition[j:, :compare_dim].unsqueeze(dim=0).expand(obs_all.shape[0] - i, -1, -1)
-                    siamese_distance = compute_vector_norm(tensor1, tensor2)
+                    siamese_distance = compute_vector_norm(tensor1, tensor2).cpu()
                     in_results.append(siamese_distance)
                 j += eval_batch_size
         i += eval_batch_size
@@ -130,14 +130,58 @@ def similar_phi(obs_batch, act_batch, obs_near, act_near, phi, input_indexes=Non
 
 def similar_mb(mus, logstds, observations, rewards, topk=4, batch_size=64, input_indexes=None):
     normal = Normal(mus, torch.exp(logstds))
-    log_prob = normal.log_prob(torch.cat([torch.from_numpy(observations), torch.from_numpy(rewards)], dim=1).to(mus.device))
+    if len(rewards.shape) == 1:
+        rewards = rewards.unsqueeze(dim=1)
+    log_prob = normal.log_prob(torch.cat([observations, rewards], dim=1).to(mus.device))
     log_prob = log_prob.sum(dim=1)
+    print(f"max(log_prob): {max(log_prob)}")
     try:
         category = torch.distributions.categorical.Categorical(logits=log_prob)
     except:
-        print(f'log_prob: {log_prob}')
         category = torch.distributions.categorical.Categorical(logits=log_prob)
     near_index = category.sample()
     if input_indexes is not None:
         near_index = input_indexes[near_index]
     return near_index
+
+def similar_mb_euclid(obs_all, obs_transition, eval_batch_size=1000, topk=256, compare_dim=2):
+    results = []
+    near_distances = []
+    i = 0
+    while i < obs_all.shape[0]:
+        in_results = []
+        j = 0
+        if i + eval_batch_size < obs_all.shape[0]:
+            while j < obs_transition.shape[0]:
+                if j + eval_batch_size < obs_transition.shape[0]:
+                    tensor1 = obs_all[i: i + eval_batch_size, :compare_dim].unsqueeze(dim=1).expand(-1, eval_batch_size, -1)
+                    tensor2 = obs_transition[j: j + eval_batch_size, :compare_dim].unsqueeze(dim=0).expand(eval_batch_size, -1, -1)
+                    siamese_distance = torch.linalg.vector_norm(tensor1 - tensor2, dim = 2)
+                    in_results.append(siamese_distance)
+                else:
+                    tensor1 = obs_all[i: i + eval_batch_size, :compare_dim].unsqueeze(dim=1).expand(-1, obs_transition.shape[0] - j, -1)
+                    tensor2 = obs_transition[j:, :compare_dim].unsqueeze(dim=0).expand(eval_batch_size, -1, -1)
+                    siamese_distance = torch.linalg.vector_norm(tensor1 - tensor2, dim = 2)
+                    in_results.append(siamese_distance)
+                j += eval_batch_size
+        else:
+            while j < obs_transition.shape[0]:
+                if j + eval_batch_size < obs_transition.shape[0]:
+                    tensor1 = obs_all[i:, :compare_dim].unsqueeze(dim=1).expand(-1, eval_batch_size, -1)
+                    tensor2 = obs_transition[j: j + eval_batch_size, :compare_dim].unsqueeze(dim=0).expand(obs_all.shape[0] - i, -1, -1)
+                    siamese_distance = torch.linalg.vector_norm(tensor1 - tensor2, dim = 2)
+                    in_results.append(siamese_distance)
+                else:
+                    tensor1 = obs_all[i:, :compare_dim].unsqueeze(dim=1).expand(-1, obs_transition.shape[0] - j, -1)
+                    tensor2 = obs_transition[j:, :compare_dim].unsqueeze(dim=0).expand(obs_all.shape[0] - i, -1, -1)
+                    siamese_distance = torch.linalg.vector_norm(tensor1 - tensor2, dim = 2)
+                    in_results.append(siamese_distance)
+                j += eval_batch_size
+        i += eval_batch_size
+        in_results = torch.cat(in_results, dim=1)
+        near_distance, near_indexes = torch.topk(in_results, topk, largest=False)
+        results.append(near_indexes)
+        near_distances.append(near_distance)
+    near_indexes = torch.cat(results, dim=0).to(torch.int64)
+    near_distances = torch.cat(near_distances, dim=0).to(torch.float32)
+    return near_indexes, near_distances

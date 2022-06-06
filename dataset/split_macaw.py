@@ -77,18 +77,20 @@ def split_macaw(top_euclid, dataset_name, inner_paths, envs, include_goal=False,
     task_datasets = dict()
     nearest_indexes = dict()
     tasks = []
-    for i, (inner_path, env) in enumerate(zip(inner_paths, envs)):
+    for i, env in enumerate(envs):
         with open(env, 'rb') as f:
             task_info = pickle.load(f)
             assert len(task_info) == 1, f'Unexpected task info: {task_info}'
             tasks.append(task_info[0])
-    if dataset_name == 'ant-dir':
+    if dataset_name in ['ant_dir_expert', 'ant_dir_medium', 'ant_dir_random']:
         env = AntDirEnv(tasks, len(envs), include_goal = include_goal or multitask)
-    elif dataset_name == 'cheetah-dir':
+    elif dataset_name in ['cheetah_dir_expert', 'cheetah_dir_medium', 'cheetah_dir_random']:
         env = HalfCheetahDirEnv(tasks, include_goal = include_goal or multitask)
-    elif dataset_name == 'cheetah-vel':
+    elif dataset_name in ['cheetah_vel_expert', 'cheetah_vel_medium', 'cheetah_vel_random']:
+        print(inner_paths)
+        print(envs)
         env = HalfCheetahVelEnv(tasks, include_goal = include_goal or multitask, one_hot_goal=one_hot_goal or multitask)
-    elif dataset_name in ['walker-params', 'walker-dir']:
+    elif dataset_name in ['walker_dir_expert', 'walker_dir_medium', 'walker_dir_random']:
         env = WalkerRandParamsWrappedEnv(tasks, len(envs), include_goal = include_goal or multitask)
     else:
         raise RuntimeError(f'Invalid env name {dataset_name}')
@@ -150,10 +152,7 @@ def split_gym(top_euclid, dataset_name, task_datasets, env, nearest_indexes, com
         # observations = np.stack([transition.observation for transition in transitions], axis=0)
         # print(f"observations.shape: {observations.shape}")
         # indexes_euclid = similar_euclid(torch.from_numpy(dataset.observations).to(device), torch.from_numpy(observations).to(device), dataset_name, dataset_num, compare_dim=compare_dim)[:dataset.actions.shape[0], :top_euclid]
-        if 'mix' in dataset_name and dataset_num == '0': #  hopper
-            observations = np.concatenate([dataset.observations, np.zeros([dataset.observations.shape[0], 6], dtype=np.float32)], axis=1)
-        else:
-            observations = dataset.observations
+        observations = dataset.observations
         # indexes_euclid = np.zeros_like(dataset.actions)
         real_action_size = dataset.actions.shape[1]
         task_id_numpy = np.eye(task_nums)[int(dataset_num)].squeeze()
