@@ -1277,8 +1277,8 @@ class CO(COMBO):
         random.shuffle(orl_indexes_all)
         orl_ns_all = [0 for _ in orl_indexes_all]
         orl_batch_size = max_save_num // max_export_step
-        orl_indexes_list = [orl_indexes_all[i:i+orl_batch_size] for i in range(0,len(orl_indexes_all),orl_batch_size)]
-        orl_ns_list = [orl_ns_all[i:i+orl_batch_size] for i in range(0,len(orl_ns_all),orl_batch_size)]
+        orl_indexes_list = [orl_indexes_all[i:i+orl_batch_size] for i in range(0,len(orl_indexes_all) - 1,orl_batch_size)]
+        orl_ns_list = [orl_ns_all[i:i+orl_batch_size] for i in range(0,len(orl_ns_all) - 1,orl_batch_size)]
 
         near_observations = observations
         near_actions = actions
@@ -1292,6 +1292,8 @@ class CO(COMBO):
             # if test and stop:
             #     break
             for orl_indexes, orl_ns in zip(orl_indexes_list, orl_ns_list):
+                if len(orl_indexes_all) >= max_save_num:
+                    break
                 # if test and stop:
                 #     break
                 start_indexes = orl_indexes
