@@ -20,7 +20,6 @@ from d3rlpy.models.torch.policies import squash_action
 from d3rlpy.preprocessing import ActionScaler, RewardScaler, Scaler
 from d3rlpy.torch_utility import TorchMiniBatch, soft_sync, train_api, torch_api
 from d3rlpy.dataset import TransitionMiniBatch
-from d3rlpy.algos.torch.td3_plus_bc_impl import TD3PlusBCImpl
 from d3rlpy.models.builders import create_probabilistic_ensemble_dynamics_model
 
 from myd3rlpy.models.builders import create_phi, create_psi
@@ -30,106 +29,7 @@ from utils.utils import Struct
 
 
 replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'terminals', 'policy_actions', 'qs', 'phis', 'psis']
-class COImpl(TD3PlusBCImpl):
-    def __init__(
-        self,
-        observation_shape: Sequence[int],
-        action_size: int,
-        actor_learning_rate: float,
-        critic_learning_rate: float,
-        phi_learning_rate: float,
-        psi_learning_rate: float,
-        model_learning_rate: float,
-        actor_optim_factory: OptimizerFactory,
-        critic_optim_factory: OptimizerFactory,
-        phi_optim_factory: OptimizerFactory,
-        psi_optim_factory: OptimizerFactory,
-        model_optim_factory: OptimizerFactory,
-        actor_encoder_factory: EncoderFactory,
-        critic_encoder_factory: EncoderFactory,
-        model_encoder_factory: EncoderFactory,
-        q_func_factory: QFunctionFactory,
-        replay_type: str,
-        gamma: float,
-        gem_alpha: float,
-        agem_alpha: float,
-        ewc_r_walk_alpha: float,
-        damping: float,
-        epsilon: float,
-        tau: float,
-        n_critics: int,
-        target_smoothing_sigma: float,
-        target_smoothing_clip: float,
-        alpha: float,
-        use_gpu: Optional[Device],
-        scaler: Optional[Scaler],
-        action_scaler: Optional[ActionScaler],
-        reward_scaler: Optional[RewardScaler],
-        model_n_ensembles: int,
-        use_phi: bool,
-        use_model: bool,
-        replay_model: bool,
-        replay_critic: bool,
-        replay_alpha: float,
-        retrain_model_alpha: float,
-        single_head: bool,
-    ):
-        super().__init__(
-            observation_shape = observation_shape,
-            action_size = action_size,
-            actor_learning_rate = actor_learning_rate,
-            critic_learning_rate = critic_learning_rate,
-            actor_optim_factory = actor_optim_factory,
-            critic_optim_factory = critic_optim_factory,
-            actor_encoder_factory = actor_encoder_factory,
-            critic_encoder_factory = critic_encoder_factory,
-            q_func_factory = q_func_factory,
-            gamma = gamma,
-            tau = tau,
-            n_critics = n_critics,
-            target_smoothing_sigma = target_smoothing_sigma,
-            target_smoothing_clip = target_smoothing_clip,
-            alpha = alpha,
-            use_gpu = use_gpu,
-            scaler = scaler,
-            action_scaler = action_scaler,
-            reward_scaler = reward_scaler,
-        )
-        self._replay_type = replay_type
-
-        self._gem_alpha = gem_alpha
-        self._agem_alpha = agem_alpha
-        self._ewc_r_walk_alpha = ewc_r_walk_alpha
-        self._damping = damping
-        self._epsilon = epsilon
-
-        self._use_phi = use_phi
-        self._use_model = use_model
-        self._replay_alpha = replay_alpha
-        self._replay_critic = replay_critic
-        self._replay_model = replay_model
-        self._phi_learning_rate = phi_learning_rate
-        self._psi_learning_rate = psi_learning_rate
-        self._phi_optim_factory = phi_optim_factory
-        self._psi_optim_factory = psi_optim_factory
-
-        self._model_learning_rate = model_learning_rate
-        self._model_optim_factory = model_optim_factory
-        self._model_encoder_factory = model_encoder_factory
-        self._model_n_ensembles = model_n_ensembles
-        self._retrain_model_alpha = retrain_model_alpha
-
-        single_head = False
-        self._single_head = single_head
-        if single_head:
-            self.change_task = self.change_task_singlehead
-        else:
-            self.change_task = self.change_task_multihead
-
-        self._first = True
-
-        # initialized in build
-
+class COImpl():
     def build(self, task_id):
         if self._use_phi:
             self._phi = create_phi(self._observation_shape, self._action_size, self._critic_encoder_factory)
@@ -145,6 +45,8 @@ class COImpl(TD3PlusBCImpl):
                 n_ensembles=self._model_n_ensembles,
                 discrete_action=False,
             )
+        else:
+            self._dynamic = None
 
         super().build()
         if self._use_model:
@@ -471,20 +373,6 @@ class COImpl(TD3PlusBCImpl):
 
         return loss, replay_loss, replay_losses
 
-    def compute_critic_loss(
-        self, batch: TorchMiniBatch, q_tpn: torch.Tensor
-    ) -> torch.Tensor:
-        assert self._q_func is not None
-        loss =  self._q_func.compute_error(
-            observations=batch.observations,
-            actions=batch.actions[:, :self._action_size],
-            rewards=batch.rewards,
-            target=q_tpn,
-            terminals=batch.terminals,
-            gamma=self._gamma ** batch.n_steps,
-        )
-        return loss
-
     @train_api
     def retrain_update_actor(self, batch: TorchMiniBatch) -> np.ndarray:
         assert self._q_func is not None
@@ -687,15 +575,6 @@ class COImpl(TD3PlusBCImpl):
         loss = loss.cpu().detach().numpy()
 
         return loss, replay_loss, replay_losses
-
-    def compute_actor_loss(self, batch: TorchMiniBatch) -> torch.Tensor:
-        assert self._policy is not None
-        assert self._q_func is not None
-        action = self._policy(batch.observations)
-        q_t = self._q_func(batch.observations, action, "none")[0]
-        lam = self._alpha / (q_t.abs().mean()).detach()
-        return lam * -q_t.mean() + ((batch.actions[:, :self._action_size] - action) ** 2).mean()
-
 
     @train_api
     def begin_update_model(self, batch: TransitionMiniBatch):
@@ -1327,123 +1206,5 @@ class COImpl(TD3PlusBCImpl):
             )
         self._impl_id = task_id
 
-    #def change_task(self, task_id):
-    #    if self._impl_id is not None and self._impl_id == task_id:
-    #        return
-    #    self._impl_id = task_id
-    #    if task_id not in self._policy._fcs.keys():
-    #        print(f'add new id: {task_id}')
-    #        if self._replay_critic:
-    #            for q_func in self._q_func._q_funcs:
-    #                assert task_id not in q_func._fcs.keys()
-    #        self._policy._fcs[task_id] = nn.Linear(self._policy._fc.weight.shape[1], self._policy._fc.weight.shape[0], bias=self._policy._fc.bias is not None).to(self.device)
-    #        self._targ_policy._fcs[task_id] = nn.Linear(self._targ_policy._fc.weight.shape[1], self._targ_policy._fc.weight.shape[0], bias=self._targ_policy._fc.bias is not None).to(self.device)
-
-    #        # self._actor_optim.add_param_group({'params': list(self._policy._fcs[task_id].parameters())})
-    #        self._actor_optim = self._actor_optim_factory.create(
-    #            self._policy.parameters(), lr=self._actor_learning_rate
-    #        )
-    #        if task_id != 0:
-    #            self._actor_optims[task_id] = self._actor_optim_factory.create(list(self._policy._fcs[task_id].parameters()), lr=self._actor_learning_rate)
-
-    #        def forward(self, x: torch.Tensor) -> torch.Tensor:
-    #            h=self._encoder(x)
-    #            return torch.tanh(self._fcs[task_id](h))
-    #        self._policy.forwards[task_id] = forward
-    #        self._targ_policy.forwards[task_id] = forward
-
-    #        if self._replay_critic:
-    #            for q_func in self._q_func._q_funcs:
-    #                q_func._fcs[task_id] = nn.Linear(q_func._fc.weight.shape[1], q_func._fc.weight.shape[0], bias=q_func._fc.bias is not None).to(self.device)
-    #            for q_func in self._targ_q_func._q_funcs:
-    #                q_func._fcs[task_id] = nn.Linear(q_func._fc.weight.shape[1], q_func._fc.weight.shape[0], bias=q_func._fc.bias is not None).to(self.device)
-    #            if self._use_model:
-    #                for model in self._dynamic._models:
-    #                    model._mus[task_id] = nn.Linear(model._mu.weight.shape[1], model._mu.weight.shape[0], bias=model._mu.bias is not None).to(self.device)
-    #                    model._logstds[task_id] = nn.Linear(model._logstd.weight.shape[1], model._logstd.weight.shape[0], bias=model._logstd.bias is not None).to(self.device)
-    #                    model._max_logstds[task_id] = nn.Parameter(torch.empty(1, model._logstd.weight.shape[0], dtype=torch.float32).fill_(2.0).to(self.device))
-    #                    model._min_logstds[task_id] = nn.Parameter(torch.empty(1, model._logstd.weight.shape[0], dtype=torch.float32).fill_(-10.0).to(self.device))
-
-    #            for q_func, targ_q_func in zip(self._q_func._q_funcs, self._targ_q_func._q_funcs):
-    #                # self._critic_optim.add_param_group({'params': list(q_func._fcs[task_id].parameters())})
-    #                self._critic_optim = self._critic_optim_factory.create(
-    #                    self._q_func.parameters(), lr=self._critic_learning_rate
-    #                )
-    #                if task_id != 0:
-    #                    self._critic_optims[task_id] = self._critic_optim_factory.create(q_func._fcs[task_id].parameters(), lr=self._critic_learning_rate)
-    #                def forward(self, x: torch.Tensor, action: torch.Tensor) -> torch.Tensor:
-    #                    return cast(torch.Tensor, self._fcs[task_id](self._encoder(x, action)))
-    #                q_func.forwards[task_id] = forward
-    #                targ_q_func.forwards[task_id] = forward
-
-    #        if self._use_model and self._replay_model:
-    #            for model in self._dynamic._models:
-    #                # self._model_optim.add_param_group({'params': list(model._mus[task_id].parameters())})
-    #                # self._model_optim.add_param_group({'params': list(model._logstds[task_id].parameters())})
-    #                # self._model_optim.add_param_group({'params': [model._max_logstds[task_id], model._min_logstds[task_id]]})
-    #                self._model_optim = self._model_optim_factory.create(self._dynamic.parameters(), lr=self._model_learning_rate)
-    #                def compute_stats(
-    #                    self, x: torch.Tensor, action: torch.Tensor
-    #                ) -> Tuple[torch.Tensor, torch.Tensor]:
-    #                    h = self._encoder(x, action)
-
-    #                    mu = self._mus[task_id](h)
-
-    #                    # log standard deviation with bounds
-    #                    logstd = self._logstds[task_id](h)
-    #                    logstd = self._max_logstds[task_id] - F.softplus(self._max_logstd - logstd)
-    #                    logstd = self._min_logstds[task_id] + F.softplus(logstd - self._min_logstd)
-
-    #                    return mu, logstd
-    #                model.compute_statses[task_id] = compute_stats
-    #            if task_id != 0:
-    #                model_param_list = []
-    #                for model in self._dynamic._models:
-    #                    model_param_list += list(model._mus[task_id].parameters()) + list(model._logstds[task_id].parameters()) + [model._max_logstds[task_id], model._min_logstds[task_id]]
-    #                self._model_optims[task_id] = self._model_optim_factory.create(model_param_list, lr=self._model_learning_rate)
-    #    else:
-    #        # 这里不知道为什么compute_stats的参数个数对不上。
-    #        def forward(self, x: torch.Tensor) -> torch.Tensor:
-    #            h=self._encoder(x)
-    #            return torch.tanh(self._fcs[task_id](h))
-    #        self._policy.forwards[task_id] = forward
-    #        self._targ_policy.forwards[task_id] = forward
-    #        if self._replay_critic:
-    #            add_param = []
-    #            for q_func, targ_q_func in zip(self._q_func._q_funcs, self._targ_q_func._q_funcs):
-    #                self._critic_optim.add_param_group({'params': list(q_func.parameters())})
-    #                add_param += list(q_func.parameters())
-    #                def forward(self, x: torch.Tensor, action: torch.Tensor) -> torch.Tensor:
-    #                    return cast(torch.Tensor, self._fcs[task_id](self._encoder(x, action)))
-    #                q_func.forwards[task_id] = forward
-    #                targ_q_func.forwards[task_id] = forward
-    #            self._critic_optims[task_id] = self._critic_optim_factory.create(add_param, lr=self._critic_learning_rate)
-    #        if self._use_model and self._replay_model:
-    #            for model in self._dynamic._models:
-    #                def compute_stats(
-    #                    self, x: torch.Tensor, action: torch.Tensor
-    #                ) -> Tuple[torch.Tensor, torch.Tensor]:
-    #                    h = self._encoder(x, action)
-
-    #                    mu = self._mus[task_id](h)
-
-    #                    # log standard deviation with bounds
-    #                    logstd = self._logstds[task_id](h)
-    #                    logstd = self._max_logstds[task_id] - F.softplus(self._max_logstd - logstd)
-    #                    logstd = self._min_logstds[task_id] + F.softplus(logstd - self._min_logstd)
-
-    #                    return mu, logstd
-    #                model.compute_statses[task_id] = compute_stats
-
-    #    self._policy.forward = types.MethodType(self._policy.forwards[task_id], self._policy)
-    #    self._targ_policy.forward = types.MethodType(self._targ_policy.forwards[task_id], self._targ_policy)
-    #    if self._replay_critic:
-    #        for q_func in self._q_func._q_funcs:
-    #            q_func.forward = types.MethodType(q_func.forwards[task_id], q_func)
-    #        for q_func in self._targ_q_func._q_funcs:
-    #            q_func.forward = types.MethodType(q_func.forwards[task_id], q_func)
-    #    if self._use_model and self._replay_model:
-    #        for model in self._dynamic._models:
-    #            model.compute_stats = types.MethodType(model.compute_statses[task_id], model)
     def change_task_singlehead(self, task_id):
         self._impl_id = task_id

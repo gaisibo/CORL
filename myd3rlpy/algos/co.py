@@ -60,7 +60,7 @@ from utils.utils import Struct
 
 
 replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'terminals', 'policy_actions', 'qs', 'phis', 'psis']
-class CO(COMBO):
+class CO():
     r"""Twin Delayed Deep Deterministic Policy Gradients algorithm.
     TD3 is an improved DDPG-based algorithm.
     Major differences from DDPG are as follows.
@@ -119,6 +119,7 @@ class CO(COMBO):
             ``['clip', 'min_max', 'standard']``.
         impl (d3rlpy.algos.torch.td3_impl.TD3Impl): algorithm implementation.
     """
+    _sample_type: str
     def _update_model(self, batch: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[Tensor]]] = None):
         assert self._impl is not None
         metrics = {}
@@ -1206,10 +1207,11 @@ class CO(COMBO):
                     replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals, replay_policy_actions, replay_qs)
                 return replay_dataset
 
-    def generate_replay_data_trajectory(self, dataset, episodes, start_index, max_save_num=1000, random_save_num=1000, max_export_time=1000, max_export_step=1000, real_action_size=1, real_observation_size=1, n_epochs=None, n_steps=500000,n_steps_per_epoch=5000, shuffle=True, with_generate='generate_model', test=False):
+    def generate_replay_data_trajectory(self, dataset, episodes, start_index, max_save_num=1000, random_save_num=1000, max_export_time=1000, max_export_step=1000, real_action_size=1, real_observation_size=1, n_epochs=None, n_steps=500000,n_steps_per_epoch=5000, shuffle=True, with_generate='generate_model', test=False, indexes_euclids=None):
         assert self._impl is not None
         assert self._impl._policy is not None
         assert self._impl._q_func is not None
+        assert self._impl._dynamic is not None
         if 'retrain' in self._sample_type:
             policy_state_dict = deepcopy(self._impl._policy.state_dict())
             assert dataset is not None
@@ -1280,11 +1282,12 @@ class CO(COMBO):
         orl_indexes_list = [orl_indexes_all[i:i+orl_batch_size] for i in range(0,len(orl_indexes_all) - 1,orl_batch_size)]
         orl_ns_list = [orl_ns_all[i:i+orl_batch_size] for i in range(0,len(orl_ns_all) - 1,orl_batch_size)]
 
-        near_observations = observations
-        near_actions = actions
-        indexes = torch.randint(len(self._impl._dynamic._models), size=(near_observations.shape[0],))
-        near_next_observations, _ = self._impl._dynamic(near_observations[:, :real_observation_size], near_actions[:, :real_action_size], indexes)
-        near_rewards = rewards
+        if indexes_euclids is None:
+            near_observations = observations
+            near_actions = actions
+            indexes = torch.randint(len(self._impl._dynamic._models), size=(near_observations.shape[0],))
+            near_next_observations, _ = self._impl._dynamic(near_observations[:, :real_observation_size], near_actions[:, :real_action_size], indexes)
+            near_rewards = rewards
 
         export_time = 0
         # stop = False
@@ -1320,6 +1323,16 @@ class CO(COMBO):
                     if 'noise' in self._sample_type:
                         noise = 0.03 * max(1, (export_time / max_export_time)) * torch.randn(start_actions.shape, device=self._impl.device)
                         start_actions += noise
+
+                    if indexes_euclids is not None:
+                        near_observations = observations[indexes_euclids[start_indexes]]
+                        near_actions = actions[indexes_euclids[start_indexes]]
+                        indexes = torch.randint(len(self._impl._dynamic._models), size=(near_observations.shape[0],))
+                        near_next_observations = []
+                        for _ in range(near_observations.shape[0]):
+                            near_next_observations.append(self._impl._dynamic(near_observations[i, :, :real_observation_size], near_actions[i, :, :real_action_size], indexes))
+                        near_next_observations = torch.stack(near_next_observations)
+                        near_rewards = rewards[indexes_euclids[start_indexes]]
 
                     if 'model' in with_generate:
                         # mus, logstds = [], []
@@ -1462,7 +1475,7 @@ class CO(COMBO):
                     replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals, replay_policy_actions, replay_qs)
                 return replay_dataset
 
-    def generate_replay_data_transition(self, dataset, max_save_num=1000, start_num=50, real_observation_size=1, real_action_size=1, batch_size=16, with_generate='none'):
+    def generate_replay_data_transition(self, dataset, max_save_num=1000, start_num=50, real_observation_size=1, real_action_size=1, batch_size=16, with_generate='none', indexes_euclids=None, distances_euclid=None, d_threshold=None):
         with torch.no_grad():
             if isinstance(dataset, MDPDataset):
                 episodes = dataset.episodes
@@ -1534,6 +1547,13 @@ class CO(COMBO):
                     transitions = [i for i, _ in sorted(zip(transitions, transition_log_probs), key=lambda x: x[1], reverse=True)]
                 if self._experience_type == 'min_match':
                     transitions = [i for i, _ in sorted(zip(transitions, transition_log_probs), key=lambda x: x[1])]
+            elif self._experience_type == 'coverage':
+                assert indexes_euclids is not None and distances_euclid is not None
+                distances_quantile = torch.quantile(distances_euclid, q=torch.arange(0, 1.01, 0.1), dim=0)
+                print(f"distances_quantile: {distances_quantile}")
+                assert False
+                near_n = torch.sum(torch.where(distances_euclid < d_threshold, torch.ones_like(distances_euclid), torch.zeros_like(distances_euclid)), dim=0)
+                transitions = [i for i, _ in sorted(zip(transitions, near_n), key=lambda x: x[1])]
             else:
                 raise NotImplementedError
             if with_generate == 'generate':
@@ -1566,7 +1586,7 @@ class CO(COMBO):
     def _get_rollout_horizon(self):
         return self._rollout_horizon
 
-    def generate_replay_data_episode(self, dataset, all_max_save_num=1000, start_num=1, real_observation_size=1, real_action_size=1, batch_size=16, with_generate='none', test=False):
+    def generate_replay_data_episode(self, dataset, all_max_save_num=1000, start_num=1, real_observation_size=1, real_action_size=1, batch_size=16, with_generate='none', test=False, indexes_euclids=None, distances_euclid=None):
         # max_save_num = all_max_save_num // 2
         # random_save_num = all_max_save_num - max_save_num
         max_save_num = all_max_save_num
@@ -1666,6 +1686,7 @@ class CO(COMBO):
                 transitions = transitions[:max_save_num // self._generate_step]
                 return self.generate_new_data_replay(transitions, max_save_num=max_save_num, real_observation_size=real_observation_size, real_action_size=real_action_size)
             if with_generate in ['generate_model', 'model']:
+                assert indexes_euclids is not None
                 select_num = 0
                 if with_generate == 'generate_model':
                     given_length = max_save_num // self._generate_step * self._select_time
@@ -1683,7 +1704,7 @@ class CO(COMBO):
                 if not saved:
                     start_index = episode_num
                 episodes = episodes[:episode_num]
-                return self.generate_replay_data_trajectory(dataset, episodes, start_index, max_save_num=max_save_num, random_save_num=random_save_num, real_observation_size=real_observation_size, real_action_size=real_action_size, with_generate=with_generate, test=test)
+                return self.generate_replay_data_trajectory(dataset, episodes, start_index, max_save_num=max_save_num, random_save_num=random_save_num, real_observation_size=real_observation_size, real_action_size=real_action_size, with_generate=with_generate, test=test, indexes_euclids=indexes_euclids)
 
             all_transitions = [transition for episode in episodes for transition in episode.transitions]
             transitions = all_transitions[:max_save_num]

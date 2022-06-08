@@ -40,19 +40,19 @@ def main(args, device):
         else:
             raise NotImplementedError
         # task_datasets, origin_datasets, taskid_datasets, action_datasets, envs, end_points, original, real_action_size, real_observation_size, indexes_euclids, task_nums = split_gym(args.top_euclid, args.dataset.replace('_', '-'), device=device)
-        origin_datasets, taskid_datasets, envs, end_points, original, real_action_size, real_observation_size, task_nums = split_gym(args.top_euclid, args.dataset.replace('_', '-'), device=device)
+        origin_datasets, indexes_euclids, envs, end_points, original, real_action_size, real_observation_size, task_nums = split_gym(args.top_euclid, args.dataset.replace('_', '-'), device=device)
         env = None
     elif args.dataset in ['ant_dir_expert', 'cheetah_dir_expert', 'walker_dir_expert', 'cheetah_vel_expert', 'ant_dir_medium', 'cheetah_dir_medium', 'walker_dir_medium', 'cheetah_vel_medium', 'ant_dir_random', 'cheetah_dir_random', 'walker_dir_random', 'cheetah_vel_random']:
         from dataset.split_macaw import split_macaw
         inner_paths = ['dataset/macaw/' + args.inner_path.replace('num', str(i)) for i in range(args.task_nums)]
         env_paths = ['dataset/macaw/' + args.env_path.replace('num', str(i)) for i in range(args.task_nums)]
-        origin_datasets, taskid_datasets, env, end_points, original, real_action_size, real_observation_size = split_macaw(args.top_euclid, args.dataset, inner_paths, env_paths, device=device)
+        origin_datasets, indexes_euclids, distances_euclids, env, end_points, original, real_action_size, real_observation_size = split_macaw(args.top_euclid, args.dataset, inner_paths, env_paths, device=device)
         envs = None
     elif args.dataset in ['ant_umaze_random', 'ant_umaze_medium', 'ant_umaze_expert']:
         strs = args.dataset.split('_')
         if strs[1] == 'umaze':
             from dataset.split_antmaze import split_navigate_antmaze_umaze_v2
-            origin_datasets, taskid_datasets, envs, end_points, original, real_action_size, real_observation_size, task_nums = split_navigate_antmaze_umaze_v2(args.top_euclid, device, strs[2])
+            origin_datasets, indexes_euclids, envs, end_points, original, real_action_size, real_observation_size, task_nums = split_navigate_antmaze_umaze_v2(args.top_euclid, device, strs[2])
         else:
             raise NotImplementedError
         env = None
@@ -63,20 +63,18 @@ def main(args, device):
     # prepare algorithm
     if args.algos in ['td3_plus_bc', 'td3']:
         from myd3rlpy.algos.co_td3_plus_bc import CO
-        if args.experience_type == 'siamese':
-            use_phi = True
-        else:
-            use_phi = False
-        co = CO(use_gpu=not args.use_cpu, batch_size=args.batch_size, id_size=args.task_nums, replay_type=args.replay_type, experience_type=args.experience_type, sample_type=args.sample_type, reduce_replay=args.reduce_replay, use_phi=use_phi, use_model=args.use_model, replay_critic=args.replay_critic, replay_model=args.replay_model, replay_alpha=args.replay_alpha, generate_step=args.generate_step, model_noise=args.model_noise, retrain_time=args.retrain_time, orl_alpha=args.orl_alpha, single_head=args.single_head)
     elif args.algos == 'combo':
         from myd3rlpy.algos.co_combo import CO
-        if args.experience_type == 'siamese':
-            use_phi = True
-        else:
-            use_phi = False
-        co = CO(use_gpu=not args.use_cpu, batch_size=args.batch_size, id_size=args.task_nums, replay_type=args.replay_type, experience_type=args.experience_type, sample_type=args.sample_type, reduce_replay=args.reduce_replay, use_phi=use_phi, use_model=args.use_model, replay_critic=args.replay_critic, replay_model=args.replay_model, replay_alpha=args.replay_alpha, generate_step=args.generate_step, model_noise=args.model_noise, retrain_time=args.retrain_time, orl_alpha=args.orl_alpha, single_head=args.single_head)
+    elif args.algos == 'cql':
+        from myd3rlpy.algos.co_cql import CO
     else:
         raise NotImplementedError
+    if args.experience_type == 'siamese':
+        use_phi = True
+    else:
+        use_phi = False
+    co = CO(use_gpu=not args.use_cpu, batch_size=args.batch_size, id_size=args.task_nums, replay_type=args.replay_type, experience_type=args.experience_type, sample_type=args.sample_type, reduce_replay=args.reduce_replay, use_phi=use_phi, use_model=args.use_model, replay_critic=args.replay_critic, replay_model=args.replay_model, replay_alpha=args.replay_alpha, generate_step=args.generate_step, model_noise=args.model_noise, retrain_time=args.retrain_time, orl_alpha=args.orl_alpha, single_head=args.single_head)
+
     experiment_name = "CO" + '_'
     algos_name = args.replay_type
     algos_name += "_" + args.algos
@@ -164,11 +162,11 @@ def main(args, device):
 
             if int(task_id) != len(origin_datasets.keys()) - 1:
                 start_time = time.perf_counter()
-                if args.experience_type in ['random_transition', 'max_reward', 'max_match', 'max_model', 'min_reward', 'min_match', 'min_model']:
-                    replay_datasets[task_id] = co.generate_replay_data_transition(origin_datasets[task_id], max_save_num=args.max_save_num, real_action_size=real_action_size, real_observation_size=real_observation_size, with_generate=args.generate_type)
+                if args.experience_type in ['coverage', 'random_transition', 'max_reward', 'max_match', 'max_model', 'min_reward', 'min_match', 'min_model']:
+                    replay_datasets[task_id] = co.generate_replay_data_transition(origin_datasets[task_id], max_save_num=args.max_save_num, real_action_size=real_action_size, real_observation_size=real_observation_size, with_generate=args.generate_type, indexes_euclids=indexes_euclids, distances_euclids=distances_euclids, d_threshold=args.d_threshold)
                     print(f"len(replay_datasets[task_id]): {len(replay_datasets[task_id])}")
                 elif args.experience_type in ['random_episode', 'max_reward_end', 'max_reward_mean', 'max_match_end', 'max_match_mean', 'max_model_end', 'max_model_mean', 'min_reward_end', 'min_reward_mean', 'min_match_end', 'min_match_mean', 'min_model_end', 'min_model_mean']:
-                    replay_datasets[task_id] = co.generate_replay_data_episode(origin_datasets[task_id], all_max_save_num=args.max_save_num, real_action_size=real_action_size, real_observation_size=real_observation_size, with_generate=args.generate_type, test=args.test)
+                    replay_datasets[task_id] = co.generate_replay_data_episode(origin_datasets[task_id], all_max_save_num=args.max_save_num, real_action_size=real_action_size, real_observation_size=real_observation_size, with_generate=args.generate_type, test=args.test, indexes_euclids=indexes_euclids, distances_euclids=distances_euclids)
                     print(f"len(replay_datasets[task_id]): {len(replay_datasets[task_id])}")
                 elif args.experience_type == 'generate':
                     replay_datasets[task_id] = co.generate_new_data_replay(origin_datasets[task_id], original[task_id], max_save_num=args.max_save_num, real_observation_size=real_observation_size, real_action_size=real_action_size)
@@ -213,7 +211,7 @@ if __name__ == '__main__':
     parser.add_argument('--topk', default=4, type=int)
     parser.add_argument('--max_save_num', default=1000, type=int)
     parser.add_argument('--task_split_type', default='undirected', type=str)
-    parser.add_argument('--algos', default='combo', type=str)
+    parser.add_argument('--algos', default='combo', type=str, choices=['combo', 'td3_plus_bc', 'cql'])
     parser.add_argument('--eval', action='store_true')
     parser.add_argument('--test', action='store_true')
     parser.add_argument("--n_steps", default=150000, type=int)
@@ -225,7 +223,7 @@ if __name__ == '__main__':
     parser.add_argument("--n_action_samples", default=4, type=int)
     parser.add_argument('--top_euclid', default=64, type=int)
     parser.add_argument('--replay_type', default='orl', type=str, choices=['orl', 'bc', 'ewc', 'gem', 'agem', 'r_walk', 'si'])
-    parser.add_argument('--experience_type', default='siamese', type=str, choices=['generate', 'random_transition', 'random_episode', 'max_reward', 'max_match', 'max_model', 'max_reward_end', 'max_reward_mean', 'max_match_end', 'max_match_mean', 'max_model_end', 'max_model_mean', 'min_reward', 'min_match', 'min_model', 'min_reward_end', 'min_reward_mean', 'min_match_end', 'min_match_mean', 'min_model_end', 'min_model_mean'])
+    parser.add_argument('--experience_type', default='siamese', type=str, choices=['generate', 'coverage', 'random_transition', 'random_episode', 'max_reward', 'max_match', 'max_model', 'max_reward_end', 'max_reward_mean', 'max_match_end', 'max_match_mean', 'max_model_end', 'max_model_mean', 'min_reward', 'min_match', 'min_model', 'min_reward_end', 'min_reward_mean', 'min_match_end', 'min_match_mean', 'min_model_end', 'min_model_mean'])
     parser.add_argument('--generate_type', default='none', type=str)
     parser.add_argument('--sample_type', default='none', type=str, choices=['retrain_model', 'retrain_actor', 'noise', 'none'])
     parser.add_argument('--use_model', action='store_true')
@@ -239,6 +237,7 @@ if __name__ == '__main__':
     parser.add_argument('--retrain_time', type=int, default=1)
     parser.add_argument('--orl_alpha', type=float, default=1)
     parser.add_argument('--replay_alpha', type=float, default=1)
+    parser.add_argument('--d_threshold', type=float, default=0.1)
     parser.add_argument('--single_head', action='store_true')
     parser.add_argument('--task_nums', default=50, type=int)
     parser.add_argument('--use_cpu', action='store_true')

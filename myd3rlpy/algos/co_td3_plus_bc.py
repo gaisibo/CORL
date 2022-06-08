@@ -55,7 +55,7 @@ from online.eval_policy import eval_policy
 
 from myd3rlpy.siamese_similar import similar_mb, similar_mb_euclid, similar_phi, similar_psi
 # from myd3rlpy.dynamics.probabilistic_ensemble_dynamics import ProbabilisticEnsembleDynamics
-from myd3rlpy.algos.torch.co_td3_plus_bc_impl import COImpl
+from myd3rlpy.algos.torch.co_td3_plus_bc_impl import COTD3PlusBCImpl as COImpl
 from myd3rlpy.algos.co import CO
 from utils.utils import Struct
 

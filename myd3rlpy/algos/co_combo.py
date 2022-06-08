@@ -42,7 +42,6 @@ from d3rlpy.constants import (
     ActionSpace,
 )
 from d3rlpy.base import LearnableBase
-from d3rlpy.algos.combo import COMBO
 from d3rlpy.iterators import TransitionIterator
 from d3rlpy.models.encoders import EncoderFactory
 from d3rlpy.metrics.scorer import dynamics_observation_prediction_error_scorer, dynamics_reward_prediction_error_scorer, dynamics_prediction_variance_scorer
@@ -56,7 +55,7 @@ from online.eval_policy import eval_policy
 
 from myd3rlpy.siamese_similar import similar_mb, similar_mb_euclid, similar_phi, similar_psi
 # from myd3rlpy.dynamics.probabilistic_ensemble_dynamics import ProbabilisticEnsembleDynamics
-from myd3rlpy.algos.torch.co_combo_impl import COImpl
+from myd3rlpy.algos.torch.co_combo_impl import COCOMBOImpl as COImpl
 from myd3rlpy.algos.co import CO
 from utils.utils import Struct
 
