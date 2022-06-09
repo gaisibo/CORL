@@ -991,23 +991,24 @@ class COImpl():
             self._model_grads_cs[self._impl_id] = torch.zeros(np.sum(self._model_grad_dims)).to(self.device)
 
     def ewc_r_walk_post_train_process(self, iterator):
-        # calculate Fisher information
-        def update(batch):
-            batch = TorchMiniBatch(
-                batch,
-                self.device,
-                scaler=self.scaler,
-                action_scaler=self.action_scaler,
-                reward_scaler=self.reward_scaler,
-            )
-            q_tpn = self.compute_target(batch)
-            loss = self.compute_critic_loss(batch, q_tpn)
-            loss.backward
-        curr_fisher = self.compute_fisher_matrix_diag(iterator, self._q_func, self._critic_optim, update)
-        # merge fisher information, we do not want to keep fisher information for each task in memory
-        for n in self._critic_fisher.keys():
-            # Added option to accumulate fisher over time with a pre-fixed growing self._ewc_r_walk_alpha
-            self._critic_fisher[n] = (self._ewc_r_walk_alpha * self._critic_fisher[n] + (1 - self._ewc_r_walk_alpha) * curr_fisher[n])
+        if self._replay_critic:
+            # calculate Fisher information
+            def update(batch):
+                batch = TorchMiniBatch(
+                    batch,
+                    self.device,
+                    scaler=self.scaler,
+                    action_scaler=self.action_scaler,
+                    reward_scaler=self.reward_scaler,
+                )
+                q_tpn = self.compute_target(batch)
+                loss = self.compute_critic_loss(batch, q_tpn)
+                loss.backward
+            curr_fisher = self.compute_fisher_matrix_diag(iterator, self._q_func, self._critic_optim, update)
+            # merge fisher information, we do not want to keep fisher information for each task in memory
+            for n in self._critic_fisher.keys():
+                # Added option to accumulate fisher over time with a pre-fixed growing self._ewc_r_walk_alpha
+                self._critic_fisher[n] = (self._ewc_r_walk_alpha * self._critic_fisher[n] + (1 - self._ewc_r_walk_alpha) * curr_fisher[n])
 
         def update(batch):
             batch = TorchMiniBatch(
@@ -1026,7 +1027,7 @@ class COImpl():
             # Added option to accumulate fisher over time with a pre-fixed growing self._ewc_r_walk_alpha
             self._actor_fisher[n] = (self._ewc_r_walk_alpha * self._actor_fisher[n] + (1 - self._ewc_r_walk_alpha) * curr_fisher[n])
 
-        if self._use_model:
+        if self._use_model and self._replay_model:
             def update(batch):
                 batch = TorchMiniBatch(
                     batch,
@@ -1050,20 +1051,21 @@ class COImpl():
                 self._model_fisher[n] = (self._ewc_r_walk_alpha * self._model_fisher[n] + (1 - self._ewc_r_walk_alpha) * curr_fisher[n])
 
         if self._replay_type == 'r_walk':
-            # Page 7: Optimization Path-based Parameter Importance: importance scores computation
-            curr_score = {n: torch.zeros(p.shape).to(self.device) for n, p in self._q_func.named_parameters()
-                          if p.requires_grad}
-            with torch.no_grad():
-                curr_params = {n: p for n, p in self._q_func.named_parameters() if p.requires_grad}
+            if self._replay_critic:
+                # Page 7: Optimization Path-based Parameter Importance: importance scores computation
+                curr_score = {n: torch.zeros(p.shape).to(self.device) for n, p in self._q_func.named_parameters()
+                              if p.requires_grad}
+                with torch.no_grad():
+                    curr_params = {n: p for n, p in self._q_func.named_parameters() if p.requires_grad}
+                    for n, p in self._critic_scores.items():
+                        curr_score[n] = self._critic_w[n] / (
+                                self._critic_fisher[n] * ((curr_params[n] - self._critic_older_params[n]) ** 2) + self._damping)
+                        self._critic_w[n].zero_()
+                        # Page 7: "Since we care about positive influence of the parameters, negative scores are set to zero."
+                        curr_score[n] = torch.nn.functional.relu(curr_score[n])
+                # Page 8: alleviating regularization getting increasingly rigid by averaging scores
                 for n, p in self._critic_scores.items():
-                    curr_score[n] = self._critic_w[n] / (
-                            self._critic_fisher[n] * ((curr_params[n] - self._critic_older_params[n]) ** 2) + self._damping)
-                    self._critic_w[n].zero_()
-                    # Page 7: "Since we care about positive influence of the parameters, negative scores are set to zero."
-                    curr_score[n] = torch.nn.functional.relu(curr_score[n])
-            # Page 8: alleviating regularization getting increasingly rigid by averaging scores
-            for n, p in self._critic_scores.items():
-                self._critic_scores[n] = (self._critic_scores[n] + curr_score[n]) / 2
+                    self._critic_scores[n] = (self._critic_scores[n] + curr_score[n]) / 2
 
             # Page 7: Optimization Path-based Parameter Importance: importance scores computation
             curr_score = {n: torch.zeros(p.shape).to(self.device) for n, p in self._policy.named_parameters()
@@ -1080,7 +1082,7 @@ class COImpl():
             for n, p in self._actor_scores.items():
                 self._actor_scores[n] = (self._actor_scores[n] + curr_score[n]) / 2
 
-            if self._use_model:
+            if self._use_model and self._replay_model:
                 # Page 7: Optimization Path-based Parameter Importance: importance scores computation
                 curr_score = {n: torch.zeros(p.shape).to(self.device) for n, p in self._dynamic.named_parameters()
                               if p.requires_grad}
@@ -1097,14 +1099,15 @@ class COImpl():
                     self._model_scores[n] = (self._model_scores[n] + curr_score[n]) / 2
 
     def si_post_train_process(self):
-        for n, p in self._q_func.named_parameters():
-            if p.requires_grad:
-                p_change = p.detach().clone() - self._critic_older_params[n]
-                omega_add = self._critic_W[n] / (p_change ** 2 + self._epsilon)
-                omega = self._critic_omega[n]
-                omega_new = omega + omega_add
-                self._critic_older_params[n] = p.detach().clone()
-                self._critic_omega[n] = omega_new
+        if self._replay_critic:
+            for n, p in self._q_func.named_parameters():
+                if p.requires_grad:
+                    p_change = p.detach().clone() - self._critic_older_params[n]
+                    omega_add = self._critic_W[n] / (p_change ** 2 + self._epsilon)
+                    omega = self._critic_omega[n]
+                    omega_new = omega + omega_add
+                    self._critic_older_params[n] = p.detach().clone()
+                    self._critic_omega[n] = omega_new
         for n, p in self._policy.named_parameters():
             if p.requires_grad:
                 p_change = p.detach().clone() - self._actor_older_params[n]
@@ -1113,7 +1116,7 @@ class COImpl():
                 omega_new = omega + omega_add
                 self._actor_older_params[n] = p.detach().clone()
                 self._actor_omega[n] = omega_new
-        if self._use_model:
+        if self._use_model and self._replay_model:
             for n, p in self._dynamic.named_parameters():
                 if p.requires_grad:
                     p_change = p.detach().clone() - self._model_older_params[n]

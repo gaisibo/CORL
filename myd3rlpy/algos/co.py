@@ -1588,7 +1588,7 @@ class CO():
     def _get_rollout_horizon(self):
         return self._rollout_horizon
 
-    def generate_replay_data_episode(self, dataset, all_max_save_num=1000, start_num=1, real_observation_size=1, real_action_size=1, batch_size=16, with_generate='none', test=False, indexes_euclids=None, distances_euclid=None):
+    def generate_replay_data_episode(self, dataset, all_max_save_num=1000, start_num=1, real_observation_size=1, real_action_size=1, batch_size=16, with_generate='none', test=False, indexes_euclids=None):
         # max_save_num = all_max_save_num // 2
         # random_save_num = all_max_save_num - max_save_num
         max_save_num = all_max_save_num
