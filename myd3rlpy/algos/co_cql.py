@@ -427,3 +427,8 @@ class CO(CO, CQL):
         self._impl.update_actor_target()
 
         return metrics
+
+    def generate_new_data(
+        self, transitions: List[Transition], real_observation_size, real_action_size, batch_size = 64,
+    ) -> Optional[List[Transition]]:
+        return None

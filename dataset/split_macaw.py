@@ -149,20 +149,20 @@ def split_gym(top_euclid, dataset_name, task_datasets, env, nearest_indexes, com
     real_action_size = 0
     real_observation_size = 0
     for dataset_num, dataset in task_datasets.items():
-        transitions = [transition for episode in dataset.episodes for transition in episode]
-        observations = np.stack([transition.observation for transition in transitions], axis=0)
+        # transitions = [transition for episode in dataset.episodes for transition in episode]
+        # observations = np.stack([transition.observation for transition in transitions], axis=0)
         # print(f"observations.shape: {observations.shape}")
-        indexes_euclid, distances_euclid = similar_euclid(torch.from_numpy(dataset.observations).to(device), torch.from_numpy(observations).to(device), dataset_name, dataset_num, compare_dim=compare_dim)[:dataset.actions.shape[0], :top_euclid]
-        indexes_euclids[dataset_num] = indexes_euclid
-        distances_euclids[dataset_num] = distances_euclid
+        # indexes_euclid, distances_euclid = similar_euclid(torch.from_numpy(dataset.observations).to(device), torch.from_numpy(observations).to(device), dataset_name, dataset_num, compare_dim=compare_dim)[:dataset.actions.shape[0], :top_euclid]
+        # indexes_euclids[dataset_num] = indexes_euclid
+        # distances_euclids[dataset_num] = distances_euclid
         observations = dataset.observations
         real_action_size = dataset.actions.shape[1]
-        task_id_numpy = np.eye(task_nums)[int(dataset_num)].squeeze()
-        task_id_numpy = np.broadcast_to(task_id_numpy, (dataset.observations.shape[0], task_nums))
+        # task_id_numpy = np.eye(task_nums)[int(dataset_num)].squeeze()
+        # task_id_numpy = np.broadcast_to(task_id_numpy, (dataset.observations.shape[0], task_nums))
         real_observation_size = dataset.observations.shape[1]
         # 用action保存一下indexes_euclid，用state保存一下task_id
-        taskid_task_datasets[dataset_num] = MDPDataset(np.concatenate([observations, task_id_numpy], axis=1), dataset.actions, dataset.rewards, dataset.terminals, dataset.episode_terminals)
-        action_task_datasets[dataset_num] = MDPDataset(dataset.observations, np.concatenate([dataset.actions, indexes_euclid], axis=1), dataset.rewards, dataset.terminals, dataset.episode_terminals)
+        # taskid_task_datasets[dataset_num] = MDPDataset(np.concatenate([observations, task_id_numpy], axis=1), dataset.actions, dataset.rewards, dataset.terminals, dataset.episode_terminals)
+        # action_task_datasets[dataset_num] = MDPDataset(dataset.observations, np.concatenate([dataset.actions, indexes_euclid], axis=1), dataset.rewards, dataset.terminals, dataset.episode_terminals)
         origin_task_datasets[dataset_num] = MDPDataset(observations, dataset.actions, dataset.rewards, dataset.terminals, dataset.episode_terminals)
         # changed_task_datasets[dataset_num] = MDPDataset(np.concatenate([dataset.observations, task_id_numpy], axis=1), np.concatenate([dataset.actions, indexes_euclid], axis=1), dataset.rewards, dataset.terminals, dataset.episode_terminals)
         # indexes_euclids[dataset_num] = indexes_euclid

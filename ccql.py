@@ -162,7 +162,7 @@ def main(args, device):
 
             if int(task_id) != len(origin_datasets.keys()) - 1:
                 start_time = time.perf_counter()
-                if args.experience_type in ['coverage', 'random_transition', 'max_reward', 'max_match', 'max_model', 'min_reward', 'min_match', 'min_model']:
+                if args.experience_type in ['random_transition', 'max_reward', 'max_match', 'max_model', 'min_reward', 'min_match', 'min_model']:
                     replay_datasets[task_id] = co.generate_replay_data_transition(origin_datasets[task_id], max_save_num=args.max_save_num, real_action_size=real_action_size, real_observation_size=real_observation_size, with_generate=args.generate_type, indexes_euclids=indexes_euclids, distances_euclids=distances_euclids, d_threshold=args.d_threshold)
                     print(f"len(replay_datasets[task_id]): {len(replay_datasets[task_id])}")
                 elif args.experience_type in ['random_episode', 'max_reward_end', 'max_reward_mean', 'max_match_end', 'max_match_mean', 'max_model_end', 'max_model_mean', 'min_reward_end', 'min_reward_mean', 'min_match_end', 'min_match_mean', 'min_model_end', 'min_model_mean']:
@@ -170,6 +170,22 @@ def main(args, device):
                     print(f"len(replay_datasets[task_id]): {len(replay_datasets[task_id])}")
                 elif args.experience_type == 'generate':
                     replay_datasets[task_id] = co.generate_new_data_replay(origin_datasets[task_id], original[task_id], max_save_num=args.max_save_num, real_observation_size=real_observation_size, real_action_size=real_action_size)
+                    print(f"len(replay_datasets[task_id]): {len(replay_datasets[task_id])}")
+                elif args.experience_type == 'model':
+                    episodes = origin_datasets[task_id].episodes
+                    episode_num = 0
+                    saved = False
+                    select_num = 0
+                    start_index = 0
+                    for episode_num, episode in enumerate(episodes):
+                        select_num += len(episode.transitions)
+                        if select_num >= args.max_save_num:
+                            if not saved:
+                                start_index = episode_num
+                                saved = True
+                    if not saved:
+                        start_index = episode_num
+                    replay_datasets[task_id] = co.generate_replay_data_trajectory(origin_datasets[task_id], episodes, start_index, max_save_num=args.max_save_num, random_save_num=0, real_observation_size=real_observation_size, real_action_size=real_action_size, with_generate=args.generate_type, test=args.test, indexes_euclids=indexes_euclids)
                     print(f"len(replay_datasets[task_id]): {len(replay_datasets[task_id])}")
                 else:
                     replay_datasets[task_id] = None
@@ -223,7 +239,7 @@ if __name__ == '__main__':
     parser.add_argument("--n_action_samples", default=4, type=int)
     parser.add_argument('--top_euclid', default=64, type=int)
     parser.add_argument('--replay_type', default='orl', type=str, choices=['orl', 'bc', 'ewc', 'gem', 'agem', 'r_walk', 'si'])
-    parser.add_argument('--experience_type', default='siamese', type=str, choices=['generate', 'coverage', 'random_transition', 'random_episode', 'max_reward', 'max_match', 'max_model', 'max_reward_end', 'max_reward_mean', 'max_match_end', 'max_match_mean', 'max_model_end', 'max_model_mean', 'min_reward', 'min_match', 'min_model', 'min_reward_end', 'min_reward_mean', 'min_match_end', 'min_match_mean', 'min_model_end', 'min_model_mean'])
+    parser.add_argument('--experience_type', default='siamese', type=str, choices=['generate', 'model', 'coverage', 'random_transition', 'random_episode', 'max_reward', 'max_match', 'max_model', 'max_reward_end', 'max_reward_mean', 'max_match_end', 'max_match_mean', 'max_model_end', 'max_model_mean', 'min_reward', 'min_match', 'min_model', 'min_reward_end', 'min_reward_mean', 'min_match_end', 'min_match_mean', 'min_model_end', 'min_model_mean'])
     parser.add_argument('--generate_type', default='none', type=str)
     parser.add_argument('--sample_type', default='none', type=str, choices=['retrain_model', 'retrain_actor', 'noise', 'none'])
     parser.add_argument('--use_model', action='store_true')

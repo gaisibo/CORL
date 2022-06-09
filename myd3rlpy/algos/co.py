@@ -1388,6 +1388,8 @@ class CO():
                         start_terminal = terminals[start_index]
                         if start_terminal == 0:
                             start_indexes.append(start_index)
+                        else:
+                            print(f'start_indexes {start_index} finish')
                     start_indexes = list(set(start_indexes))
                     for start_index in start_indexes:
                         if start_index in orl_indexes_all:
@@ -1475,7 +1477,7 @@ class CO():
                     replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals, replay_policy_actions, replay_qs)
                 return replay_dataset
 
-    def generate_replay_data_transition(self, dataset, max_save_num=1000, start_num=50, real_observation_size=1, real_action_size=1, batch_size=16, with_generate='none', indexes_euclids=None, distances_euclid=None, d_threshold=None):
+    def generate_replay_data_transition(self, dataset, max_save_num=1000, start_num=50, real_observation_size=1, real_action_size=1, batch_size=16, with_generate='none', indexes_euclids=None, distances_euclids=None, d_threshold=None):
         with torch.no_grad():
             if isinstance(dataset, MDPDataset):
                 episodes = dataset.episodes
@@ -1548,11 +1550,11 @@ class CO():
                 if self._experience_type == 'min_match':
                     transitions = [i for i, _ in sorted(zip(transitions, transition_log_probs), key=lambda x: x[1])]
             elif self._experience_type == 'coverage':
-                assert indexes_euclids is not None and distances_euclid is not None
-                distances_quantile = torch.quantile(distances_euclid, q=torch.arange(0, 1.01, 0.1), dim=0)
+                assert indexes_euclids is not None and distances_euclids is not None
+                distances_quantile = torch.quantile(distances_euclids, q=torch.arange(0, 1.01, 0.1), dim=0)
                 print(f"distances_quantile: {distances_quantile}")
                 assert False
-                near_n = torch.sum(torch.where(distances_euclid < d_threshold, torch.ones_like(distances_euclid), torch.zeros_like(distances_euclid)), dim=0)
+                near_n = torch.sum(torch.where(distances_euclids < d_threshold, torch.ones_like(distances_euclids), torch.zeros_like(distances_euclids)), dim=0)
                 transitions = [i for i, _ in sorted(zip(transitions, near_n), key=lambda x: x[1])]
             else:
                 raise NotImplementedError
@@ -1693,6 +1695,8 @@ class CO():
                 else:
                     given_length = max_save_num * self._select_time
                 saved = False
+                episode_num = 0
+                start_index = 0
                 for episode_num, episode in enumerate(episodes):
                     select_num += len(episode.transitions)
                     if select_num >= max_save_num:
