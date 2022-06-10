@@ -149,12 +149,12 @@ def split_gym(top_euclid, dataset_name, task_datasets, env, nearest_indexes, com
     real_action_size = 0
     real_observation_size = 0
     for dataset_num, dataset in task_datasets.items():
-        # transitions = [transition for episode in dataset.episodes for transition in episode]
-        # observations = np.stack([transition.observation for transition in transitions], axis=0)
-        # print(f"observations.shape: {observations.shape}")
-        indexes_euclid, distances_euclid = similar_euclid(dataset_name, dataset_num, obs_all=None, obs_transition=None, compare_dim=compare_dim)[:dataset.actions.shape[0], :top_euclid]
-        # indexes_euclids[dataset_num] = indexes_euclid
-        # distances_euclids[dataset_num] = distances_euclid
+        transitions = [transition for episode in dataset.episodes for transition in episode]
+        observations = np.stack([transition.observation for transition in transitions], axis=0)
+        print(f"observations.shape: {observations.shape}")
+        indexes_euclid, distances_euclid = similar_euclid(dataset_name, dataset_num, obs_all=dataset.observations, obs_transition=observations, compare_dim=compare_dim)
+        indexes_euclids[dataset_num] = indexes_euclid
+        distances_euclids[dataset_num] = distances_euclid
         observations = dataset.observations
         real_action_size = dataset.actions.shape[1]
         # task_id_numpy = np.eye(task_nums)[int(dataset_num)].squeeze()
