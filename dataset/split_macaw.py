@@ -152,7 +152,7 @@ def split_gym(top_euclid, dataset_name, task_datasets, env, nearest_indexes, com
         # transitions = [transition for episode in dataset.episodes for transition in episode]
         # observations = np.stack([transition.observation for transition in transitions], axis=0)
         # print(f"observations.shape: {observations.shape}")
-        # indexes_euclid, distances_euclid = similar_euclid(torch.from_numpy(dataset.observations).to(device), torch.from_numpy(observations).to(device), dataset_name, dataset_num, compare_dim=compare_dim)[:dataset.actions.shape[0], :top_euclid]
+        indexes_euclid, distances_euclid = similar_euclid(dataset_name, dataset_num, obs_all=None, obs_transition=None, compare_dim=compare_dim)[:dataset.actions.shape[0], :top_euclid]
         # indexes_euclids[dataset_num] = indexes_euclid
         # distances_euclids[dataset_num] = distances_euclid
         observations = dataset.observations
