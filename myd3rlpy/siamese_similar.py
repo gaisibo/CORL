@@ -17,7 +17,7 @@ def compute_vector_norm(tensor1, tensor2):
     return ret
 def similar_euclid(obs_all, obs_transition, dataset_name, dataset_num, input_indexes=None, eval_batch_size=1000, topk=64, compare_dim=2):
     indexes_name = 'near_indexes/' + dataset_name + '/' + str(dataset_num) + '.pt'
-    distances_name = 'near_indexes/' + dataset_name + '/' + str(dataset_num) + '.pt'
+    distances_name = 'near_distances/' + dataset_name + '/' + str(dataset_num) + '.pt'
     if os.path.exists(indexes_name) and os.path.exists(distances_name):
         return torch.load(indexes_name), torch.load(distances_name)
     near_indexes_ = []

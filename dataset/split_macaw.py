@@ -73,7 +73,7 @@ def get_d4rl_local(dataset, timeout=300) -> MDPDataset:
 
     return mdp_dataset
 
-def split_macaw(top_euclid, dataset_name, inner_paths, envs, include_goal=False, multitask=False, one_hot_goal=False, device='cuda:0'):
+def split_macaw(top_euclid, dataset_name, inner_paths, envs, include_goal=False, multitask=False, one_hot_goal=False, ask_indexes=False, device='cuda:0'):
     task_datasets = dict()
     nearest_indexes = dict()
     tasks = []
@@ -101,9 +101,9 @@ def split_macaw(top_euclid, dataset_name, inner_paths, envs, include_goal=False,
         task_dataset_starts = np.where(task_dataset_terminals[:-1] == 1)[0] + 1
         np.insert(task_dataset_starts, 0, 0)
         nearest_indexes[str(i)] = task_dataset_starts
-    return split_gym(top_euclid, dataset_name, task_datasets, env, nearest_indexes, compare_dim=3, device=device)
+    return split_gym(top_euclid, dataset_name, task_datasets, env, nearest_indexes, compare_dim=3, ask_indexes=ask_indexes, device=device)
 
-def split_gym(top_euclid, dataset_name, task_datasets, env, nearest_indexes, compare_dim=3, device='cuda:0'):
+def split_gym(top_euclid, dataset_name, task_datasets, env, nearest_indexes, compare_dim=3, ask_indexes=False, device='cuda:0'):
 
     # fig = plt.figure()
     # obs = env.reset()
@@ -149,12 +149,16 @@ def split_gym(top_euclid, dataset_name, task_datasets, env, nearest_indexes, com
     real_action_size = 0
     real_observation_size = 0
     for dataset_num, dataset in task_datasets.items():
-        # transitions = [transition for episode in dataset.episodes for transition in episode]
-        # observations = np.stack([transition.observation for transition in transitions], axis=0)
-        # print(f"observations.shape: {observations.shape}")
-        # indexes_euclid, distances_euclid = similar_euclid(torch.from_numpy(dataset.observations).to(device), torch.from_numpy(observations).to(device), dataset_name, dataset_num, compare_dim=compare_dim)[:dataset.actions.shape[0], :top_euclid]
-        # indexes_euclids[dataset_num] = indexes_euclid
-        # distances_euclids[dataset_num] = distances_euclid
+        if ask_indexes:
+            transitions = [transition for episode in dataset.episodes for transition in episode]
+            observations = np.stack([transition.observation for transition in transitions], axis=0)
+            print(f"observations.shape: {observations.shape}")
+            indexes_euclid, distances_euclid = similar_euclid(dataset_name, dataset_num, obs_all=dataset.observations, obs_transition=observations, compare_dim=compare_dim)[:dataset.actions.shape[0], :top_euclid]
+            indexes_euclids[dataset_num] = indexes_euclid
+            distances_euclids[dataset_num] = distances_euclid
+        else:
+            indexes_euclids[dataset_num] = None
+            distances_euclids[dataset_num] = None
         observations = dataset.observations
         real_action_size = dataset.actions.shape[1]
         # task_id_numpy = np.eye(task_nums)[int(dataset_num)].squeeze()

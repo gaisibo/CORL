@@ -28,6 +28,9 @@ replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'termi
 # 暂时只练出来一个。
 def main(args, device):
     np.set_printoptions(precision=1, suppress=True)
+    ask_indexes = False
+    if args.experience_type in ['model', 'coverage']:
+        ask_indexes = True
     if args.dataset in ['hopper_expert_v0', 'hopper_medium_v0', 'hopper_medium_expert_v0', 'hopper_medium_replay_v0', 'hopper_random_v0', 'halfcheetah_expert_v0', 'halfcheetah_medium_v0', 'halfcheetah_medium_expert_v0', 'halfcheetah_medium_replay_v0', 'halfcheetah_random_v0', 'walker2d_expert_v0', 'walker2d_medium_v0', 'walker2d_medium_expert_v0', 'walker2d_medium_replay_v0', 'walker2d_random_v0', 'mix_expert_v0', 'mix_medium_expert_v0', 'mix_medium_v0', 'mix_random_v0']:
         if args.dataset in ['hopper_expert_v0', 'hopper_medium_v0', 'hopper_medium_expert_v0', 'hopper_medium_replay_v0', 'hopper_random_v0']:
             from dataset.split_gym import split_hopper as split_gym
@@ -46,7 +49,7 @@ def main(args, device):
         from dataset.split_macaw import split_macaw
         inner_paths = ['dataset/macaw/' + args.inner_path.replace('num', str(i)) for i in range(args.task_nums)]
         env_paths = ['dataset/macaw/' + args.env_path.replace('num', str(i)) for i in range(args.task_nums)]
-        origin_datasets, indexes_euclids, distances_euclids, env, end_points, original, real_action_size, real_observation_size = split_macaw(args.top_euclid, args.dataset, inner_paths, env_paths, device=device)
+        origin_datasets, indexes_euclids, distances_euclids, env, end_points, original, real_action_size, real_observation_size = split_macaw(args.top_euclid, args.dataset, inner_paths, env_paths, ask_indexes=ask_indexes, device=device)
         envs = None
     elif args.dataset in ['ant_umaze_random', 'ant_umaze_medium', 'ant_umaze_expert']:
         strs = args.dataset.split('_')
@@ -119,11 +122,13 @@ def main(args, device):
                 except BaseException as e:
                     print(f'Don\'t have pretrain_state_dict[{task_id}]')
                     raise e
-                for past_task_id in range(int(task_id)):
-                    try:
-                        replay_datasets[str(past_task_id)] = torch.load(f=args.model_path + algos_name + '_' + str(past_task_id) + '_datasets.pt')
-                    except BaseException as e:
-                        print(f'Don\' have replay_datasets[{past_task_id}]')
+                if args.replay_type not in ['ewc', 'si', 'r_walk']:
+                    for past_task_id in range(int(task_id)):
+                        try:
+                            replay_datasets[str(past_task_id)] = torch.load(f=args.model_path + algos_name + '_' + str(past_task_id) + '_datasets.pt')
+                        except BaseException as e:
+                            print(f'Don\' have replay_datasets[{past_task_id}]')
+                            raise e
             else:
                 pretrain_state_dict = None
 
@@ -162,14 +167,16 @@ def main(args, device):
 
             if int(task_id) != len(origin_datasets.keys()) - 1:
                 start_time = time.perf_counter()
-                if args.experience_type in ['random_transition', 'max_reward', 'max_match', 'max_model', 'min_reward', 'min_match', 'min_model']:
-                    replay_datasets[task_id] = co.generate_replay_data_transition(origin_datasets[task_id], max_save_num=args.max_save_num, real_action_size=real_action_size, real_observation_size=real_observation_size, with_generate=args.generate_type, indexes_euclids=indexes_euclids, distances_euclids=distances_euclids, d_threshold=args.d_threshold)
+                if args.replay_type in ['ewc', 'si', 'r_walk']:
+                    replay_datasets[task_id], save_datasets[task_id] = None, None
+                elif args.experience_type in ['random_transition', 'max_reward', 'max_match', 'max_model', 'min_reward', 'min_match', 'min_model']:
+                    replay_datasets[task_id], save_datasets[task_id] = co.generate_replay_data_transition(origin_datasets[task_id], max_save_num=args.max_save_num, real_action_size=real_action_size, real_observation_size=real_observation_size, with_generate=args.generate_type, indexes_euclids=indexes_euclids, distances_euclids=distances_euclids, d_threshold=args.d_threshold)
                     print(f"len(replay_datasets[task_id]): {len(replay_datasets[task_id])}")
                 elif args.experience_type in ['random_episode', 'max_reward_end', 'max_reward_mean', 'max_match_end', 'max_match_mean', 'max_model_end', 'max_model_mean', 'min_reward_end', 'min_reward_mean', 'min_match_end', 'min_match_mean', 'min_model_end', 'min_model_mean']:
-                    replay_datasets[task_id] = co.generate_replay_data_episode(origin_datasets[task_id], all_max_save_num=args.max_save_num, real_action_size=real_action_size, real_observation_size=real_observation_size, with_generate=args.generate_type, test=args.test, indexes_euclids=indexes_euclids)
+                    replay_datasets[task_id], save_datasets[task_id] = co.generate_replay_data_episode(origin_datasets[task_id], all_max_save_num=args.max_save_num, real_action_size=real_action_size, real_observation_size=real_observation_size, with_generate=args.generate_type, test=args.test, indexes_euclids=indexes_euclids)
                     print(f"len(replay_datasets[task_id]): {len(replay_datasets[task_id])}")
                 elif args.experience_type == 'generate':
-                    replay_datasets[task_id] = co.generate_new_data_replay(origin_datasets[task_id], original[task_id], max_save_num=args.max_save_num, real_observation_size=real_observation_size, real_action_size=real_action_size)
+                    replay_datasets[task_id], save_datasets[task_id] = co.generate_new_data_replay(origin_datasets[task_id], original[task_id], max_save_num=args.max_save_num, real_observation_size=real_observation_size, real_action_size=real_action_size)
                     print(f"len(replay_datasets[task_id]): {len(replay_datasets[task_id])}")
                 elif args.experience_type == 'model':
                     episodes = origin_datasets[task_id].episodes
@@ -185,14 +192,15 @@ def main(args, device):
                                 saved = True
                     if not saved:
                         start_index = episode_num
-                    replay_datasets[task_id] = co.generate_replay_data_trajectory(origin_datasets[task_id], episodes, start_index, max_save_num=args.max_save_num, random_save_num=0, real_observation_size=real_observation_size, real_action_size=real_action_size, with_generate=args.generate_type, test=args.test, indexes_euclids=indexes_euclids)
+                    replay_datasets[task_id], save_datasets[task_id] = co.generate_replay_data_trajectory(origin_datasets[task_id], episodes, start_index, max_save_num=args.max_save_num, random_save_num=0, real_observation_size=real_observation_size, real_action_size=real_action_size, with_generate=args.generate_type, test=args.test, indexes_euclids=indexes_euclids)
                     print(f"len(replay_datasets[task_id]): {len(replay_datasets[task_id])}")
                 else:
-                    replay_datasets[task_id] = None
+                    replay_datasets[task_id], save_datasets[task_id] = None, None
                 print(f'Select Replay Buffer Time: {time.perf_counter() - start_time}')
                 if args.test and int(task_id) >= 1:
                     break
-                torch.save(replay_datasets[task_id], f=args.model_path + algos_name + '_' + str(task_id) + '_datasets.pt')
+                if save_datasets[task_id] is not None:
+                    torch.save(save_datasets[task_id], f=args.model_path + algos_name + '_' + str(task_id) + '_datasets.pt')
     else:
         assert args.model_path
         eval_datasets = dict()
