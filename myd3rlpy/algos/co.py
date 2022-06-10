@@ -1195,7 +1195,7 @@ class CO():
             replay_terminals = replay_terminals[idx].view(replay_terminals.size())
             if self._replay_type != 'bc':
                 replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals)
-                return replay_dataset
+                return replay_dataset, replay_dataset
             else:
                 replay_policy_actions = self._impl._policy(replay_observations.to(self._impl.device)).to('cpu')
                 replay_qs = self._impl._q_func(replay_observations.to(self._impl.device), replay_actions[:, :real_action_size].to(self._impl.device)).to('cpu').detach()
@@ -1205,7 +1205,7 @@ class CO():
                     replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals, replay_policy_actions, replay_qs, replay_phis, replay_psis)
                 else:
                     replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals, replay_policy_actions, replay_qs)
-                return replay_dataset
+                return replay_dataset, replay_dataset
 
     def generate_replay_data_trajectory(self, dataset, episodes, start_index, max_save_num=1000, random_save_num=1000, max_export_time=1000, max_export_step=1000, real_action_size=1, real_observation_size=1, n_epochs=None, n_steps=500000,n_steps_per_epoch=5000, shuffle=True, with_generate='generate_model', test=False, indexes_euclids=None):
         assert self._impl is not None
@@ -1472,7 +1472,7 @@ class CO():
             replay_terminals = torch.stack([torch.from_numpy(np.array([transition.terminal])) for transition in transitions], dim=0).to('cpu')
             if self._replay_type != 'bc':
                 replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals)
-                return transitions
+                return transitions, replay_dataset
             else:
                 replay_policy_actions = self._impl._policy(replay_observations.to(self._impl.device)).to('cpu')
                 # replay_qs = self._impl._q_func(replay_observations.to(self._impl.device), replay_actions[:, :real_action_size].to(self._impl.device)).detach().to('cpu')
@@ -1483,7 +1483,7 @@ class CO():
                     replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals, replay_policy_actions, replay_qs, replay_phis, replay_psis)
                 else:
                     replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals, replay_policy_actions, replay_qs)
-                return replay_dataset
+                return replay_dataset, replay_dataset
 
     def generate_replay_data_transition(self, dataset, max_save_num=1000, start_num=50, real_observation_size=1, real_action_size=1, batch_size=16, with_generate='none', indexes_euclids=None, distances_euclids=None, d_threshold=None):
         with torch.no_grad():
@@ -1578,7 +1578,7 @@ class CO():
             replay_terminals = torch.stack([torch.from_numpy(np.array([transition.terminal])) for transition in transitions], dim=0).to('cpu')
             if self._replay_type != 'bc':
                 replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals)
-                return transitions
+                return transitions, replay_dataset
             else:
                 replay_policy_actions = self._impl._policy(replay_observations.to(self._impl.device)).to('cpu')
                 replay_qs = self._impl._q_func(replay_observations.to(self._impl.device), replay_actions[:, :real_action_size].to(self._impl.device)).detach().to('cpu')
@@ -1588,7 +1588,7 @@ class CO():
                     replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals, replay_policy_actions, replay_qs, replay_phis, replay_psis)
                 else:
                     replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals, replay_policy_actions, replay_qs)
-                return replay_dataset
+                return replay_dataset, replay_dataset
 
     def _is_generating_new_data(self) -> bool:
         return self._grad_step % self._rollout_interval == 0
@@ -1730,7 +1730,7 @@ class CO():
             replay_terminals = torch.stack([torch.from_numpy(np.array([transition.terminal])) for transition in transitions], dim=0).to('cpu')
             if self._replay_type != 'bc':
                 replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals)
-                return transitions
+                return transitions, replay_dataset
             else:
                 replay_policy_actions = self._impl._policy(replay_observations.to(self._impl.device)).to('cpu')
                 # replay_qs = self._impl._q_func(replay_observations.to(self._impl.device), replay_actions[:, :real_action_size].to(self._impl.device)).detach().to('cpu')
@@ -1741,4 +1741,4 @@ class CO():
                     replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals, replay_policy_actions, replay_qs, replay_phis, replay_psis)
                 else:
                     replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals, replay_policy_actions, replay_qs)
-                return replay_dataset
+                return replay_dataset, replay_dataset
