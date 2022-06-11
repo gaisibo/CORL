@@ -1259,12 +1259,6 @@ class CO():
 
         observations = torch.from_numpy(np.stack([transition.observation for episode in episodes for transition in episode], axis=0)).to(self._impl.device)
         actions = torch.from_numpy(np.stack([transition.action for episode in episodes for transition in episode], axis=0)).to(self._impl.device)
-        predict_actions = self._impl._policy(observations)
-        near_next_observations, _, variances = self._impl._dynamic(observations[:, :real_observation_size], actions[:, :real_action_size])
-        near_variances = torch.mean(variances)
-        mean_near_next_observations = torch.mean(near_next_observations, dim=1).unsqueeze(dim=1).expand(1, near_next_observations.shape[1], 1)
-        _, diff_mean_near_next_observations_indices = torch.max(torch.mean(near_next_observations - mean_near_next_observations, dim=2), dim=1)
-        near_next_observations = near_next_observations[diff_mean_near_next_observations_indices]
         rewards = torch.from_numpy(np.stack([transition.reward for episode in episodes for transition in episode], axis=0)).to(self._impl.device)
         terminals = torch.from_numpy(np.stack([transition.terminal for episode in episodes for transition in episode], axis=0)).to(self._impl.device)
         # 关键算法
@@ -1284,9 +1278,11 @@ class CO():
         if indexes_euclids is None:
             near_observations = observations
             near_actions = actions
-            indexes = torch.randint(len(self._impl._dynamic._models), size=(near_observations.shape[0],))
-            near_next_observations, _ = self._impl._dynamic(near_observations[:, :real_observation_size], near_actions[:, :real_action_size], indexes)
-            near_rewards = rewards
+            near_next_observations, _, variances = self._impl._dynamic.predict_with_variance(near_observations[:, :real_observation_size], near_actions[:, :real_action_size])
+            near_variances = torch.mean(variances)
+            mean_near_next_observations = torch.mean(near_next_observations, dim=1).unsqueeze(dim=1).expand(1, near_next_observations.shape[1], 1)
+            _, diff_mean_near_next_observations_indices = torch.max(torch.mean(near_next_observations - mean_near_next_observations, dim=2), dim=1)
+            near_next_observations = near_next_observations[diff_mean_near_next_observations_indices]
 
         export_time = 0
         # stop = False
@@ -1329,14 +1325,13 @@ class CO():
                         near_actions = actions[indexes_euclids[start_indexes]]
                         near_variances = []
                         for i in range(near_observations.shape[0]):
-                            near_next_observations, _, variances = self._impl._dynamic(near_observations[i, :, :real_observation_size], near_actions[i, :, :real_action_size])
+                            near_next_observations, _, variances = self._impl._dynamic.predict_with_variance(near_observations[i, :, :real_observation_size], near_actions[i, :, :real_action_size])
                             near_variances.append(torch.mean(variances))
                             mean_near_next_observations = torch.mean(near_next_observations, dim=1).unsqueeze(dim=1).expand(1, near_next_observations.shape[1], 1)
                             _, diff_mean_near_next_observations_indices = torch.max(torch.mean(near_next_observations - mean_near_next_observations, dim=2), dim=1)
                             near_next_observations = near_next_observations[diff_mean_near_next_observations_indices]
                         near_variances = torch.mean(torch.from_numpy(np.array(near_variances)).to(self._impl.device))
                         near_next_observations = torch.stack(near_next_observations)
-                        near_rewards = rewards[indexes_euclids[start_indexes]]
 
                     if 'model' in with_generate:
                         # mus, logstds = [], []
@@ -1351,7 +1346,7 @@ class CO():
                         # logstds += noise
 
                         # 找到最接近中间的，也就是最准的。
-                        start_next_observations, _, variances = self._impl._dynamic(start_observations[:, :real_observation_size], start_actions[:, :real_action_size])
+                        start_next_observations, _, variances = self._impl._dynamic.predict_with_variance(start_observations[:, :real_observation_size], start_actions[:, :real_action_size])
                         variances = torch.mean(variances, dim=1)
                         mean_start_next_observations = torch.mean(start_next_observations, dim=1).unsqueeze(dim=1).expand(1, start_next_observations.shape[1], 1)
                         _, diff_mean_start_next_observations_indices = torch.max(torch.mean(start_next_observations - mean_start_next_observations, dim=2), dim=1)
