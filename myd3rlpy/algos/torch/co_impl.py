@@ -949,20 +949,36 @@ class COImpl():
                 with torch.no_grad():
                     for q_func, targ_q_func in zip(self._q_func._q_funcs, self._targ_q_func._q_funcs):
                         for key in q_func._fcs:
-                            for name in q_func._fcs[key].named_parameters().keys():
-                                q_func._fcs[key][name].data.mul_(1 - self._tau)
-                                targ_q_func._fcs[key][name].data.add_(self._tau * q_func._fcs[key][name].data)
+                            for param, targ_param in zip(q_func._fcs[key].parameters(), targ_q_func._fcs[key].parameters()):
+                                targ_param.data.mul_(1 - self._tau)
+                                targ_param.data.add_(self._tau * param.data)
 
     def update_actor_target(self) -> None:
         assert self._policy is not None
         assert self._targ_policy is not None
         soft_sync(self._targ_policy, self._policy, self._tau)
-        if self._replay_type == 'orl' and '_fcs' in self._policy.__dict__:
-            with torch.no_grad():
-                for key in self._policy._fcs:
-                    for name in self._policy._fcs[key].named_parameters().keys():
-                        self._policy._fcs[key][name].data.mul_(1 - self._tau)
-                        self._targ_policy._fcs[key][name].data.add_(self._tau * self._policy._fcs[key][name].data)
+        if self._replay_type == 'orl':
+            if '_fcs' in self._policy.__dict__:
+                with torch.no_grad():
+                    for key in self._policy._fcs:
+                        for param, targ_param in zip(self._policy._fcs[key].parameters(), self._targ_policy._fcs[key].parameters()):
+                            targ_param.data.mul_(1 - self._tau)
+                            targ_param.data.add_(self._tau * param.data)
+            if '_mus' in self._policy.__dict__:
+                with torch.no_grad():
+                    for key in self._policy._mus:
+                        for param, targ_param in zip(self._policy._mus[key].parameters(), self._targ_policy._mus[key].parameters()):
+                            targ_param.data.mul_(1 - self._tau)
+                            targ_param.data.add_(self._tau * param.data)
+                if isinstance(self._targ_policy._logstd, torch.nn.parameter.Parameter):
+                    for key in self._policy._logstds:
+                        self._targ_policy._logstds[key].data.mul_(1 - self._tau)
+                        self._targ_policy._logstds[key].data.add_(self._tau * self._policy._logstds[key].data)
+                else:
+                    for key in self._policy._logstds:
+                        for param, targ_param in zip(self._policy._logstds[key].parameters(), self._targ_policy._logstds[key].parameters()):
+                            targ_param.data.mul_(1 - self._tau)
+                            targ_param.data.add_(self._tau * param.data)
 
     def compute_fisher_matrix_diag(self, iterator, network, optim, update):
         # Store Fisher Information

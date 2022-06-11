@@ -160,7 +160,7 @@ class COCOMBOImpl(COMBOImpl, COImpl):
         assert self._dynamic is not None
         if self._impl_id is not None and self._impl_id == task_id:
             return
-        if "_fcs" not in self._policy.__dict__.keys():
+        if "_mus" not in self._policy.__dict__.keys():
             self._policy._mus = dict()
             self._policy._mus[task_id] = self._policy._mu
             self._policy._logstds = dict()
@@ -229,8 +229,14 @@ class COCOMBOImpl(COMBOImpl, COImpl):
                 self._policy._logstds[task_id] = deepcopy(self._policy._logstd.state_dict())
                 self._policy._logstd.load_state_dict(self._policy._logstds[task_id])
             if self._replay_type == 'orl':
-                self._targ_policy._fcs[self._impl_id] = deepcopy(self._targ_policy._fc.state_dict())
-                self._targ_policy._fc.load_state_dict(self._targ_policy._fcs[task_id])
+                self._targ_policy._mus[task_id] = deepcopy(self._targ_policy._mu.state_dict())
+                self._targ_policy._mu.load_state_dict(self._targ_policy._mus[task_id])
+                if isinstance(self._targ_policy._logstd, torch.nn.parameter.Parameter):
+                    self._targ_policy._logstds[task_id] = deepcopy(self._targ_policy._logstd)
+                    self._targ_policy._logstd.copy_(self._targ_policy._logstds[task_id])
+                else:
+                    self._targ_policy._logstds[task_id] = deepcopy(self._targ_policy._logstd.state_dict())
+                    self._targ_policy._logstd.load_state_dict(self._targ_policy._logstds[task_id])
             if self._replay_critic:
                 for q_func in self._q_func._q_funcs:
                     q_func._fcs[self._impl_id] = deepcopy(q_func._fc.state_dict())

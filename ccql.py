@@ -170,10 +170,10 @@ def main(args, device):
                 if args.replay_type in ['ewc', 'si', 'r_walk']:
                     replay_datasets[task_id], save_datasets[task_id] = None, None
                 elif args.experience_type in ['random_transition', 'max_reward', 'max_match', 'max_model', 'min_reward', 'min_match', 'min_model']:
-                    replay_datasets[task_id], save_datasets[task_id] = co.generate_replay_data_transition(origin_datasets[task_id], max_save_num=args.max_save_num, real_action_size=real_action_size, real_observation_size=real_observation_size, with_generate=args.generate_type, indexes_euclids=indexes_euclids, distances_euclids=distances_euclids, d_threshold=args.d_threshold)
+                    replay_datasets[task_id], save_datasets[task_id] = co.generate_replay_data_transition(origin_datasets[task_id], max_save_num=args.max_save_num, real_action_size=real_action_size, real_observation_size=real_observation_size, with_generate=args.generate_type, indexes_euclid=indexes_euclids[task_id], distances_euclid=distances_euclids[task_id], d_threshold=args.d_threshold)
                     print(f"len(replay_datasets[task_id]): {len(replay_datasets[task_id])}")
                 elif args.experience_type in ['random_episode', 'max_reward_end', 'max_reward_mean', 'max_match_end', 'max_match_mean', 'max_model_end', 'max_model_mean', 'min_reward_end', 'min_reward_mean', 'min_match_end', 'min_match_mean', 'min_model_end', 'min_model_mean']:
-                    replay_datasets[task_id], save_datasets[task_id] = co.generate_replay_data_episode(origin_datasets[task_id], all_max_save_num=args.max_save_num, real_action_size=real_action_size, real_observation_size=real_observation_size, with_generate=args.generate_type, test=args.test, indexes_euclids=indexes_euclids)
+                    replay_datasets[task_id], save_datasets[task_id] = co.generate_replay_data_episode(origin_datasets[task_id], all_max_save_num=args.max_save_num, real_action_size=real_action_size, real_observation_size=real_observation_size, with_generate=args.generate_type, test=args.test, indexes_euclid=indexes_euclids[task_id])
                     print(f"len(replay_datasets[task_id]): {len(replay_datasets[task_id])}")
                 elif args.experience_type == 'generate':
                     replay_datasets[task_id], save_datasets[task_id] = co.generate_new_data_replay(origin_datasets[task_id], original[task_id], max_save_num=args.max_save_num, real_observation_size=real_observation_size, real_action_size=real_action_size)
@@ -192,7 +192,7 @@ def main(args, device):
                                 saved = True
                     if not saved:
                         start_index = episode_num
-                    replay_datasets[task_id], save_datasets[task_id] = co.generate_replay_data_trajectory(origin_datasets[task_id], episodes, start_index, max_save_num=args.max_save_num, random_save_num=0, real_observation_size=real_observation_size, real_action_size=real_action_size, with_generate=args.generate_type, test=args.test, indexes_euclids=indexes_euclids)
+                    replay_datasets[task_id], save_datasets[task_id] = co.generate_replay_data_trajectory(origin_datasets[task_id], episodes, start_index, max_save_num=args.max_save_num, random_save_num=0, real_observation_size=real_observation_size, real_action_size=real_action_size, with_generate=args.generate_type, test=args.test, indexes_euclid=indexes_euclids[task_id])
                     print(f"len(replay_datasets[task_id]): {len(replay_datasets[task_id])}")
                 else:
                     replay_datasets[task_id], save_datasets[task_id] = None, None

@@ -157,13 +157,9 @@ class COTD3PlusBCImpl(COImpl, TD3PlusBCImpl):
         assert self._policy is not None
         if self._impl_id is not None and self._impl_id == task_id:
             return
-        if "_fcs" not in self._policy.__dict__.keys() and '_mus' not in self._policy.__dict__.keys():
-            if '_fc' in self._policy.__dict__.keys():
-                self._policy._fcs = dict()
-                self._policy._fcs[task_id] = self._policy._fc
-            elif '_mu' in self._policy.__dict__.keys():
-                self._policy._mus = dict()
-                self._policy._mus[task_id] = self._policy._fc
+        if "_fcs" not in self._policy.__dict__.keys():
+            self._policy._fcs = dict()
+            self._policy._fcs[task_id] = self._policy._fc
             if self._replay_critic:
                 for q_func in self._q_func._q_funcs:
                     q_func._fcs = dict()

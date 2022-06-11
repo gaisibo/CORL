@@ -1207,7 +1207,7 @@ class CO():
                     replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals, replay_policy_actions, replay_qs)
                 return replay_dataset, replay_dataset
 
-    def generate_replay_data_trajectory(self, dataset, episodes, start_index, max_save_num=1000, random_save_num=1000, max_export_time=1000, max_export_step=1000, real_action_size=1, real_observation_size=1, n_epochs=None, n_steps=500000,n_steps_per_epoch=5000, shuffle=True, with_generate='generate_model', test=False, indexes_euclids=None):
+    def generate_replay_data_trajectory(self, dataset, episodes, start_index, max_save_num=1000, random_save_num=1000, max_export_time=1000, max_export_step=1000, real_action_size=1, real_observation_size=1, n_epochs=None, n_steps=500000,n_steps_per_epoch=5000, shuffle=True, with_generate='generate_model', test=False, indexes_euclid=None):
         assert self._impl is not None
         assert self._impl._policy is not None
         assert self._impl._q_func is not None
@@ -1275,14 +1275,14 @@ class CO():
         orl_indexes_list = [orl_indexes_all[i:i+orl_batch_size] for i in range(0,len(orl_indexes_all) - 1,orl_batch_size)]
         orl_ns_list = [orl_ns_all[i:i+orl_batch_size] for i in range(0,len(orl_ns_all) - 1,orl_batch_size)]
 
-        if indexes_euclids is None:
+        if indexes_euclid is None:
             near_observations = observations
             near_actions = actions
             near_next_observations, _, variances = self._impl._dynamic.predict_with_variance(near_observations[:, :real_observation_size], near_actions[:, :real_action_size])
             near_variances = torch.mean(variances)
-            mean_near_next_observations = torch.mean(near_next_observations, dim=1).unsqueeze(dim=1).expand(1, near_next_observations.shape[1], 1)
+            mean_near_next_observations = torch.mean(near_next_observations, dim=1).unsqueeze(dim=1).expand(-1, near_next_observations.shape[1], -1)
             _, diff_mean_near_next_observations_indices = torch.max(torch.mean(near_next_observations - mean_near_next_observations, dim=2), dim=1)
-            near_next_observations = near_next_observations[diff_mean_near_next_observations_indices]
+            near_next_observations = torch.stack([near_next_observations[i][diff_mean_near_next_observations_indices[i]] for i in range(diff_mean_near_next_observations_indices.shape[0])])
 
         export_time = 0
         # stop = False
@@ -1319,17 +1319,17 @@ class CO():
                         noise = 0.03 * max(1, (export_time / max_export_time)) * torch.randn(start_actions.shape, device=self._impl.device)
                         start_actions += noise
 
-                    if indexes_euclids is not None:
+                    if indexes_euclid is not None:
                         start_indexes = np.array(start_indexes)
-                        near_observations = observations[indexes_euclids[start_indexes]]
-                        near_actions = actions[indexes_euclids[start_indexes]]
+                        near_observations = observations[indexes_euclid[start_indexes]]
+                        near_actions = actions[indexes_euclid[start_indexes]]
                         near_variances = []
                         for i in range(near_observations.shape[0]):
                             near_next_observations, _, variances = self._impl._dynamic.predict_with_variance(near_observations[i, :, :real_observation_size], near_actions[i, :, :real_action_size])
                             near_variances.append(torch.mean(variances))
                             mean_near_next_observations = torch.mean(near_next_observations, dim=1).unsqueeze(dim=1).expand(1, near_next_observations.shape[1], 1)
                             _, diff_mean_near_next_observations_indices = torch.max(torch.mean(near_next_observations - mean_near_next_observations, dim=2), dim=1)
-                            near_next_observations = near_next_observations[diff_mean_near_next_observations_indices]
+                            near_next_observations = torch.stack([near_next_observations[i][diff_mean_near_next_observations_indices[i]] for i in range(diff_mean_near_next_observations_indices.shape[0])])
                         near_variances = torch.mean(torch.from_numpy(np.array(near_variances)).to(self._impl.device))
                         near_next_observations = torch.stack(near_next_observations)
 
@@ -1348,9 +1348,9 @@ class CO():
                         # 找到最接近中间的，也就是最准的。
                         start_next_observations, _, variances = self._impl._dynamic.predict_with_variance(start_observations[:, :real_observation_size], start_actions[:, :real_action_size])
                         variances = torch.mean(variances, dim=1)
-                        mean_start_next_observations = torch.mean(start_next_observations, dim=1).unsqueeze(dim=1).expand(1, start_next_observations.shape[1], 1)
+                        mean_start_next_observations = torch.mean(start_next_observations, dim=1).unsqueeze(dim=1).expand(-1, start_next_observations.shape[1], -1)
                         _, diff_mean_start_next_observations_indices = torch.max(torch.mean(start_next_observations - mean_start_next_observations, dim=2), dim=1)
-                        start_next_observations = start_next_observations[diff_mean_start_next_observations_indices]
+                        start_next_observations = torch.stack([start_next_observations[i][diff_mean_start_next_observations_indices[i]] for i in range(diff_mean_start_next_observations_indices.shape[0])])
                         if 'retrain' in self._sample_type:
                             start_next_actions = self._impl._policy(start_next_observations)
 
@@ -1377,6 +1377,7 @@ class CO():
                         near_indexes.squeeze_()
                         # 仅在dynamic model足够准确的情况下跳转，否则不动。
                         start_next_indexes = torch.from_numpy(np.array([start_index + 1 for start_index in start_indexes]).astype(np.int64)).to(self._impl.device)
+                        print(f'{torch.mean((variances < near_variances).to(torch.float32))}')
                         near_indexes = torch.where(variances < near_variances, start_next_indexes, near_indexes)
                         # near_indexes = [near_index + 1 for near_index in near_indexes]
                     # elif 'siamese' in with_generate:
@@ -1389,6 +1390,7 @@ class CO():
                     start_indexes = []
                     for start_index in near_indexes:
                         start_terminal = terminals[start_index]
+                        print(f'start_terminal: {start_terminal}')
                         if start_terminal == 0:
                             start_indexes.append(start_index)
                         else:
@@ -1480,7 +1482,7 @@ class CO():
                     replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals, replay_policy_actions, replay_qs)
                 return replay_dataset, replay_dataset
 
-    def generate_replay_data_transition(self, dataset, max_save_num=1000, start_num=50, real_observation_size=1, real_action_size=1, batch_size=16, with_generate='none', indexes_euclids=None, distances_euclids=None, d_threshold=None):
+    def generate_replay_data_transition(self, dataset, max_save_num=1000, start_num=50, real_observation_size=1, real_action_size=1, batch_size=16, with_generate='none', indexes_euclid=None, distances_euclid=None, d_threshold=None):
         with torch.no_grad():
             if isinstance(dataset, MDPDataset):
                 episodes = dataset.episodes
@@ -1553,8 +1555,8 @@ class CO():
                 if self._experience_type == 'min_match':
                     transitions = [i for i, _ in sorted(zip(transitions, transition_log_probs), key=lambda x: x[1])]
             elif self._experience_type == 'coverage':
-                assert indexes_euclids is not None and distances_euclids is not None
-                distances_quantile = torch.quantile(distances_euclids, q=torch.arange(0, 1.01, 0.1), dim=0)
+                assert indexes_euclid is not None and distances_euclid is not None
+                distances_quantile = torch.quantile(distances_euclid, q=torch.arange(0, 1.01, 0.1), dim=0)
                 print(f"distances_quantile: {distances_quantile}")
                 assert False
                 near_n = torch.sum(torch.where(distances_euclids < d_threshold, torch.ones_like(distances_euclids), torch.zeros_like(distances_euclids)), dim=0)
@@ -1591,7 +1593,7 @@ class CO():
     def _get_rollout_horizon(self):
         return self._rollout_horizon
 
-    def generate_replay_data_episode(self, dataset, all_max_save_num=1000, start_num=1, real_observation_size=1, real_action_size=1, batch_size=16, with_generate='none', test=False, indexes_euclids=None):
+    def generate_replay_data_episode(self, dataset, all_max_save_num=1000, start_num=1, real_observation_size=1, real_action_size=1, batch_size=16, with_generate='none', test=False, indexes_euclid=None):
         # max_save_num = all_max_save_num // 2
         # random_save_num = all_max_save_num - max_save_num
         max_save_num = all_max_save_num
@@ -1691,7 +1693,7 @@ class CO():
                 transitions = transitions[:max_save_num // self._generate_step]
                 return self.generate_new_data_replay(transitions, max_save_num=max_save_num, real_observation_size=real_observation_size, real_action_size=real_action_size)
             if with_generate in ['generate_model', 'model']:
-                assert indexes_euclids is not None
+                assert indexes_euclid is None
                 select_num = 0
                 if with_generate == 'generate_model':
                     given_length = max_save_num // self._generate_step * self._select_time
@@ -1711,7 +1713,7 @@ class CO():
                 if not saved:
                     start_index = episode_num
                 episodes = episodes[:episode_num]
-                return self.generate_replay_data_trajectory(dataset, episodes, start_index, max_save_num=max_save_num, random_save_num=random_save_num, real_observation_size=real_observation_size, real_action_size=real_action_size, with_generate=with_generate, test=test, indexes_euclids=indexes_euclids)
+                return self.generate_replay_data_trajectory(dataset, episodes, start_index, max_save_num=max_save_num, random_save_num=random_save_num, real_observation_size=real_observation_size, real_action_size=real_action_size, with_generate=with_generate, test=test, indexes_euclid=indexes_euclid)
 
             all_transitions = [transition for episode in episodes for transition in episode.transitions]
             transitions = all_transitions[:max_save_num]
