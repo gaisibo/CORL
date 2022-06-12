@@ -158,7 +158,7 @@ def split_gym(top_euclid, dataset_name, task_datasets, env, nearest_indexes, com
             else:
                 transitions = [transition for episode in dataset.episodes for transition in episode]
                 observations = np.stack([transition.observation for transition in transitions], axis=0)
-                indexes_euclid, distances_euclid = similar_euclid(dataset.observations, observations, dataset_name, indexes_name, distances_name, compare_dim=compare_dim)
+                indexes_euclid, distances_euclid = similar_euclid(dataset.observations, observations, dataset_name, indexes_name, distances_name, compare_dim=compare_dim, device=device)
             indexes_euclids[dataset_num] = indexes_euclid
             distances_euclids[dataset_num] = distances_euclid
         else:

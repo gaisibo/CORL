@@ -961,13 +961,17 @@ class COImpl():
             if '_fcs' in self._policy.__dict__:
                 with torch.no_grad():
                     for key in self._policy._fcs:
-                        for param, targ_param in zip(self._policy._fcs[key].parameters(), self._targ_policy._fcs[key].parameters()):
+                        for key_in in self._policy._fcs[key].state_dict().keys():
+                            targ_param = self._targ_policy._fcs[key][key_in]
+                            param = self._policy._fcs[key].state_dict()[key_in]
                             targ_param.data.mul_(1 - self._tau)
                             targ_param.data.add_(self._tau * param.data)
             if '_mus' in self._policy.__dict__:
                 with torch.no_grad():
                     for key in self._policy._mus:
-                        for param, targ_param in zip(self._policy._mus[key].parameters(), self._targ_policy._mus[key].parameters()):
+                        for key_in in self._policy._mus[key].state_dict().keys():
+                            targ_param = self._targ_policy._logstds[key][key_in]
+                            param = self._policy._logstds[key].state_dict()[key_in]
                             targ_param.data.mul_(1 - self._tau)
                             targ_param.data.add_(self._tau * param.data)
                 if isinstance(self._targ_policy._logstd, torch.nn.parameter.Parameter):
@@ -976,7 +980,9 @@ class COImpl():
                         self._targ_policy._logstds[key].data.add_(self._tau * self._policy._logstds[key].data)
                 else:
                     for key in self._policy._logstds:
-                        for param, targ_param in zip(self._policy._logstds[key].parameters(), self._targ_policy._logstds[key].parameters()):
+                        for key_in in self._policy._logstds[key].state_dict().keys():
+                            targ_param = self._targ_policy._logstds[key][key_in]
+                            param = self._policy._logstds[key].state_dict()[key_in]
                             targ_param.data.mul_(1 - self._tau)
                             targ_param.data.add_(self._tau * param.data)
 

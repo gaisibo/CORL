@@ -198,12 +198,12 @@ class COTD3PlusBCImpl(COImpl, TD3PlusBCImpl):
                 if self._replay_type == 'orl':
                     for q_func in self._targ_q_func._q_funcs:
                         q_func._fcs[task_id] = deepcopy(nn.Linear(q_func._fc.weight.shape[1], q_func._fc.weight.shape[0], bias=q_func._fc.bias is not None).to(self.device).state_dict())
-                if self._use_model:
-                    for model in self._dynamic._models:
-                        model._mus[task_id] = deepcopy(nn.Linear(model._mu.weight.shape[1], model._mu.weight.shape[0], bias=model._mu.bias is not None).to(self.device).state_dict())
-                        model._logstds[task_id] = deepcopy(nn.Linear(model._logstd.weight.shape[1], model._logstd.weight.shape[0], bias=model._logstd.bias is not None).to(self.device).state_dict())
-                        model._max_logstds[task_id] = deepcopy(nn.Parameter(torch.empty(1, model._logstd.weight.shape[0], dtype=torch.float32).fill_(2.0).to(self.device)))
-                        model._min_logstds[task_id] = deepcopy(nn.Parameter(torch.empty(1, model._logstd.weight.shape[0], dtype=torch.float32).fill_(-10.0).to(self.device)))
+            if self._use_model and self._replay_model:
+                for model in self._dynamic._models:
+                    model._mus[task_id] = deepcopy(nn.Linear(model._mu.weight.shape[1], model._mu.weight.shape[0], bias=model._mu.bias is not None).to(self.device).state_dict())
+                    model._logstds[task_id] = deepcopy(nn.Linear(model._logstd.weight.shape[1], model._logstd.weight.shape[0], bias=model._logstd.bias is not None).to(self.device).state_dict())
+                    model._max_logstds[task_id] = deepcopy(nn.Parameter(torch.empty(1, model._logstd.weight.shape[0], dtype=torch.float32).fill_(2.0).to(self.device)))
+                    model._min_logstds[task_id] = deepcopy(nn.Parameter(torch.empty(1, model._logstd.weight.shape[0], dtype=torch.float32).fill_(-10.0).to(self.device)))
         if self._impl_id != task_id:
             self._policy._fcs[self._impl_id] = deepcopy(self._policy._fc.state_dict())
             self._policy._fc.load_state_dict(self._policy._fcs[task_id])
@@ -230,7 +230,7 @@ class COTD3PlusBCImpl(COImpl, TD3PlusBCImpl):
                     model._min_logstd.copy_(model._min_logstds[task_id])
         self._build_actor_optim()
         self._build_critic_optim()
-        if self._use_model:
+        if self._use_model and self._replay_model:
             self._model_optim = self._model_optim_factory.create(
                 self._dynamic.parameters(), lr=self._model_learning_rate
             )

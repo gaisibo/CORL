@@ -205,13 +205,13 @@ class COCQLImpl(COImpl, CQLImpl):
             if isinstance(self._policy._logstd, torch.nn.parameter.Parameter):
                 self._policy._logstds[task_id] = deepcopy(nn.Parameter(torch.empty(torch.zeros(1, self._policy._logstd.weight.shape[0], dtype=torch.float32).to(self.device))))
             else:
-                self._policy._logstds[task_id] = deepcopy(nn.Linear(self._policy._logstd.weight.shape[1], self._policy._logstd.shape[1], bias=self._policy._logstd.bias is not None).to(self.device).state_dict())
+                self._policy._logstds[task_id] = deepcopy(nn.Linear(self._policy._logstd.weight.shape[1], self._policy._logstd.weight.shape[0], bias=self._policy._logstd.bias is not None).to(self.device).state_dict())
             if self._replay_type == 'orl':
                 self._targ_policy._mus[task_id] = deepcopy(nn.Linear(self._targ_policy._mu.weight.shape[1], self._targ_policy._mu.weight.shape[0], bias=self._targ_policy._mu.bias is not None).to(self.device).state_dict())
                 if isinstance(self._policy._logstd, torch.nn.parameter.Parameter):
                     self._targ_policy._logstds[task_id] = deepcopy(nn.Parameter(torch.empty(torch.zeros(1, self._targ_policy._logstd.weight.shape[0], dtype=torch.float32).to(self.device))))
                 else:
-                    self._targ_policy._logstds[task_id] = deepcopy(nn.Linear(self._targ_policy._logstd.weight.shape[1], self._targ_policy._logstd.shape[1], bias=self._targ_policy._logstd.bias is not None).to(self.device).state_dict())
+                    self._targ_policy._logstds[task_id] = deepcopy(nn.Linear(self._targ_policy._logstd.weight.shape[1], self._targ_policy._logstd.weight.shape[0], bias=self._targ_policy._logstd.bias is not None).to(self.device).state_dict())
 
             if self._replay_critic:
                 for q_func in self._q_func._q_funcs:
@@ -219,12 +219,12 @@ class COCQLImpl(COImpl, CQLImpl):
                 if self._replay_type == 'orl':
                     for q_func in self._targ_q_func._q_funcs:
                         q_func._fcs[task_id] = deepcopy(nn.Linear(q_func._fc.weight.shape[1], q_func._fc.weight.shape[0], bias=q_func._fc.bias is not None).to(self.device).state_dict())
-                if self._use_model:
-                    for model in self._dynamic._models:
-                        model._mus[task_id] = deepcopy(nn.Linear(model._mu.weight.shape[1], model._mu.weight.shape[0], bias=model._mu.bias is not None).to(self.device).state_dict())
-                        model._logstds[task_id] = deepcopy(nn.Linear(model._logstd.weight.shape[1], model._logstd.weight.shape[0], bias=model._logstd.bias is not None).to(self.device).state_dict())
-                        model._max_logstds[task_id] = deepcopy(nn.Parameter(torch.empty(1, model._logstd.weight.shape[0], dtype=torch.float32).fill_(2.0).to(self.device)))
-                        model._min_logstds[task_id] = deepcopy(nn.Parameter(torch.empty(1, model._logstd.weight.shape[0], dtype=torch.float32).fill_(-10.0).to(self.device)))
+            if self._use_model and self._replay_model:
+                for model in self._dynamic._models:
+                    model._mus[task_id] = deepcopy(nn.Linear(model._mu.weight.shape[1], model._mu.weight.shape[0], bias=model._mu.bias is not None).to(self.device).state_dict())
+                    model._logstds[task_id] = deepcopy(nn.Linear(model._logstd.weight.shape[1], model._logstd.weight.shape[0], bias=model._logstd.bias is not None).to(self.device).state_dict())
+                    model._max_logstds[task_id] = deepcopy(nn.Parameter(torch.empty(1, model._logstd.weight.shape[0], dtype=torch.float32).fill_(2.0).to(self.device)))
+                    model._min_logstds[task_id] = deepcopy(nn.Parameter(torch.empty(1, model._logstd.weight.shape[0], dtype=torch.float32).fill_(-10.0).to(self.device)))
         if self._impl_id != task_id:
             self._policy._mus[task_id] = deepcopy(self._policy._mu.state_dict())
             self._policy._mu.load_state_dict(self._policy._mus[task_id])
@@ -263,7 +263,7 @@ class COCQLImpl(COImpl, CQLImpl):
                     model._min_logstd.copy_(model._min_logstds[task_id])
         self._build_actor_optim()
         self._build_critic_optim()
-        if self._use_model:
+        if self._use_model and self._replay_model:
             self._model_optim = self._model_optim_factory.create(
                 self._dynamic.parameters(), lr=self._model_learning_rate
             )
