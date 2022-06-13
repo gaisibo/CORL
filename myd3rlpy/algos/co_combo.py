@@ -181,7 +181,7 @@ class CO(CO, COMBO):
         psi_bc_loss=True,
         train_phi=True,
         id_size: int = 7,
-        batch_size: int = 1024,
+        batch_size: int = 256,
         n_frames: int = 1,
         n_steps: int = 1,
         gamma: float = 0.99,
