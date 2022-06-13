@@ -947,11 +947,12 @@ class COImpl():
         if self._replay_type == 'orl' and '_fcs' in self._q_func._q_funcs[0].__dict__:
             if self._replay_critic:
                 with torch.no_grad():
-                    for q_func, targ_q_func in zip(self._q_func._q_funcs, self._targ_q_func._q_funcs):
-                        for key in q_func._fcs:
-                            for param, targ_param in zip(q_func._fcs[key].parameters(), targ_q_func._fcs[key].parameters()):
-                                targ_param.data.mul_(1 - self._tau)
-                                targ_param.data.add_(self._tau * param.data)
+                    for key in self._q_func._fcs:
+                        for key_in in self._q_func._fcs[key].state_dict().keys():
+                            targ_param = self._targ_q_func._fcs[key][key_in]
+                            param = self._q_func._fcs[key].state_dict()[key_in]
+                            targ_param.data.mul_(1 - self._tau)
+                            targ_param.data.add_(self._tau * param.data)
 
     def update_actor_target(self) -> None:
         assert self._policy is not None

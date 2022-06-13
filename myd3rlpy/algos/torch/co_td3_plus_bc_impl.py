@@ -159,28 +159,28 @@ class COTD3PlusBCImpl(COImpl, TD3PlusBCImpl):
             return
         if "_fcs" not in self._policy.__dict__.keys():
             self._policy._fcs = dict()
-            self._policy._fcs[task_id] = self._policy._fc
+            self._policy._fcs[task_id] = deepcopy(self._policy._fc.state_dict())
             if self._replay_critic:
                 for q_func in self._q_func._q_funcs:
                     q_func._fcs = dict()
-                    q_func._fcs[task_id] = q_func._fc
+                    q_func._fcs[task_id] = deepcopy(q_func._fc.state_dict())
             if self._replay_type == 'orl':
                 self._targ_policy._fcs = dict()
-                self._targ_policy._fcs[task_id] = self._targ_policy._fc
+                self._targ_policy._fcs[task_id] = deepcopy(self._targ_policy._fc.state_dict())
                 if self._replay_critic:
                     for q_func in self._targ_q_func._q_funcs:
                         q_func._fcs = dict()
-                        q_func._fcs[task_id] = q_func._fc
+                        self._targ_q_func._fcs[task_id] = deepcopy(self._targ_q_func._fc.state_dict())
             if self._use_model and self._replay_model:
                 for model in self._dynamic._models:
                     model._mus = dict()
-                    model._mus[task_id] = model._mu
+                    model._mus[task_id] = deepcopy(model._mu.state_dict())
                     model._logstds = dict()
-                    model._logstds[task_id] = model._logstd
+                    model._logstds[task_id] = deepcopy(model._logstd.state_dict())
                     model._max_logstds = dict()
-                    model._max_logstds[task_id] = model._max_logstd
+                    model._max_logstds[task_id] = deepcopy(model._max_logstd)
                     model._min_logstds = dict()
-                    model._min_logstds[task_id] = model._min_logstd
+                    model._min_logstds[task_id] = deepcopy(model._min_logstd)
             self._impl_id = task_id
         # self._using_id = task_id
         if task_id not in self._policy._fcs.keys():
