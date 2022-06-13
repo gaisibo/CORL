@@ -217,6 +217,7 @@ class CO(CO, CQL):
         use_model = False,
         replay_critic = False,
         replay_model = False,
+        clone_actor = True,
         generate_step = 100,
         model_noise = 0,
         retrain_time = 1,
@@ -295,6 +296,7 @@ class CO(CO, CQL):
         self._retrain_model_alpha = retrain_model_alpha
         self._use_phi = use_phi
         self._use_model = use_model
+        self._clone_actor = clone_actor
         self._replay_critic = replay_critic
         self._replay_model = replay_model
         self._generate_step = generate_step
@@ -352,6 +354,7 @@ class CO(CO, CQL):
             model_n_ensembles=self._model_n_ensembles,
             use_phi=self._use_phi,
             use_model=self._use_model,
+            clone_actor=self._clone_actor,
             replay_critic=self._replay_critic,
             replay_model=self._replay_model,
             replay_alpha=self._replay_alpha,

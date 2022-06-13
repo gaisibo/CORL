@@ -69,6 +69,7 @@ class COTD3PlusBCImpl(COImpl, TD3PlusBCImpl):
         model_n_ensembles: int,
         use_phi: bool,
         use_model: bool,
+        clone_actor: bool,
         replay_model: bool,
         replay_critic: bool,
         replay_alpha: float,
@@ -106,6 +107,7 @@ class COTD3PlusBCImpl(COImpl, TD3PlusBCImpl):
 
         self._use_phi = use_phi
         self._use_model = use_model
+        self._clone_actor = clone_actor
         self._replay_alpha = replay_alpha
         self._replay_critic = replay_critic
         self._replay_model = replay_model
@@ -158,8 +160,12 @@ class COTD3PlusBCImpl(COImpl, TD3PlusBCImpl):
         if self._impl_id is not None and self._impl_id == task_id:
             return
         if "_fcs" not in self._policy.__dict__.keys():
-            self._policy._fcs = dict()
-            self._policy._fcs[task_id] = deepcopy(self._policy._fc.state_dict())
+            if not self._clone_actor:
+                self._policy._fcs = dict()
+                self._policy._fcs[task_id] = deepcopy(self._policy._fc.state_dict())
+            else:
+                self._clone_policy._fcs = dict()
+                self._clone_policy._fcs[task_id] = deepcopy(self._clone_policy._fc.state_dict())
             if self._replay_critic:
                 for q_func in self._q_func._q_funcs:
                     q_func._fcs = dict()
@@ -205,8 +211,12 @@ class COTD3PlusBCImpl(COImpl, TD3PlusBCImpl):
                     model._max_logstds[task_id] = deepcopy(nn.Parameter(torch.empty(1, model._logstd.weight.shape[0], dtype=torch.float32).fill_(2.0).to(self.device)))
                     model._min_logstds[task_id] = deepcopy(nn.Parameter(torch.empty(1, model._logstd.weight.shape[0], dtype=torch.float32).fill_(-10.0).to(self.device)))
         if self._impl_id != task_id:
-            self._policy._fcs[self._impl_id] = deepcopy(self._policy._fc.state_dict())
-            self._policy._fc.load_state_dict(self._policy._fcs[task_id])
+            if self._clone_actor:
+                self._clone_policy._fcs[self._impl_id] = deepcopy(self._clone_policy._fc.state_dict())
+                self._clone_policy._fc.load_state_dict(self._clone_policy._fcs[task_id])
+            else:
+                self._policy._fcs[self._impl_id] = deepcopy(self._policy._fc.state_dict())
+                self._policy._fc.load_state_dict(self._policy._fcs[task_id])
             if self._replay_type == 'orl':
                 self._targ_policy._fcs[self._impl_id] = deepcopy(self._targ_policy._fc.state_dict())
                 self._targ_policy._fc.load_state_dict(self._targ_policy._fcs[task_id])

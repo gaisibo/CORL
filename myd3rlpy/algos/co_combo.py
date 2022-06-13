@@ -220,6 +220,7 @@ class CO(CO, COMBO):
         reduce_replay = 'retrain',
         use_phi = False,
         use_model = False,
+        clone_actor = True,
         replay_critic = False,
         replay_model = False,
         generate_step = 100,
@@ -306,6 +307,7 @@ class CO(CO, COMBO):
         self._retrain_model_alpha = retrain_model_alpha
         self._use_phi = use_phi
         self._use_model = use_model
+        self._clone_actor = clone_actor
         self._replay_critic = replay_critic
         self._replay_model = replay_model
         self._generate_step = generate_step
@@ -360,6 +362,7 @@ class CO(CO, COMBO):
             model_n_ensembles=self._model_n_ensembles,
             use_phi=self._use_phi,
             use_model=self._use_model,
+            clone_actor=self._clone_actor,
             replay_critic=self._replay_critic,
             replay_model=self._replay_model,
             replay_alpha=self._replay_alpha,

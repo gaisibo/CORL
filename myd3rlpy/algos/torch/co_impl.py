@@ -31,6 +31,11 @@ from utils.utils import Struct
 replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'terminals', 'policy_actions', 'qs', 'phis', 'psis']
 class COImpl():
     def build(self, task_id):
+        self._clone_policy = copy.deepcopy(self._policy)
+        self._clone_actor_optim = self._actor_optim_factory.create(
+            self._clone_policy.parameters(), lr=self._actor_learning_rate
+        )
+
         if self._use_phi:
             self._phi = create_phi(self._observation_shape, self._action_size, self._critic_encoder_factory)
             self._psi = create_psi(self._observation_shape, self._actor_encoder_factory)
@@ -479,7 +484,10 @@ class COImpl():
                     with torch.no_grad():
                         replay_observations = replay_batch.observations.to(self.device)
                         replay_policy_actions = replay_batch.policy_actions.to(self.device)
-                    actions = self._policy(replay_observations)
+                    if self._clone_actor:
+                        actions = self._clone_policy(replay_observations)
+                    else:
+                        actions = self._policy(replay_observations)
                     replay_loss_ = torch.mean((replay_policy_actions - actions) ** 2)
                     replay_losses.append(replay_loss_.cpu().detach().numpy())
                     replay_loss = replay_loss + replay_loss_
@@ -527,11 +535,17 @@ class COImpl():
                     replay_loss_ = self.compute_actor_loss(replay_batch) / len(replay_batches)
                     replay_loss = replay_loss + replay_loss_
                     replay_losses.append(replay_loss_)
-                if self._replay_type in ['orl', 'bc', 'ewc', 'r_walk', 'si']:
+                if self._replay_type in ['orl', 'ewc', 'r_walk', 'si'] or (not self._clone_actor and self._replay_type == 'bc'):
                     time_replay_loss = self._replay_alpha * replay_loss / len(replay_batches)
                     self._actor_optim.zero_grad()
                     time_replay_loss.backward()
                     self._actor_optim.step()
+                    replay_loss = replay_loss.cpu().detach().numpy()
+                elif self._clone_actor and self._replay_type == 'bc':
+                    time_replay_loss = self._replay_alpha * replay_loss / len(replay_batches)
+                    self._clone_actor_optim.zero_grad()
+                    time_replay_loss.backward()
+                    self._clone_actor_optim.step()
                     replay_loss = replay_loss.cpu().detach().numpy()
 
         self.change_task(save_id)
@@ -561,6 +575,7 @@ class COImpl():
                     # copy gradients back
                     overwrite_grad(self._policy.parameters, self._actor_grads_da,
                                    self._actor_grad_dims)
+
         self._actor_optim.step()
 
         if replay_batches is not None and len(replay_batches) != 0:
@@ -571,6 +586,16 @@ class COImpl():
                     for n, p in self._policy.named_parameters():
                         if n in unreg_grads.keys():
                             self._actor_w[n] -= unreg_grads[n] * (p.detach() - curr_feat_ext[n])
+            elif self._clone_actor and self._replay_type == 'bc':
+                with torch.no_grad():
+                    observations = batch.observations.to(self.device)
+                    actions = self._policy(observations)
+                clone_actions = self._clone_policy(replay_observations)
+                loss = torch.mean((actions - clone_actions) ** 2)
+                self._clone_actor_optim.zero_grad()
+                loss.backward()
+                self._clone_actor_optim.step()
+
 
         loss = loss.cpu().detach().numpy()
 
@@ -947,7 +972,7 @@ class COImpl():
         if self._replay_type == 'orl' and '_fcs' in self._q_func._q_funcs[0].__dict__:
             if self._replay_critic:
                 with torch.no_grad():
-                    for key in self._q_func._fcs:
+                    for key in self._q_func._fcs.keys():
                         for key_in in self._q_func._fcs[key].state_dict().keys():
                             targ_param = self._targ_q_func._fcs[key][key_in]
                             param = self._q_func._fcs[key].state_dict()[key_in]
@@ -961,7 +986,7 @@ class COImpl():
         if self._replay_type == 'orl':
             if '_fcs' in self._policy.__dict__:
                 with torch.no_grad():
-                    for key in self._policy._fcs:
+                    for key in self._policy._fcs.keys():
                         for key_in in self._policy._fcs[key].state_dict().keys():
                             targ_param = self._targ_policy._fcs[key][key_in]
                             param = self._policy._fcs[key].state_dict()[key_in]
@@ -969,18 +994,18 @@ class COImpl():
                             targ_param.data.add_(self._tau * param.data)
             if '_mus' in self._policy.__dict__:
                 with torch.no_grad():
-                    for key in self._policy._mus:
+                    for key in self._policy._mus.keys():
                         for key_in in self._policy._mus[key].state_dict().keys():
                             targ_param = self._targ_policy._logstds[key][key_in]
                             param = self._policy._logstds[key].state_dict()[key_in]
                             targ_param.data.mul_(1 - self._tau)
                             targ_param.data.add_(self._tau * param.data)
                 if isinstance(self._targ_policy._logstd, torch.nn.parameter.Parameter):
-                    for key in self._policy._logstds:
+                    for key in self._policy._logstds.keys():
                         self._targ_policy._logstds[key].data.mul_(1 - self._tau)
                         self._targ_policy._logstds[key].data.add_(self._tau * self._policy._logstds[key].data)
                 else:
-                    for key in self._policy._logstds:
+                    for key in self._policy._logstds.keys():
                         for key_in in self._policy._logstds[key].state_dict().keys():
                             targ_param = self._targ_policy._logstds[key][key_in]
                             param = self._policy._logstds[key].state_dict()[key_in]
@@ -1006,6 +1031,9 @@ class COImpl():
         # Apply mean across all samples
         fisher = {n: (p / len(iterator)) for n, p in fisher.items()}
         return fisher
+
+    def bc_post_train_process(self):
+        self._policy.load_state_dict(copy.deepcopy(self._clone_policy.state_dict()))
 
     def gem_post_train_process(self):
         self._critic_grads_cs[self._impl_id] = torch.zeros(np.sum(self._critic_grad_dims)).to(self.device)

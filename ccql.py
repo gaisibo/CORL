@@ -76,7 +76,7 @@ def main(args, device):
         use_phi = True
     else:
         use_phi = False
-    co = CO(use_gpu=not args.use_cpu, batch_size=args.batch_size, id_size=args.task_nums, replay_type=args.replay_type, experience_type=args.experience_type, sample_type=args.sample_type, reduce_replay=args.reduce_replay, use_phi=use_phi, use_model=args.use_model, replay_critic=args.replay_critic, replay_model=args.replay_model, replay_alpha=args.replay_alpha, generate_step=args.generate_step, model_noise=args.model_noise, retrain_time=args.retrain_time, orl_alpha=args.orl_alpha, single_head=args.single_head)
+    co = CO(use_gpu=not args.use_cpu, batch_size=args.batch_size, id_size=args.task_nums, replay_type=args.replay_type, experience_type=args.experience_type, sample_type=args.sample_type, reduce_replay=args.reduce_replay, use_phi=use_phi, use_model=args.use_model, replay_critic=args.replay_critic, replay_model=args.replay_model, replay_alpha=args.replay_alpha, generate_step=args.generate_step, model_noise=args.model_noise, retrain_time=args.retrain_time, orl_alpha=args.orl_alpha, single_head=args.single_head, clone_actor=args.clone_actor)
 
     experiment_name = "CO" + '_'
     algos_name = args.replay_type
@@ -249,6 +249,7 @@ if __name__ == '__main__':
     parser.add_argument('--replay_type', default='orl', type=str, choices=['orl', 'bc', 'ewc', 'gem', 'agem', 'r_walk', 'si'])
     parser.add_argument('--experience_type', default='siamese', type=str, choices=['generate', 'model', 'coverage', 'random_transition', 'random_episode', 'max_reward', 'max_match', 'max_model', 'max_reward_end', 'max_reward_mean', 'max_match_end', 'max_match_mean', 'max_model_end', 'max_model_mean', 'min_reward', 'min_match', 'min_model', 'min_reward_end', 'min_reward_mean', 'min_match_end', 'min_match_mean', 'min_model_end', 'min_model_mean'])
     parser.add_argument('--generate_type', default='none', type=str)
+    parser.add_argument('--clone_actor', action='store_true')
     parser.add_argument('--sample_type', default='none', type=str, choices=['retrain_model', 'retrain_actor', 'noise', 'none'])
     parser.add_argument('--use_model', action='store_true')
     parser.add_argument('--reduce_replay', default='retrain', type=str, choices=['retrain', 'no_retrain'])

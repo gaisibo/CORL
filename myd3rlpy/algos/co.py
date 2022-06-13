@@ -711,6 +711,8 @@ class CO():
                 self._impl.si_post_train_process
             elif self._replay_type == 'gem':
                 self._impl.gem_post_train_process
+            elif self._clone_actor and self._replay_type == 'bc':
+                self._impl.bc_post_train_process
 
         else:
             replay_buffer = ReplayBuffer(real_observation_size, real_action_size)
