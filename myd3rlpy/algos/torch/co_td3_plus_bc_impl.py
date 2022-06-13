@@ -170,7 +170,7 @@ class COTD3PlusBCImpl(COImpl, TD3PlusBCImpl):
                 if self._replay_critic:
                     for q_func in self._targ_q_func._q_funcs:
                         q_func._fcs = dict()
-                        self._targ_q_func._fcs[task_id] = deepcopy(self._targ_q_func._fc.state_dict())
+                        q_func._fcs[task_id] = deepcopy(q_func._fc.state_dict())
             if self._use_model and self._replay_model:
                 for model in self._dynamic._models:
                     model._mus = dict()
