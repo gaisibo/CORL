@@ -973,9 +973,9 @@ class COImpl():
             if self._replay_critic:
                 with torch.no_grad():
                     for key in self._q_func._fcs.keys():
-                        for key_in in self._q_func._fcs[key].state_dict().keys():
+                        for key_in in self._q_func._fcs[key].keys():
                             targ_param = self._targ_q_func._fcs[key][key_in]
-                            param = self._q_func._fcs[key].state_dict()[key_in]
+                            param = self._q_func._fcs[key][key_in]
                             targ_param.data.mul_(1 - self._tau)
                             targ_param.data.add_(self._tau * param.data)
 
@@ -987,17 +987,17 @@ class COImpl():
             if '_fcs' in self._policy.__dict__:
                 with torch.no_grad():
                     for key in self._policy._fcs.keys():
-                        for key_in in self._policy._fcs[key].state_dict().keys():
+                        for key_in in self._policy._fcs[key].keys():
                             targ_param = self._targ_policy._fcs[key][key_in]
-                            param = self._policy._fcs[key].state_dict()[key_in]
+                            param = self._policy._fcs[key][key_in]
                             targ_param.data.mul_(1 - self._tau)
                             targ_param.data.add_(self._tau * param.data)
             if '_mus' in self._policy.__dict__:
                 with torch.no_grad():
                     for key in self._policy._mus.keys():
-                        for key_in in self._policy._mus[key].state_dict().keys():
+                        for key_in in self._policy._mus[key].keys():
                             targ_param = self._targ_policy._logstds[key][key_in]
-                            param = self._policy._logstds[key].state_dict()[key_in]
+                            param = self._policy._logstds[key][key_in]
                             targ_param.data.mul_(1 - self._tau)
                             targ_param.data.add_(self._tau * param.data)
                 if isinstance(self._targ_policy._logstd, torch.nn.parameter.Parameter):
@@ -1006,9 +1006,9 @@ class COImpl():
                         self._targ_policy._logstds[key].data.add_(self._tau * self._policy._logstds[key].data)
                 else:
                     for key in self._policy._logstds.keys():
-                        for key_in in self._policy._logstds[key].state_dict().keys():
+                        for key_in in self._policy._logstds[key].keys():
                             targ_param = self._targ_policy._logstds[key][key_in]
-                            param = self._policy._logstds[key].state_dict()[key_in]
+                            param = self._policy._logstds[key][key_in]
                             targ_param.data.mul_(1 - self._tau)
                             targ_param.data.add_(self._tau * param.data)
 
