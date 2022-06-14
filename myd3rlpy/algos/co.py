@@ -1262,6 +1262,8 @@ class CO():
         observations = torch.from_numpy(np.stack([transition.observation for episode in episodes for transition in episode], axis=0))
         actions = torch.from_numpy(np.stack([transition.action for episode in episodes for transition in episode], axis=0))
         terminals = torch.from_numpy(np.stack([transition.terminal for episode in episodes for transition in episode], axis=0))
+        terminals_stop = [len(episode.transitions) for episode in episodes]
+        terminals_stop = [sum(terminals_stop[:i + 1]) - 1 for i in range(len(terminals_stop))]
         # 关键算法
 
         orl_lens = [0] + [len(episode) for episode in episodes[:start_index]]
@@ -1371,37 +1373,35 @@ class CO():
                         if indexes_euclid is not None:
                             near_indexes, _ = similar_mb_euclid(start_next_observations, near_next_observations, topk=1)
                             near_indexes.squeeze_()
-                            # 仅在dynamic model足够准确的情况下跳转，否则不动。
-                            start_next_indexes = torch.from_numpy(np.array([start_index + 1 for start_index in start_indexes]).astype(np.int64)).to(self._impl.device)
-                            near_indexes = torch.where(variances < near_variances, start_next_indexes, near_indexes)
                         else:
                             # 直接算的话会超内存，必须一个一个batch来。
                             batch_idx = 0
                             eval_batch_size = 10000
                             near_indexes = []
                             near_distances = []
-                            variances = []
+                            near_variances = []
                             while batch_idx + eval_batch_size < observations.shape[0]:
-                                near_observations = observations[batch_idx: batch_idx + eval_batch_size, :real_observation_size]
-                                near_actions = actions[batch_idx: batch_idx + eval_batch_size, :real_action_size]
+                                print(f'batch_idx: {batch_idx}')
+                                print(f'observations.shape[0]: {observations.shape[0]}')
+                                near_observations = observations[batch_idx: batch_idx + eval_batch_size, :real_observation_size].to(self._impl.device)
+                                near_actions = actions[batch_idx: batch_idx + eval_batch_size, :real_action_size].to(self._impl.device)
                                 near_next_observations, _, variances_ = self._impl._dynamic.predict_with_variance(near_observations, near_actions)
-                                variances.append(variances_)
+                                near_variances.append(variances_)
                                 mean_near_next_observations = torch.mean(near_next_observations, dim=1).unsqueeze(dim=1).expand(-1, near_next_observations.shape[1], -1)
                                 _, diff_mean_near_next_observations_indices = torch.max(torch.mean(near_next_observations - mean_near_next_observations, dim=2), dim=1)
                                 near_next_observations = torch.stack([near_next_observations[i][diff_mean_near_next_observations_indices[i]] for i in range(diff_mean_near_next_observations_indices.shape[0])])
                                 near_indexes_, near_distances_ = similar_mb_euclid(start_next_observations, near_next_observations, topk=1)
-                                near_indexes_.squeeze_()
-                                near_distances_.squeeze_()
                                 near_indexes.append(near_indexes_)
                                 near_distances.append(near_distances_)
-                            near_indexes = torch.cat(near_indexes, dim=0)
-                            near_distances = torch.cat(near_distances, dim=0)
-                            near_indexes_inner, near_distances = torch.topk(near_distances, 1, largest=False)
-                            near_indexes = near_indexes[near_indexes_inner]
-                            near_variances = torch.mean(torch.cat(variances, dim=0))
-                            # 仅在dynamic model足够准确的情况下跳转，否则不动。
-                            start_next_indexes = torch.from_numpy(np.array([start_index + 1 for start_index in start_indexes]).astype(np.int64)).to(self._impl.device)
-                            near_indexes = torch.where(variances < near_variances, start_next_indexes, near_indexes)
+                                batch_idx += eval_batch_size
+                            near_indexes = torch.cat(near_indexes, dim=1)
+                            near_distances = torch.cat(near_distances, dim=1)
+                            near_distances, near_indexes_inner = torch.topk(near_distances, 1, largest=False, dim=1)
+                            near_indexes = near_indexes.gather(1, near_indexes_inner).squeeze()
+                            near_variances = torch.mean(torch.cat(near_variances, dim=0))
+                        # 仅在dynamic model足够准确的情况下跳转，否则不动。
+                        start_next_indexes = torch.from_numpy(np.array(start_indexes).astype(np.int64)).to(self._impl.device) + 1
+                        near_indexes = torch.where(variances < near_variances, start_next_indexes, near_indexes)
                         # near_indexes = [near_index + 1 for near_index in near_indexes]
                     # elif 'siamese' in with_generate:
                     #     near_indexes, _, _ = similar_phi(start_observation, start_action[:, :real_action_size], near_observations, near_actions, self._impl._phi, topk=1)
@@ -1412,9 +1412,7 @@ class CO():
                         break
                     start_indexes = []
                     for start_index in near_indexes:
-                        start_terminal = terminals[start_index]
-                        print(f'start_terminal: {start_terminal}')
-                        if start_terminal == 0:
+                        if start_index not in terminals_stop:
                             start_indexes.append(start_index)
                         else:
                             print(f'start_indexes {start_index} finish')
@@ -1426,6 +1424,8 @@ class CO():
                         else:
                             orl_indexes_all.append(start_index)
                             orl_ns_all.append(1)
+                    if len(start_indexes) == 0:
+                        break
                     start_observations = observations[start_indexes].to(self._impl.device)
                     if len(start_observations.shape) == 1:
                         start_observations.unsqueeze(dim=0)
