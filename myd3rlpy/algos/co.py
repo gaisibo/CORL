@@ -1259,10 +1259,9 @@ class CO():
                 raise ValueError("Either of n_epochs or n_steps must be given.")
             iterator.reset()
 
-        observations = torch.from_numpy(np.stack([transition.observation for episode in episodes for transition in episode], axis=0)).to(self._impl.device)
-        actions = torch.from_numpy(np.stack([transition.action for episode in episodes for transition in episode], axis=0)).to(self._impl.device)
-        rewards = torch.from_numpy(np.stack([transition.reward for episode in episodes for transition in episode], axis=0)).to(self._impl.device)
-        terminals = torch.from_numpy(np.stack([transition.terminal for episode in episodes for transition in episode], axis=0)).to(self._impl.device)
+        observations = torch.from_numpy(np.stack([transition.observation for episode in episodes for transition in episode], axis=0))
+        actions = torch.from_numpy(np.stack([transition.action for episode in episodes for transition in episode], axis=0))
+        terminals = torch.from_numpy(np.stack([transition.terminal for episode in episodes for transition in episode], axis=0))
         # 关键算法
 
         orl_lens = [0] + [len(episode) for episode in episodes[:start_index]]
@@ -1278,13 +1277,7 @@ class CO():
         orl_ns_list = [orl_ns_all[i:i+orl_batch_size] for i in range(0,len(orl_ns_all) - 1,orl_batch_size)]
 
         if indexes_euclid is None:
-            near_observations = observations
-            near_actions = actions
-            near_next_observations, _, variances = self._impl._dynamic.predict_with_variance(near_observations[:, :real_observation_size], near_actions[:, :real_action_size])
-            near_variances = torch.mean(variances)
-            mean_near_next_observations = torch.mean(near_next_observations, dim=1).unsqueeze(dim=1).expand(-1, near_next_observations.shape[1], -1)
-            _, diff_mean_near_next_observations_indices = torch.max(torch.mean(near_next_observations - mean_near_next_observations, dim=2), dim=1)
-            near_next_observations = torch.stack([near_next_observations[i][diff_mean_near_next_observations_indices[i]] for i in range(diff_mean_near_next_observations_indices.shape[0])])
+            near_next_observations = None
 
         export_time = 0
         # stop = False
@@ -1297,7 +1290,7 @@ class CO():
                 # if test and stop:
                 #     break
                 start_indexes = orl_indexes
-                start_observations = observations[np.array(orl_indexes)]
+                start_observations = observations[np.array(orl_indexes)].to(self._impl.device)
                 if self._sample_type == 'retrain_model':
                     start_actions = self._impl._policy(start_observations)
                 print('next_while')
@@ -1323,8 +1316,8 @@ class CO():
 
                     if indexes_euclid is not None:
                         start_indexes = np.array(start_indexes)
-                        near_observations = observations[indexes_euclid[start_indexes]]
-                        near_actions = actions[indexes_euclid[start_indexes]]
+                        near_observations = observations[indexes_euclid[start_indexes]].to(self._impl.device)
+                        near_actions = actions[indexes_euclid[start_indexes]].to(self._impl.device)
                         near_variances = []
                         for i in range(near_observations.shape[0]):
                             near_next_observations, _, variances = self._impl._dynamic.predict_with_variance(near_observations[i, :, :real_observation_size], near_actions[i, :, :real_action_size])
@@ -1375,12 +1368,40 @@ class CO():
                         # logstds = logstds[torch.arange(start_observations.shape[0]), torch.randint(len(self._impl._dynamic._models), size=(start_observations.shape[0],))]
                         # near_index = similar_mb(mus, logstds, near_observations, near_rewards.unsqueeze(dim=1), topk=1)
                         # 用dynamic的输出和dynamic的输出比较，减少一定的误差。
-                        near_indexes, _ = similar_mb_euclid(start_next_observations, near_next_observations, topk=1)
-                        near_indexes.squeeze_()
-                        # 仅在dynamic model足够准确的情况下跳转，否则不动。
-                        start_next_indexes = torch.from_numpy(np.array([start_index + 1 for start_index in start_indexes]).astype(np.int64)).to(self._impl.device)
-                        print(f'{torch.mean((variances < near_variances).to(torch.float32))}')
-                        near_indexes = torch.where(variances < near_variances, start_next_indexes, near_indexes)
+                        if indexes_euclid is not None:
+                            near_indexes, _ = similar_mb_euclid(start_next_observations, near_next_observations, topk=1)
+                            near_indexes.squeeze_()
+                            # 仅在dynamic model足够准确的情况下跳转，否则不动。
+                            start_next_indexes = torch.from_numpy(np.array([start_index + 1 for start_index in start_indexes]).astype(np.int64)).to(self._impl.device)
+                            near_indexes = torch.where(variances < near_variances, start_next_indexes, near_indexes)
+                        else:
+                            # 直接算的话会超内存，必须一个一个batch来。
+                            batch_idx = 0
+                            eval_batch_size = 10000
+                            near_indexes = []
+                            near_distances = []
+                            variances = []
+                            while batch_idx + eval_batch_size < observations.shape[0]:
+                                near_observations = observations[batch_idx: batch_idx + eval_batch_size, :real_observation_size]
+                                near_actions = actions[batch_idx: batch_idx + eval_batch_size, :real_action_size]
+                                near_next_observations, _, variances_ = self._impl._dynamic.predict_with_variance(near_observations, near_actions)
+                                variances.append(variances_)
+                                mean_near_next_observations = torch.mean(near_next_observations, dim=1).unsqueeze(dim=1).expand(-1, near_next_observations.shape[1], -1)
+                                _, diff_mean_near_next_observations_indices = torch.max(torch.mean(near_next_observations - mean_near_next_observations, dim=2), dim=1)
+                                near_next_observations = torch.stack([near_next_observations[i][diff_mean_near_next_observations_indices[i]] for i in range(diff_mean_near_next_observations_indices.shape[0])])
+                                near_indexes_, near_distances_ = similar_mb_euclid(start_next_observations, near_next_observations, topk=1)
+                                near_indexes_.squeeze_()
+                                near_distances_.squeeze_()
+                                near_indexes.append(near_indexes_)
+                                near_distances.append(near_distances_)
+                            near_indexes = torch.cat(near_indexes, dim=0)
+                            near_distances = torch.cat(near_distances, dim=0)
+                            near_indexes_inner, near_distances = torch.topk(near_distances, 1, largest=False)
+                            near_indexes = near_indexes[near_indexes_inner]
+                            near_variances = torch.mean(torch.cat(variances, dim=0))
+                            # 仅在dynamic model足够准确的情况下跳转，否则不动。
+                            start_next_indexes = torch.from_numpy(np.array([start_index + 1 for start_index in start_indexes]).astype(np.int64)).to(self._impl.device)
+                            near_indexes = torch.where(variances < near_variances, start_next_indexes, near_indexes)
                         # near_indexes = [near_index + 1 for near_index in near_indexes]
                     # elif 'siamese' in with_generate:
                     #     near_indexes, _, _ = similar_phi(start_observation, start_action[:, :real_action_size], near_observations, near_actions, self._impl._phi, topk=1)
@@ -1405,7 +1426,7 @@ class CO():
                         else:
                             orl_indexes_all.append(start_index)
                             orl_ns_all.append(1)
-                    start_observations = observations[start_indexes]
+                    start_observations = observations[start_indexes].to(self._impl.device)
                     if len(start_observations.shape) == 1:
                         start_observations.unsqueeze(dim=0)
                     export_step += 1
