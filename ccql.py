@@ -163,7 +163,7 @@ def main(args, device):
                 test=args.test,
             )
             print(f'Training task {task_id} time: {time.perf_counter() - start_time}')
-            co.save_model(args.model_path + algos_name + '_' + str(task_id) + '.pt')
+            co.save_model(args.model_path + algos_name + '_' + str(task_id) + '_no_clone.pt')
 
             if int(task_id) != len(origin_datasets.keys()) - 1:
                 start_time = time.perf_counter()

@@ -1381,8 +1381,6 @@ class CO():
                             near_distances = []
                             near_variances = []
                             while batch_idx + eval_batch_size < observations.shape[0]:
-                                print(f'batch_idx: {batch_idx}')
-                                print(f'observations.shape[0]: {observations.shape[0]}')
                                 near_observations = observations[batch_idx: batch_idx + eval_batch_size, :real_observation_size].to(self._impl.device)
                                 near_actions = actions[batch_idx: batch_idx + eval_batch_size, :real_action_size].to(self._impl.device)
                                 near_next_observations, _, variances_ = self._impl._dynamic.predict_with_variance(near_observations, near_actions)

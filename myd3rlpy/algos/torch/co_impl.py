@@ -31,7 +31,7 @@ from utils.utils import Struct
 replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'terminals', 'policy_actions', 'qs', 'phis', 'psis']
 class COImpl():
     def build(self, task_id):
-        if self._clone_actor and self._experience_type == 'bc':
+        if self._clone_actor and self._replay_type == 'bc':
             self._clone_policy = copy.deepcopy(self._policy)
             self._clone_actor_optim = self._actor_optim_factory.create(
                 self._clone_policy.parameters(), lr=self._actor_learning_rate
