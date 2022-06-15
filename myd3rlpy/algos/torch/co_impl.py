@@ -31,12 +31,6 @@ from utils.utils import Struct
 replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'terminals', 'policy_actions', 'qs', 'phis', 'psis']
 class COImpl():
     def build(self, task_id):
-        if self._clone_actor and self._replay_type == 'bc':
-            self._clone_policy = copy.deepcopy(self._policy)
-            self._clone_actor_optim = self._actor_optim_factory.create(
-                self._clone_policy.parameters(), lr=self._actor_learning_rate
-            )
-
         if self._use_phi:
             self._phi = create_phi(self._observation_shape, self._action_size, self._critic_encoder_factory)
             self._psi = create_psi(self._observation_shape, self._actor_encoder_factory)
@@ -55,6 +49,12 @@ class COImpl():
             self._dynamic = None
 
         super().build()
+        if self._clone_actor and self._replay_type == 'bc':
+            self._clone_policy = copy.deepcopy(self._policy)
+            self._clone_actor_optim = self._actor_optim_factory.create(
+                self._clone_policy.parameters(), lr=self._actor_learning_rate
+            )
+
         if self._use_model:
             self._dynamic.to(self.device)
             for model in self._dynamic._models:
