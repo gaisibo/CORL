@@ -1119,8 +1119,6 @@ class CO():
                 #     break
                 start_indexes = orl_indexes
                 start_observations = observations[np.array(orl_indexes)].to(self._impl.device)
-                if self._sample_type == 'retrain_model':
-                    start_actions = self._impl._policy(start_observations)
                 print('next_while')
                 export_step = 0
                 epoch_loss = defaultdict(list)
@@ -1195,10 +1193,11 @@ class CO():
                         # mus = mus[torch.arange(start_observations.shape[0]), torch.randint(len(self._impl._dynamic._models), size=(start_observations.shape[0],))]
                         # logstds = logstds[torch.arange(start_observations.shape[0]), torch.randint(len(self._impl._dynamic._models), size=(start_observations.shape[0],))]
                         # near_index = similar_mb(mus, logstds, near_observations, near_rewards.unsqueeze(dim=1), topk=1)
-                        # 用dynamic的输出和dynamic的输出比较，减少一定的误差。
+                        # 用dynamic的输出和dynamic的输出比较，减少一定的误差。其实就是数据集中的sa生成的s'和policy跑出来的sa生成的s'比较
                         if indexes_euclid is not None:
                             near_indexes, _ = similar_mb_euclid(start_next_observations, near_next_observations, topk=1)
                             near_indexes.squeeze_()
+                            near_indexes += 1
                         else:
                             # 直接算的话会超内存，必须一个一个batch来。
                             batch_idx = 0
@@ -1223,17 +1222,16 @@ class CO():
                             near_distances, near_indexes_inner = torch.topk(near_distances, 1, largest=False, dim=1)
                             near_indexes = near_indexes.gather(1, near_indexes_inner).squeeze()
                             near_variances = torch.mean(torch.cat(near_variances, dim=0))
+                            near_indexes += 1
                         # 仅在dynamic model足够准确的情况下跳转，否则不动。
                         start_next_indexes = torch.from_numpy(np.array(start_indexes).astype(np.int64)).to(self._impl.device) + 1
-                        near_indexes = torch.where(variances < near_variances, start_next_indexes, near_indexes)
+                        near_indexes = torch.where(variances < near_variances, near_indexes, start_next_indexes)
                         # near_indexes = [near_index + 1 for near_index in near_indexes]
                     # elif 'siamese' in with_generate:
                     #     near_indexes, _, _ = similar_phi(start_observation, start_action[:, :real_action_size], near_observations, near_actions, self._impl._phi, topk=1)
                     else:
                         raise NotImplementedError
                     near_indexes = near_indexes.detach().cpu().numpy()
-                    if len(near_indexes) == 0:
-                        break
                     start_indexes = []
                     for start_index in near_indexes:
                         if start_index not in terminals_stop:
