@@ -75,7 +75,7 @@ def get_d4rl_local(dataset, timeout=300) -> MDPDataset:
 
 def split_macaw(top_euclid, dataset_name, inner_paths, envs, include_goal=False, multitask=False, one_hot_goal=False, ask_indexes=False, device='cuda:0'):
     task_datasets = dict()
-    nearest_indexes = dict()
+    # nearest_indexes = dict()
     tasks = []
     for i, env in enumerate(envs):
         with open(env, 'rb') as f:
@@ -94,16 +94,16 @@ def split_macaw(top_euclid, dataset_name, inner_paths, envs, include_goal=False,
         env = WalkerRandParamsWrappedEnv(tasks, len(envs), include_goal = include_goal or multitask)
     else:
         raise RuntimeError(f'Invalid env name {dataset_name}')
-    for i, inner_path in enumerate(inner_paths):
-        task_datasets[str(i)] = get_d4rl_local(get_dataset(inner_path))
-        task_dataset_terminals = task_datasets[str(i)].terminals
-        task_dataset_starts = np.concatenate([np.ones(1), task_dataset_terminals[:-1]], axis=0).astype(np.int64)
-        task_dataset_starts = np.where(task_dataset_terminals[:-1] == 1)[0] + 1
-        np.insert(task_dataset_starts, 0, 0)
-        nearest_indexes[str(i)] = task_dataset_starts
-    return split_gym(top_euclid, dataset_name, task_datasets, env, nearest_indexes, compare_dim=3, ask_indexes=ask_indexes, device=device)
+    # for i, inner_path in enumerate(inner_paths):
+    #     task_datasets[str(i)] = get_d4rl_local(get_dataset(inner_path))
+    #     task_dataset_terminals = task_datasets[str(i)].terminals
+    #     task_dataset_starts = np.concatenate([np.ones(1), task_dataset_terminals[:-1]], axis=0).astype(np.int64)
+    #     task_dataset_starts = np.where(task_dataset_terminals[:-1] == 1)[0] + 1
+    #     np.insert(task_dataset_starts, 0, 0)
+    #     nearest_indexes[str(i)] = task_dataset_starts
+    return split_gym(top_euclid, dataset_name, task_datasets, env, compare_dim=3, ask_indexes=ask_indexes, device=device)
 
-def split_gym(top_euclid, dataset_name, task_datasets, env, nearest_indexes, compare_dim=3, ask_indexes=False, device='cuda:0'):
+def split_gym(top_euclid, dataset_name, task_datasets, env, compare_dim=3, ask_indexes=False, device='cuda:0'):
 
     # fig = plt.figure()
     # obs = env.reset()
@@ -117,7 +117,7 @@ def split_gym(top_euclid, dataset_name, task_datasets, env, nearest_indexes, com
     print(f'task_datasets.keys(): {task_datasets.keys()}')
     task_nums = len(task_datasets.keys())
 
-    filename = 'near_indexes/near_indexes_' + dataset_name + '/nearest_indexes.npy'
+    # filename = 'near_indexes/near_indexes_' + dataset_name + '/nearest_indexes.npy'
     # if os.path.exists(filename):
     #     nearest_indexes = np.load(filename, allow_pickle=True)
     # else:
@@ -186,4 +186,4 @@ def split_gym(top_euclid, dataset_name, task_datasets, env, nearest_indexes, com
     # indexes_euclids = {'0': indexes_euclids['0'], '3': indexes_euclids['3'], '2': indexes_euclids['2'], '1': indexes_euclids['1']}
 
     # return changed_task_datasets, origin_task_datasets, taskid_task_datasets, action_task_datasets, envs, [None for _ in range(task_nums)], nearest_indexes, real_action_size, real_observation_size, indexes_euclids, task_nums
-    return origin_task_datasets, indexes_euclids, distances_euclids, env, [None for _ in range(task_nums)], nearest_indexes, real_action_size, real_observation_size
+    return origin_task_datasets, indexes_euclids, distances_euclids, env, real_action_size, real_observation_size

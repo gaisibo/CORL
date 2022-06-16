@@ -194,9 +194,13 @@ class COTD3PlusBCImpl(COImpl, TD3PlusBCImpl):
             if self._replay_critic:
                 for q_func in self._q_func._q_funcs:
                     assert task_id not in q_func._fcs.keys()
-            self._policy._fcs[task_id] = deepcopy(nn.Linear(self._policy._fc.weight.shape[1], self._policy._fc.weight.shape[0], bias=self._policy._fc.bias is not None).to(self.device).state_dict())
-            if self._replay_type == 'orl':
-                self._targ_policy._fcs[task_id] = deepcopy(nn.Linear(self._targ_policy._fc.weight.shape[1], self._targ_policy._fc.weight.shape[0], bias=self._targ_policy._fc.bias is not None).to(self.device).state_dict())
+            if self._clone_actor:
+                self._clone_policy._fcs[task_id] = deepcopy(nn.Linear(self._clone_policy._fc.weight.shape[1], self._clone_policy._fc.weight.shape[0], bias=self._clone_policy._fc.bias is not None).to(self.device).state_dict())
+                self._targ_policy = copy.deepcopy(self._policy)
+            else:
+                self._policy._fcs[task_id] = deepcopy(nn.Linear(self._policy._fc.weight.shape[1], self._policy._fc.weight.shape[0], bias=self._policy._fc.bias is not None).to(self.device).state_dict())
+                if self._replay_type == 'orl':
+                    self._targ_policy._fcs[task_id] = deepcopy(nn.Linear(self._targ_policy._fc.weight.shape[1], self._targ_policy._fc.weight.shape[0], bias=self._targ_policy._fc.bias is not None).to(self.device).state_dict())
 
             if self._replay_critic:
                 for q_func in self._q_func._q_funcs:
@@ -204,6 +208,10 @@ class COTD3PlusBCImpl(COImpl, TD3PlusBCImpl):
                 if self._replay_type == 'orl':
                     for q_func in self._targ_q_func._q_funcs:
                         q_func._fcs[task_id] = deepcopy(nn.Linear(q_func._fc.weight.shape[1], q_func._fc.weight.shape[0], bias=q_func._fc.bias is not None).to(self.device).state_dict())
+                else:
+                    self._targ_q_func = copy.deepcopy(self._q_func)
+            else:
+                self._targ_q_func = copy.deepcopy(self._q_func)
             if self._use_model and self._replay_model:
                 for model in self._dynamic._models:
                     model._mus[task_id] = deepcopy(nn.Linear(model._mu.weight.shape[1], model._mu.weight.shape[0], bias=model._mu.bias is not None).to(self.device).state_dict())

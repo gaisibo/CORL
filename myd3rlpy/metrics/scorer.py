@@ -7,6 +7,7 @@ import gym
 import numpy as np
 import torch
 import torch.nn.functional as F
+from torch.utils.data import TensorDataset, DataLoader
 
 from d3rlpy.dataset import Episode, TransitionMiniBatch
 from d3rlpy.preprocessing.reward_scalers import RewardScaler
@@ -249,7 +250,7 @@ def evaluate_on_environment(
 
     return scorer
 
-def q_error_scorer(real_action_size: int, test_id: int) -> Callable[..., float]:
+def q_error_scorer(real_action_size: int, test_id: str) -> Callable[..., float]:
     def scorer(algo, replay_iterator):
         with torch.no_grad():
             save_id = algo._impl._impl_id
@@ -267,4 +268,40 @@ def q_error_scorer(real_action_size: int, test_id: int) -> Callable[..., float]:
             total_errors = torch.stack(total_errors, dim=0)
             algo._impl.change_task(save_id)
         return float(torch.mean(total_errors).detach().cpu().numpy())
+    return scorer
+
+def q_mean_scorer(real_action_size: int, test_id: str, batch_size: int = 1024) -> Callable[..., float]:
+    def scorer(algo, origin_dataset):
+        with torch.no_grad():
+            save_id = algo._impl._impl_id
+            algo._impl.change_task(test_id)
+            qs = []
+            dataloader = DataLoader(TensorDataset(torch.from_numpy(origin_dataset.observations), torch.from_numpy(origin_dataset.actions)), batch_size=batch_size, shuffle=False)
+            for batch in dataloader:
+                observations, actions = batch
+                observations = observations.to(algo._impl.device)
+                actions = actions.to(algo._impl.device)[:, :real_action_size]
+                q = algo._impl._q_func.forward(observations, actions)
+                qs.append(q)
+            qs = torch.cat(qs, dim=0)
+            algo._impl.change_task(save_id)
+        return float(torch.mean(qs).detach().cpu().numpy())
+    return scorer
+
+def q_replay_scorer(real_action_size: int, test_id: str, batch_size: int = 1024) -> Callable[..., float]:
+    def scorer(algo, replay_dataset):
+        with torch.no_grad():
+            save_id = algo._impl._impl_id
+            algo._impl.change_task(test_id)
+            qs = []
+            dataloader = DataLoader(replay_dataset, batch_size=batch_size, shuffle=False)
+            for batch in dataloader:
+                observations, actions = batch[:2]
+                observations = observations.to(algo._impl.device)
+                actions = actions.to(algo._impl.device)[:, :real_action_size]
+                q = algo._impl._q_func.forward(observations, actions)
+                qs.append(q)
+            qs = torch.cat(qs, dim=0)
+            algo._impl.change_task(save_id)
+        return float(torch.mean(qs).detach().cpu().numpy())
     return scorer
