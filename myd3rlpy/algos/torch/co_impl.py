@@ -591,7 +591,7 @@ class COImpl():
                 with torch.no_grad():
                     observations = batch.observations.to(self.device)
                     actions = self._policy(observations)
-                clone_actions = self._clone_policy(replay_observations)
+                clone_actions = self._clone_policy(observations)
                 loss = torch.mean((actions - clone_actions) ** 2)
                 self._clone_actor_optim.zero_grad()
                 loss.backward()

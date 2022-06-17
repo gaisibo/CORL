@@ -159,15 +159,15 @@ class CO():
         verbose: bool = True,
         show_progress: bool = True,
         tensorboard_dir: Optional[str] = None,
-        eval_episodes_list: Optional[List[Dict[int, List[Episode]]]] = None,
+        eval_episodes: Optional[Dict[int, List[Episode]]] = None,
         save_interval: int = 1,
         discount: float = 0.99,
         start_timesteps : int = int(25e3),
         expl_noise: float = 1,
         eval_freq: int = int(5e3),
-	scorers_list: Optional[List[
+	scorers: Optional[
             Dict[str, Callable[[Any, List[Episode]], float]]
-        ]] = None,
+        ] = None,
         shuffle: bool = True,
         callback: Optional[Callable[[LearnableBase, int, int], None]] = None,
         real_action_size: int = 0,
@@ -231,13 +231,13 @@ class CO():
                 verbose,
                 show_progress,
                 tensorboard_dir,
-                eval_episodes_list,
+                eval_episodes,
                 save_interval,
                 discount,
                 start_timesteps,
                 expl_noise,
                 eval_freq,
-                scorers_list,
+                scorers,
                 shuffle,
                 callback,
                 real_action_size,
@@ -273,15 +273,15 @@ class CO():
         verbose: bool = True,
         show_progress: bool = True,
         tensorboard_dir: Optional[str] = None,
-        eval_episodes_list: Optional[List[Dict[int, List[Episode]]]] = None,
+        eval_episodes: Optional[Dict[int, List[Episode]]] = None,
         save_interval: int = 1,
         discount: float = 0.99,
         start_timesteps : int = int(25e3),
         expl_noise: float = 0.1,
         eval_freq: int = int(5e3),
-	scorers_list: Optional[List[
+	scorers: Optional[
             Dict[str, Callable[[Any, List[Episode]], float]]
-        ]] = None,
+        ] = None,
         shuffle: bool = True,
         callback: Optional[Callable[["LearnableBase", int, int], None]] = None,
         real_action_size: int = 0,
@@ -346,7 +346,6 @@ class CO():
             verbose,
             tensorboard_dir,
         )
-        self.logger = logger
 
         # save hyperparameters
         self.save_params(logger)
@@ -626,9 +625,8 @@ class CO():
                     if vals:
                         self._loss_history[name].append(np.mean(vals))
 
-                if scorers_list and eval_episodes_list:
-                    for scorers, eval_episodes in zip(scorers_list, eval_episodes_list):
-                        self._evaluate(eval_episodes, scorers, logger)
+                if scorers and eval_episodes:
+                    self._evaluate(eval_episodes, scorers, logger)
 
                 # save metrics
                 metrics = logger.commit(epoch, total_step)
@@ -1105,7 +1103,22 @@ class CO():
         orl_ns_list = [orl_ns_all[i:i+orl_batch_size] for i in range(0,len(orl_ns_all) - 1,orl_batch_size)]
 
         if indexes_euclid is None:
-            near_next_observations = None
+            # 直接算的话会超内存，必须一个一个batch来。
+            batch_idx = 0
+            eval_batch_size = 10000
+            near_variances = []
+            near_next_observations_list = []
+            while batch_idx + eval_batch_size < observations.shape[0]:
+                near_observations = observations[batch_idx: batch_idx + eval_batch_size, :real_observation_size].to(self._impl.device)
+                near_actions = actions[batch_idx: batch_idx + eval_batch_size, :real_action_size].to(self._impl.device)
+                near_next_observations, _, variances_ = self._impl._dynamic.predict_with_variance(near_observations, near_actions)
+                near_variances.append(variances_)
+                mean_near_next_observations = torch.mean(near_next_observations, dim=1).unsqueeze(dim=1).expand(-1, near_next_observations.shape[1], -1)
+                _, diff_mean_near_next_observations_indices = torch.max(torch.mean(near_next_observations - mean_near_next_observations, dim=2), dim=1)
+                near_next_observations = torch.stack([near_next_observations[i][diff_mean_near_next_observations_indices[i]] for i in range(diff_mean_near_next_observations_indices.shape[0])]).to('cpu')
+                near_next_observations_list.append(near_next_observations)
+                batch_idx += eval_batch_size
+            near_variances = torch.mean(torch.cat(near_variances, dim=0))
 
         export_time = 0
         # stop = False
@@ -1135,6 +1148,7 @@ class CO():
                     if len(orl_indexes) >= max_save_num:
                         break
                     print(f'next_step: {export_step}')
+                    print(f"len(orl_indexes_all): {len(orl_indexes_all)}")
                     start_actions = self._impl._policy(start_observations)
                     if 'noise' in self._sample_type:
                         noise = 0.03 * max(1, (export_time / max_export_time)) * torch.randn(start_actions.shape, device=self._impl.device)
@@ -1199,29 +1213,21 @@ class CO():
                             near_indexes.squeeze_()
                             near_indexes += 1
                         else:
-                            # 直接算的话会超内存，必须一个一个batch来。
+                            idx = 0
                             batch_idx = 0
                             eval_batch_size = 10000
                             near_indexes = []
                             near_distances = []
-                            near_variances = []
                             while batch_idx + eval_batch_size < observations.shape[0]:
-                                near_observations = observations[batch_idx: batch_idx + eval_batch_size, :real_observation_size].to(self._impl.device)
-                                near_actions = actions[batch_idx: batch_idx + eval_batch_size, :real_action_size].to(self._impl.device)
-                                near_next_observations, _, variances_ = self._impl._dynamic.predict_with_variance(near_observations, near_actions)
-                                near_variances.append(variances_)
-                                mean_near_next_observations = torch.mean(near_next_observations, dim=1).unsqueeze(dim=1).expand(-1, near_next_observations.shape[1], -1)
-                                _, diff_mean_near_next_observations_indices = torch.max(torch.mean(near_next_observations - mean_near_next_observations, dim=2), dim=1)
-                                near_next_observations = torch.stack([near_next_observations[i][diff_mean_near_next_observations_indices[i]] for i in range(diff_mean_near_next_observations_indices.shape[0])])
-                                near_indexes_, near_distances_ = similar_mb_euclid(start_next_observations, near_next_observations, topk=1)
+                                near_indexes_, near_distances_ = similar_mb_euclid(start_next_observations, near_next_observations_list[i].to(self._impl.device), topk=1)
                                 near_indexes.append(near_indexes_)
                                 near_distances.append(near_distances_)
                                 batch_idx += eval_batch_size
+                                idx += 1
                             near_indexes = torch.cat(near_indexes, dim=1)
                             near_distances = torch.cat(near_distances, dim=1)
                             near_distances, near_indexes_inner = torch.topk(near_distances, 1, largest=False, dim=1)
                             near_indexes = near_indexes.gather(1, near_indexes_inner).squeeze()
-                            near_variances = torch.mean(torch.cat(near_variances, dim=0))
                             near_indexes += 1
                         # 仅在dynamic model足够准确的情况下跳转，否则不动。
                         start_next_indexes = torch.from_numpy(np.array(start_indexes).astype(np.int64)).to(self._impl.device) + 1
@@ -1651,7 +1657,7 @@ class CO():
                 replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals, replay_policy_actions, replay_qs)
             return replay_dataset, replay_dataset
 
-    def generate_replay(self, task_id, origin_datasets, envs, replay_type, experience_type, replay_datasets, save_datasets, max_save_num, real_action_size, real_observation_size, generate_type, indexes_euclid, distances_euclid, d_threshold, with_generate, test, model_path, algos_name, scorers_list, eval_episodes_list, learned_tasks):
+    def generate_replay(self, task_id, origin_datasets, envs, replay_type, experience_type, replay_datasets, save_datasets, max_save_num, real_action_size, real_observation_size, generate_type, indexes_euclid, distances_euclid, d_threshold, with_generate, test, model_path, algos_name, learned_tasks):
 
         if int(task_id) != len(origin_datasets.keys()) - 1:
             start_time = time.perf_counter()
@@ -1690,15 +1696,15 @@ class CO():
             print(f'Select Replay Buffer Time: {time.perf_counter() - start_time}')
             if save_datasets[task_id] is not None:
                 torch.save(save_datasets[task_id], f=model_path + algos_name + '_' + str(task_id) + '_datasets.pt')
-        mean_scorers = scorers_list[1]
-        mean_eval_episodes = eval_episodes_list[1]
+        mean_scorers = [q_mean_scorer(real_action_size=real_action_size, test_id=str(n)) for n in learned_tasks]
+        mean_eval_episodes = [origin_datasets[task_id] for task_id in learned_tasks]
         mean_qs = []
         for mean_scorer, mean_eval_episode in zip(mean_scorers, mean_eval_episodes):
-            mean_qs.append(mean_scorer(mean_eval_episode))
-        replay_scorers = [q_replay_scorer(real_action_size=real_action_size, test_id=str(n)) for n in learned_tasks[:-1]]
+            mean_qs.append(mean_scorer(self, mean_eval_episode))
         replay_qs = []
-        for replay_scorer, replay_eval_episode in zip(replay_scorers, save_datasets):
-            replay_qs.append(replay_scorer(replay_eval_episode))
-        no_replay_qs = [(mean_q * origin_dataset.observations.shape[0] - max_save_num * replay_q) / (origin_dataset.observations.shape[0] - max_save_num) for mean_q, origin_dataset, replay_q in zip(mean_qs, origin_datasets, replay_qs)]
-        for i, no_replay_q in enumerate(no_replay_qs):
-            self.logger.add_metric(f'no_replay_q{i}', no_replay_q)
+        for n in learned_tasks:
+            replay_qs.append(q_replay_scorer(real_action_size=real_action_size, test_id=str(n))(self, save_datasets[n]))
+        no_replay_qs = [(mean_q * origin_dataset.observations.shape[0] - max_save_num * replay_q) / (origin_dataset.observations.shape[0] - max_save_num) for mean_q, origin_dataset, replay_q in zip(mean_qs, origin_datasets.values(), replay_qs)]
+        for i, (mean_q, replay_q, no_replay_q) in enumerate(zip(mean_qs, replay_qs, no_replay_qs)):
+            print(f'final test {i} mean_q: {mean_q}; replay_q: {replay_q}; no_replay_q : {no_replay_q}. ', end='')
+        print()

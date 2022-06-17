@@ -134,27 +134,22 @@ def main(args, device):
                 pretrain_state_dict = None
 
             # train
-            scorers_list = []
-            eval_episodes_list = []
-            if env is not None:
-                scorers_list.append(dict(zip(['real_env' + str(n) for n in origin_datasets.keys()], [evaluate_on_environment(env, test_id=str(n), mix='mix' in args.dataset and n == '0', add_on=args.add_on) for n in learned_tasks])))
-            elif envs is not None:
-                scorers_list.append(dict(zip(['real_env' + str(n) for n in origin_datasets.keys()], [evaluate_on_environment(envs[str(n)], test_id=str(n), mix='mix' in args.dataset and n == '0', add_on=args.add_on) for n in learned_tasks])))
+            if not args.test:
+                if env is not None:
+                    scorers = dict(zip(['real_env' + str(n) for n in origin_datasets.keys()], [evaluate_on_environment(env, test_id=str(n), mix='mix' in args.dataset and n == '0', add_on=args.add_on) for n in learned_tasks]))
+                elif envs is not None:
+                    scorers = dict(zip(['real_env' + str(n) for n in origin_datasets.keys()], [evaluate_on_environment(envs[str(n)], test_id=str(n), mix='mix' in args.dataset and n == '0', add_on=args.add_on) for n in learned_tasks]))
+                else:
+                    raise NotImplementedError
             else:
-                raise NotImplementedError
-            eval_episodes_list.append(origin_datasets)
-            scorers_list.append(dict(zip(['mean_q' + str(n) for n in origin_datasets.keys()], [q_mean_scorer(real_action_size=real_action_size, test_id=str(n)) for n in learned_tasks])))
-            eval_episodes_list.append(origin_datasets)
-            # replay q 在当前任务上没办法计算
-            scorers_list.append(dict(zip(['replay_q' + str(n) for n in origin_datasets.keys()], [q_replay_scorer(real_action_size=real_action_size, test_id=str(n)) for n in learned_tasks[:-1]])))
-            eval_episodes_list.append(save_datasets)
+                scorers = None
             co.fit(
                 task_id,
                 dataset,
                 replay_datasets,
                 real_action_size = real_action_size,
                 real_observation_size = real_observation_size,
-                eval_episodes_list=eval_episodes_list,
+                eval_episodes=origin_datasets,
                 # n_epochs=args.n_epochs if not args.test else 1,
                 n_steps=args.n_steps,
                 n_steps_per_epoch=args.n_steps_per_epoch,
@@ -165,14 +160,15 @@ def main(args, device):
                 dynamic_state_dict=dynamic_state_dict,
                 pretrain_state_dict=pretrain_state_dict,
                 experiment_name=experiment_name + algos_name,
-                scorers_list = scorers_list,
+                scorers = scorers,
                 test=args.test,
             )
             print(f'Training task {task_id} time: {time.perf_counter() - start_time}')
             co.save_model(args.model_path + algos_name + '_' + str(task_id) + '_no_clone.pt')
-            co.generate_replay(task_id, origin_datasets, envs, args.replay_type, args.experience_type, replay_datasets, save_datasets, args.max_save_num, real_action_size, real_observation_size, args.generate_type, indexes_euclids[task_id], distances_euclids[task_id], args.d_threshold, args.with_generate, args.test, args.model_path, algos_name, scorers_list, eval_episodes_list, learned_tasks)
+            co.generate_replay(task_id, origin_datasets, envs, args.replay_type, args.experience_type, replay_datasets, save_datasets, args.max_save_num, real_action_size, real_observation_size, args.generate_type, indexes_euclids[task_id], distances_euclids[task_id], args.d_threshold, args.generate_type, args.test, args.model_path, algos_name, learned_tasks)
             if args.test and int(task_id) >= 1:
                 break
+    print('finish')
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Experimental evaluation of lifelong PG learning')

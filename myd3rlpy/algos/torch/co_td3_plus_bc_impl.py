@@ -159,25 +159,28 @@ class COTD3PlusBCImpl(COImpl, TD3PlusBCImpl):
         assert self._policy is not None
         if self._impl_id is not None and self._impl_id == task_id:
             return
-        if "_fcs" not in self._policy.__dict__.keys():
-            if not self._clone_actor:
+        if not self._clone_actor:
+            if "_fcs" not in self._policy.__dict__.keys():
                 self._policy._fcs = dict()
                 self._policy._fcs[task_id] = deepcopy(self._policy._fc.state_dict())
-            else:
+                if self._replay_type == 'orl':
+                    self._targ_policy._fcs = dict()
+                    self._targ_policy._fcs[task_id] = deepcopy(self._targ_policy._fc.state_dict())
+        else:
+            if "_fcs" not in self._clone_policy.__dict__.keys():
                 self._clone_policy._fcs = dict()
                 self._clone_policy._fcs[task_id] = deepcopy(self._clone_policy._fc.state_dict())
-            if self._replay_critic:
+        if self._replay_critic:
+            if "_fcs" not in self._q_func._q_funcs[0].__dict__.keys():
                 for q_func in self._q_func._q_funcs:
                     q_func._fcs = dict()
                     q_func._fcs[task_id] = deepcopy(q_func._fc.state_dict())
             if self._replay_type == 'orl':
-                self._targ_policy._fcs = dict()
-                self._targ_policy._fcs[task_id] = deepcopy(self._targ_policy._fc.state_dict())
-                if self._replay_critic:
-                    for q_func in self._targ_q_func._q_funcs:
-                        q_func._fcs = dict()
-                        q_func._fcs[task_id] = deepcopy(q_func._fc.state_dict())
-            if self._use_model and self._replay_model:
+                for q_func in self._targ_q_func._q_funcs:
+                    q_func._fcs = dict()
+                    q_func._fcs[task_id] = deepcopy(q_func._fc.state_dict())
+        if self._use_model and self._replay_model:
+            if "_fcs" not in self._dynamic._models[0].__dict__.keys():
                 for model in self._dynamic._models:
                     model._mus = dict()
                     model._mus[task_id] = deepcopy(model._mu.state_dict())
@@ -187,22 +190,24 @@ class COTD3PlusBCImpl(COImpl, TD3PlusBCImpl):
                     model._max_logstds[task_id] = deepcopy(model._max_logstd)
                     model._min_logstds = dict()
                     model._min_logstds[task_id] = deepcopy(model._min_logstd)
-            self._impl_id = task_id
-        # self._using_id = task_id
-        if task_id not in self._policy._fcs.keys():
-            print(f'add new id: {task_id}')
-            if self._replay_critic:
-                for q_func in self._q_func._q_funcs:
-                    assert task_id not in q_func._fcs.keys()
-            if self._clone_actor:
+        self._impl_id = task_id
+    # self._using_id = task_id
+        print(f'add new id: {task_id}')
+        if self._replay_critic:
+            for q_func in self._q_func._q_funcs:
+                assert task_id not in q_func._fcs.keys()
+        if self._clone_actor:
+            if task_id not in self._clone_policy._fcs.keys():
                 self._clone_policy._fcs[task_id] = deepcopy(nn.Linear(self._clone_policy._fc.weight.shape[1], self._clone_policy._fc.weight.shape[0], bias=self._clone_policy._fc.bias is not None).to(self.device).state_dict())
                 self._targ_policy = copy.deepcopy(self._policy)
-            else:
+        else:
+            if task_id not in self._policy._fcs.keys():
                 self._policy._fcs[task_id] = deepcopy(nn.Linear(self._policy._fc.weight.shape[1], self._policy._fc.weight.shape[0], bias=self._policy._fc.bias is not None).to(self.device).state_dict())
                 if self._replay_type == 'orl':
                     self._targ_policy._fcs[task_id] = deepcopy(nn.Linear(self._targ_policy._fc.weight.shape[1], self._targ_policy._fc.weight.shape[0], bias=self._targ_policy._fc.bias is not None).to(self.device).state_dict())
 
-            if self._replay_critic:
+        if self._replay_critic:
+            if task_id not in self._q_func._q_funcs[0]._fcs.keys():
                 for q_func in self._q_func._q_funcs:
                     q_func._fcs[task_id] = deepcopy(nn.Linear(q_func._fc.weight.shape[1], q_func._fc.weight.shape[0], bias=q_func._fc.bias is not None).to(self.device).state_dict())
                 if self._replay_type == 'orl':
@@ -212,7 +217,8 @@ class COTD3PlusBCImpl(COImpl, TD3PlusBCImpl):
                     self._targ_q_func = copy.deepcopy(self._q_func)
             else:
                 self._targ_q_func = copy.deepcopy(self._q_func)
-            if self._use_model and self._replay_model:
+        if self._use_model and self._replay_model:
+            if task_id not in self._dynamic._models[0]._mus.keys():
                 for model in self._dynamic._models:
                     model._mus[task_id] = deepcopy(nn.Linear(model._mu.weight.shape[1], model._mu.weight.shape[0], bias=model._mu.bias is not None).to(self.device).state_dict())
                     model._logstds[task_id] = deepcopy(nn.Linear(model._logstd.weight.shape[1], model._logstd.weight.shape[0], bias=model._logstd.bias is not None).to(self.device).state_dict())
