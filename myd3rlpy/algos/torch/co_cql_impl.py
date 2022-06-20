@@ -168,8 +168,8 @@ class COCQLImpl(COImpl, CQLImpl):
         assert self._dynamic is not None
         if self._impl_id is not None and self._impl_id == task_id:
             return
-        if "_mus" not in self._policy.__dict__.keys():
-            if self._clone_actor and self._replay_type == 'bc':
+        if self._clone_actor and self._replay_type == 'bc':
+            if "_mus" not in self._clone_policy.__dict__.keys():
                 self._clone_policy._mus = dict()
                 self._clone_policy._mus[task_id] = deepcopy(self._clone_policy._mu.state_dict())
                 if isinstance(self._clone_policy._logstd, torch.nn.parameter.Parameter):
@@ -178,7 +178,8 @@ class COCQLImpl(COImpl, CQLImpl):
                 else:
                     self._clone_policy._logstds = dict()
                     self._clone_policy._logstds[task_id] = deepcopy(self._clone_policy._logstd.state_dict())
-            else:
+        else:
+            if "_mus" not in self._policy.__dict__.keys():
                 self._policy._mus = dict()
                 self._policy._mus[task_id] = deepcopy(self._policy._mu.state_dict())
                 if isinstance(self._policy._logstd, torch.nn.parameter.Parameter):
@@ -187,24 +188,26 @@ class COCQLImpl(COImpl, CQLImpl):
                 else:
                     self._policy._logstds = dict()
                     self._policy._logstds[task_id] = deepcopy(self._policy._logstd.state_dict())
-            if self._replay_critic:
+                if self._replay_type == 'orl':
+                    self._targ_policy._mus = dict()
+                    self._targ_policy._mus[task_id] = deepcopy(self._targ_policy._mu.state_dict())
+                    if isinstance(self._targ_policy._logstd, torch.nn.parameter.Parameter):
+                        self._targ_policy._logstds = dict()
+                        self._targ_policy._logstds[task_id] = deepcopy(self._targ_policy._logstd)
+                    else:
+                        self._targ_policy._logstds = dict()
+                        self._targ_policy._logstds[task_id] = deepcopy(self._targ_policy._logstd.state_dict())
+        if self._replay_critic:
+            if "_fcs" not in self._q_func._q_funcs[0].__dict__.keys():
                 for q_func in self._q_func._q_funcs:
                     q_func._fcs = dict()
                     q_func._fcs[task_id] = deepcopy(q_func._fc.state_dict())
-            if self._replay_type == 'orl':
-                self._targ_policy._mus = dict()
-                self._targ_policy._mus[task_id] = deepcopy(self._targ_policy._mu.state_dict())
-                if isinstance(self._targ_policy._logstd, torch.nn.parameter.Parameter):
-                    self._targ_policy._logstds = dict()
-                    self._targ_policy._logstds[task_id] = deepcopy(self._targ_policy._logstd)
-                else:
-                    self._targ_policy._logstds = dict()
-                    self._targ_policy._logstds[task_id] = deepcopy(self._targ_policy._logstd.state_dict())
-                if self._replay_critic:
-                    for q_func in self._targ_q_func._q_funcs:
-                        q_func._fcs = dict()
-                        q_func._fcs[task_id] = deepcopy(q_func._fc.state_dict())
-            if self._use_model and self._replay_model:
+            if self._replay_critic:
+                for q_func in self._targ_q_func._q_funcs:
+                    q_func._fcs = dict()
+                    q_func._fcs[task_id] = deepcopy(q_func._fc.state_dict())
+        if self._use_model and self._replay_model:
+            if "_mus" not in self._dynamic._models[0].__dict__.keys():
                 for model in self._dynamic._models:
                     model._mus = dict()
                     model._mus[task_id] = deepcopy(model._mu.state_dict())
@@ -214,20 +217,27 @@ class COCQLImpl(COImpl, CQLImpl):
                     model._max_logstds[task_id] = deepcopy(model._max_logstd)
                     model._min_logstds = dict()
                     model._min_logstds[task_id] = deepcopy(model._min_logstd)
-            self._impl_id = task_id
+        self._impl_id = task_id
         # self._using_id = task_id
-        if task_id not in self._policy._mus.keys():
-            print(f'add new id: {task_id}')
-            if self._replay_critic:
-                for q_func in self._q_func._q_funcs:
-                    assert task_id not in q_func._fcs.keys()
+        if self._replay_critic:
             if self._clone_actor and self._replay_type == 'bc':
+                if task_id not in self._clone_policy._mus.keys():
+                    for q_func in self._q_func._q_funcs:
+                        assert task_id not in q_func._fcs.keys()
+            else:
+                if task_id not in self._policy._mus.keys():
+                    for q_func in self._q_func._q_funcs:
+                        assert task_id not in q_func._fcs.keys()
+        if self._clone_actor and self._replay_type == 'bc':
+            if task_id not in self._clone_policy._mus.keys():
                 self._clone_policy._mus[task_id] = deepcopy(nn.Linear(self._clone_policy._mu.weight.shape[1], self._clone_policy._mu.weight.shape[0], bias=self._clone_policy._mu.bias is not None).to(self.device).state_dict())
                 if isinstance(self._clone_policy._logstd, torch.nn.parameter.Parameter):
                     self._clone_policy._logstds[task_id] = deepcopy(nn.Parameter(torch.empty(torch.zeros(1, self._clone_policy._logstd.weight.shape[0], dtype=torch.float32).to(self.device))))
                 else:
                     self._clone_policy._logstds[task_id] = deepcopy(nn.Linear(self._clone_policy._logstd.weight.shape[1], self._clone_policy._logstd.weight.shape[0], bias=self._clone_policy._logstd.bias is not None).to(self.device).state_dict())
-            else:
+                self._targ_policy = copy.deepcopy(self._policy)
+        else:
+            if task_id not in self._policy._mus.keys():
                 self._policy._mus[task_id] = deepcopy(nn.Linear(self._policy._mu.weight.shape[1], self._policy._mu.weight.shape[0], bias=self._policy._mu.bias is not None).to(self.device).state_dict())
                 if isinstance(self._policy._logstd, torch.nn.parameter.Parameter):
                     self._policy._logstds[task_id] = deepcopy(nn.Parameter(torch.empty(torch.zeros(1, self._policy._logstd.weight.shape[0], dtype=torch.float32).to(self.device))))
@@ -240,13 +250,17 @@ class COCQLImpl(COImpl, CQLImpl):
                 else:
                     self._targ_policy._logstds[task_id] = deepcopy(nn.Linear(self._targ_policy._logstd.weight.shape[1], self._targ_policy._logstd.weight.shape[0], bias=self._targ_policy._logstd.bias is not None).to(self.device).state_dict())
 
-            if self._replay_critic:
+        if self._replay_critic:
+            if task_id not in self._q_func._q_funcs[0]._fcs.keys():
                 for q_func in self._q_func._q_funcs:
                     q_func._fcs[task_id] = deepcopy(nn.Linear(q_func._fc.weight.shape[1], q_func._fc.weight.shape[0], bias=q_func._fc.bias is not None).to(self.device).state_dict())
                 if self._replay_type == 'orl':
                     for q_func in self._targ_q_func._q_funcs:
                         q_func._fcs[task_id] = deepcopy(nn.Linear(q_func._fc.weight.shape[1], q_func._fc.weight.shape[0], bias=q_func._fc.bias is not None).to(self.device).state_dict())
-            if self._use_model and self._replay_model:
+                else:
+                    self._targ_q_func = copy.deepcopy(self._q_func)
+        if self._use_model and self._replay_model:
+            if task_id not in self._dynamic._models[0]._mus.keys():
                 for model in self._dynamic._models:
                     model._mus[task_id] = deepcopy(nn.Linear(model._mu.weight.shape[1], model._mu.weight.shape[0], bias=model._mu.bias is not None).to(self.device).state_dict())
                     model._logstds[task_id] = deepcopy(nn.Linear(model._logstd.weight.shape[1], model._logstd.weight.shape[0], bias=model._logstd.bias is not None).to(self.device).state_dict())

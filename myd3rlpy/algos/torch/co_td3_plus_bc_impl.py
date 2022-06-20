@@ -180,7 +180,7 @@ class COTD3PlusBCImpl(COImpl, TD3PlusBCImpl):
                     q_func._fcs = dict()
                     q_func._fcs[task_id] = deepcopy(q_func._fc.state_dict())
         if self._use_model and self._replay_model:
-            if "_fcs" not in self._dynamic._models[0].__dict__.keys():
+            if "_mus" not in self._dynamic._models[0].__dict__.keys():
                 for model in self._dynamic._models:
                     model._mus = dict()
                     model._mus[task_id] = deepcopy(model._mu.state_dict())
@@ -193,8 +193,14 @@ class COTD3PlusBCImpl(COImpl, TD3PlusBCImpl):
         self._impl_id = task_id
     # self._using_id = task_id
         if self._replay_critic:
-            for q_func in self._q_func._q_funcs:
-                assert task_id not in q_func._fcs.keys()
+            if self._clone_actor and self._replay_type == 'bc':
+                if task_id not in self._clone_policy._fcs.keys():
+                    for q_func in self._q_func._q_funcs:
+                        assert task_id not in q_func._fcs.keys()
+            else:
+                if task_id not in self._policy._fcs.keys():
+                    for q_func in self._q_func._q_funcs:
+                        assert task_id not in q_func._fcs.keys()
         if self._clone_actor:
             if task_id not in self._clone_policy._fcs.keys():
                 self._clone_policy._fcs[task_id] = deepcopy(nn.Linear(self._clone_policy._fc.weight.shape[1], self._clone_policy._fc.weight.shape[0], bias=self._clone_policy._fc.bias is not None).to(self.device).state_dict())
