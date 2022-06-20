@@ -1,12 +1,12 @@
 declare -a algo=('td3_plus_bc' 'cql' 'combo')
 declare -a short_algo=('t' 'c' 'm')
 declare -a replay_type=('bc' 'orl' 'ewc' 'gem' 'agem')
-declare -a experience=('model' 'coverage' 'random_episode' 'max_match_mean' 'max_reward_mean' 'max_model_mean' 'random_transition' 'max_match' 'max_reward' 'max_model')
-declare -a short_experience=('m__' 'r__' 'c__' 're_' 'mpm' 'mrm' 'mdm' 'rt_' 'mp_' 'mr_' 'md_')
+declare -a experience=('online' 'model' 'coverage' 'random_episode' 'max_match_mean' 'max_reward_mean' 'max_model_mean' 'random_transition' 'max_match' 'max_reward' 'max_model')
+declare -a short_experience=('onl' 'm__' 'r__' 'c__' 're_' 'mpm' 'mrm' 'mdm' 'rt_' 'mp_' 'mr_' 'md_')
 declare -a generate_type=('model')
 declare -a short_generate=('m')
-declare -a sample_type=('none')
-declare -a short_sample_type=('none')
+declare -a sample_type=('noise' 'none')
+declare -a short_sample_type=('ni' 'no')
 declare -a dataset=("ant_dir_medium" "ant_dir_random" "walker_dir_medium" "walker_dir_random" "cheetah_dir_medium" "cheetah_dir_random" "cheetah_vel_medium" "cheetah_vel_random") 
 declare -a short_dataset=("adm" "adr" "wdm" "wdr" "cdm" "cdr" "cvm" "cvr")
 declare -a task_nums=("5" "5" "5" "5" "2" "2" "5" "5")
@@ -33,13 +33,31 @@ do
                                                         for l in "${!generate_type[@]}"
                                                         do
                                                                 echo "
-                                                                        python ccql.py --algo ${algo[$b]} --env_path ${env_path[$a]} --inner_path ${inner_path[$a]} --task_nums ${task_nums[$a]} --experience_type ${experience[$i]} --sample_type ${sample_type[$k]} --replay_type ${replay_type[$n]} --dataset ${dataset[$a]} --max_save_num ${max_save_num[$m]} --replay_alpha ${replay_alpha[$j]} --generate_type ${generate_type[$l]} --generate_step 0 --read_policies -1 | tee output_${algo[$b]}_${replay_type[$n]}_${experience[$i]}_${generate_type[$l]}_0_${sample_type[$k]}_${dataset[$a]}_${replay_alpha[$j]}_${max_save_num[$m]}.txt
+                                                                        python ccql.py --algo ${algo[$b]} --env_path ${env_path[$a]} --inner_path ${inner_path[$a]} --task_nums ${task_nums[$a]} --experience_type ${experience[$i]} --sample_type ${sample_type[$k]} --replay_type ${replay_type[$n]} --dataset ${dataset[$a]} --max_save_num ${max_save_num[$m]} --replay_alpha ${replay_alpha[$j]} --generate_type ${generate_type[$l]} --generate_step 0 --read_policies -1 --clone_actor --gpu \$1 | tee output_${algo[$b]}_${replay_type[$n]}_${experience[$i]}_${generate_type[$l]}_0_${sample_type[$k]}_${dataset[$a]}_${replay_alpha[$j]}_${max_save_num[$m]}_clone.txt
+                                                                        " > "run_files/run_${algo[$b]}_${replay_type[$n]}_${experience[$i]}_${generate_type[$l]}_0_${sample_type[$k]}_${dataset[$a]}_${replay_alpha[$j]}_${max_save_num[$m]}_clone.sh"
+                                                                echo "
+                                                                        python ccql.py --algo ${algo[$b]} --env_path ${env_path[$a]} --inner_path ${inner_path[$a]} --task_nums ${task_nums[$a]} --experience_type ${experience[$i]} --sample_type ${sample_type[$k]} --replay_type ${replay_type[$n]} --dataset ${dataset[$a]} --max_save_num ${max_save_num[$m]} --replay_alpha ${replay_alpha[$j]} --generate_type ${generate_type[$l]} --generate_step 0 --read_policies -1 --gpu \$1 | tee output_${algo[$b]}_${replay_type[$n]}_${experience[$i]}_${generate_type[$l]}_0_${sample_type[$k]}_${dataset[$a]}_${replay_alpha[$j]}_${max_save_num[$m]}.txt
                                                                         " > "run_files/run_${algo[$b]}_${replay_type[$n]}_${experience[$i]}_${generate_type[$l]}_0_${sample_type[$k]}_${dataset[$a]}_${replay_alpha[$j]}_${max_save_num[$m]}.sh"
+                                                                echo "
+                                                                        python ccql.py --algo ${algo[$b]} --env_path ${env_path[$a]} --inner_path ${inner_path[$a]} --task_nums ${task_nums[$a]} --experience_type ${experience[$i]} --sample_type ${sample_type[$k]} --replay_type ${replay_type[$n]} --dataset ${dataset[$a]} --max_save_num ${max_save_num[$m]} --replay_alpha ${replay_alpha[$j]} --generate_type ${generate_type[$l]} --generate_step 0 --read_policies -1 --clone_actor --gpu \$1 --test | tee output_${algo[$b]}_${replay_type[$n]}_${experience[$i]}_${generate_type[$l]}_0_${sample_type[$k]}_${dataset[$a]}_${replay_alpha[$j]}_${max_save_num[$m]}_clone_test.txt
+                                                                        " > "run_files/run_${algo[$b]}_${replay_type[$n]}_${experience[$i]}_${generate_type[$l]}_0_${sample_type[$k]}_${dataset[$a]}_${replay_alpha[$j]}_${max_save_num[$m]}_clone_test.sh"
+                                                                echo "
+                                                                        python ccql.py --algo ${algo[$b]} --env_path ${env_path[$a]} --inner_path ${inner_path[$a]} --task_nums ${task_nums[$a]} --experience_type ${experience[$i]} --sample_type ${sample_type[$k]} --replay_type ${replay_type[$n]} --dataset ${dataset[$a]} --max_save_num ${max_save_num[$m]} --replay_alpha ${replay_alpha[$j]} --generate_type ${generate_type[$l]} --generate_step 0 --read_policies -1 --gpu \$1 --test | tee output_${algo[$b]}_${replay_type[$n]}_${experience[$i]}_${generate_type[$l]}_0_${sample_type[$k]}_${dataset[$a]}_${replay_alpha[$j]}_${max_save_num[$m]}_test.txt
+                                                                        " > "run_files/run_${algo[$b]}_${replay_type[$n]}_${experience[$i]}_${generate_type[$l]}_0_${sample_type[$k]}_${dataset[$a]}_${replay_alpha[$j]}_${max_save_num[$m]}_test.sh"
                                                         done
                                                 done
                                                 echo "
+                                                        python ccql.py --algo ${algo[$b]} --env_path ${env_path[$a]} --inner_path ${inner_path[$a]} --task_nums ${task_nums[$a]} --experience_type ${experience[$i]} --sample_type none --replay_type ${replay_type[$n]} --dataset ${dataset[$a]} --max_save_num ${max_save_num[$m]} --replay_alpha ${replay_alpha[$j]} --generate_type no --generate_step 0 --read_policies -1 --gpu \$1 --clone_actor | tee output_${algo[$b]}_${replay_type[$n]}_${experience[$i]}_no_0_none_${dataset[$a]}_${replay_alpha[$j]}_${max_save_num[$m]}_clone.txt
+                                                        " > "run_files/run_${algo[$b]}_${replay_type[$n]}_${experience[$i]}_no_0_none_${dataset[$a]}_${replay_alpha[$j]}_${max_save_num[$m]}_clone.sh"
+                                                echo "
                                                         python ccql.py --algo ${algo[$b]} --env_path ${env_path[$a]} --inner_path ${inner_path[$a]} --task_nums ${task_nums[$a]} --experience_type ${experience[$i]} --sample_type none --replay_type ${replay_type[$n]} --dataset ${dataset[$a]} --max_save_num ${max_save_num[$m]} --replay_alpha ${replay_alpha[$j]} --generate_type no --generate_step 0 --read_policies -1 --gpu \$1 | tee output_${algo[$b]}_${replay_type[$n]}_${experience[$i]}_no_0_none_${dataset[$a]}_${replay_alpha[$j]}_${max_save_num[$m]}.txt
                                                         " > "run_files/run_${algo[$b]}_${replay_type[$n]}_${experience[$i]}_no_0_none_${dataset[$a]}_${replay_alpha[$j]}_${max_save_num[$m]}.sh"
+                                                echo "
+                                                        python ccql.py --algo ${algo[$b]} --env_path ${env_path[$a]} --inner_path ${inner_path[$a]} --task_nums ${task_nums[$a]} --experience_type ${experience[$i]} --sample_type none --replay_type ${replay_type[$n]} --dataset ${dataset[$a]} --max_save_num ${max_save_num[$m]} --replay_alpha ${replay_alpha[$j]} --generate_type no --generate_step 0 --read_policies -1 --gpu \$1 --clone_actor --test | tee output_${algo[$b]}_${replay_type[$n]}_${experience[$i]}_no_0_none_${dataset[$a]}_${replay_alpha[$j]}_${max_save_num[$m]}_clone_test.txt
+                                                        " > "run_files/run_${algo[$b]}_${replay_type[$n]}_${experience[$i]}_no_0_none_${dataset[$a]}_${replay_alpha[$j]}_${max_save_num[$m]}_clone_test.sh"
+                                                echo "
+                                                        python ccql.py --algo ${algo[$b]} --env_path ${env_path[$a]} --inner_path ${inner_path[$a]} --task_nums ${task_nums[$a]} --experience_type ${experience[$i]} --sample_type none --replay_type ${replay_type[$n]} --dataset ${dataset[$a]} --max_save_num ${max_save_num[$m]} --replay_alpha ${replay_alpha[$j]} --generate_type no --generate_step 0 --read_policies -1 --gpu \$1 --test | tee output_${algo[$b]}_${replay_type[$n]}_${experience[$i]}_no_0_none_${dataset[$a]}_${replay_alpha[$j]}_${max_save_num[$m]}_test.txt
+                                                        " > "run_files/run_${algo[$b]}_${replay_type[$n]}_${experience[$i]}_no_0_none_${dataset[$a]}_${replay_alpha[$j]}_${max_save_num[$m]}_test.sh"
                                         done
                                 done
                         done

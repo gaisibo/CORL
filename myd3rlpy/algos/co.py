@@ -1133,6 +1133,7 @@ class CO():
                 start_indexes = orl_indexes
                 start_observations = observations[np.array(orl_indexes)].to(self._impl.device)
                 print('next_while')
+                print(f'start_indexes: {len(start_indexes)}')
                 export_step = 0
                 epoch_loss = defaultdict(list)
                 if 'retrain' in self._sample_type:
@@ -1148,7 +1149,6 @@ class CO():
                     if len(orl_indexes) >= max_save_num:
                         break
                     print(f'next_step: {export_step}')
-                    print(f"len(orl_indexes_all): {len(orl_indexes_all)}")
                     start_actions = self._impl._policy(start_observations)
                     if 'noise' in self._sample_type:
                         noise = 0.03 * max(1, (export_time / max_export_time)) * torch.randn(start_actions.shape, device=self._impl.device)
@@ -1156,19 +1156,21 @@ class CO():
 
                     if indexes_euclid is not None:
                         start_indexes = np.array(start_indexes)
-                        near_observations = observations[indexes_euclid[start_indexes]].to(self._impl.device)
-                        near_actions = actions[indexes_euclid[start_indexes]].to(self._impl.device)
+                        near_observations = observations[indexes_euclid[start_indexes + 1]].to(self._impl.device)
+                        near_actions = actions[indexes_euclid[start_indexes + 1]].to(self._impl.device)
                         near_variances = []
+                        near_next_observations_list = []
                         for i in range(near_observations.shape[0]):
                             near_next_observations, _, variances = self._impl._dynamic.predict_with_variance(near_observations[i, :, :real_observation_size], near_actions[i, :, :real_action_size])
-                            near_variances.append(torch.mean(variances))
-                            mean_near_next_observations = torch.mean(near_next_observations, dim=1).unsqueeze(dim=1).expand(1, near_next_observations.shape[1], 1)
+                            near_variances.append(torch.mean(variances).detach().cpu().item())
+                            mean_near_next_observations = torch.mean(near_next_observations, dim=1).unsqueeze(dim=1).expand(-1, near_next_observations.shape[1], -1)
                             _, diff_mean_near_next_observations_indices = torch.max(torch.mean(near_next_observations - mean_near_next_observations, dim=2), dim=1)
                             near_next_observations = torch.stack([near_next_observations[i][diff_mean_near_next_observations_indices[i]] for i in range(diff_mean_near_next_observations_indices.shape[0])])
-                        near_variances = torch.mean(torch.from_numpy(np.array(near_variances)).to(self._impl.device))
-                        near_next_observations = torch.stack(near_next_observations)
+                            near_next_observations_list.append(near_next_observations)
+                        near_variances = torch.mean(torch.from_numpy(np.array(near_variances)), dim=0).to(self._impl.device)
+                        near_next_observations = torch.stack(near_next_observations_list)
 
-                    if 'model' in with_generate:
+                    if 'model' in with_generate or 'model' in self._experience_type:
                         # mus, logstds = [], []
                         # for model in self._impl._dynamic._models:
                         #     mu, logstd = model.compute_stats(start_observation, start_action)
@@ -1211,6 +1213,10 @@ class CO():
                         if indexes_euclid is not None:
                             near_indexes, _ = similar_mb_euclid(start_next_observations, near_next_observations, topk=1)
                             near_indexes.squeeze_()
+                            if len(start_indexes) != 1:
+                                near_indexes = torch.LongTensor([indexes_euclid[start_indexes[i], near_indexes[i]] for i in range(start_indexes.shape[0])]).to(self._impl.device)
+                            else:
+                                near_indexes = indexes_euclid[start_indexes[0], near_indexes.item()].to(torch.int64).to(self._impl.device)
                             near_indexes += 1
                         else:
                             idx = 0
@@ -1219,7 +1225,7 @@ class CO():
                             near_indexes = []
                             near_distances = []
                             while batch_idx + eval_batch_size < observations.shape[0]:
-                                near_indexes_, near_distances_ = similar_mb_euclid(start_next_observations, near_next_observations_list[i].to(self._impl.device), topk=1)
+                                near_indexes_, near_distances_ = similar_mb_euclid(start_next_observations, near_next_observations_list[idx].to(self._impl.device), topk=1)
                                 near_indexes.append(near_indexes_)
                                 near_distances.append(near_distances_)
                                 batch_idx += eval_batch_size
@@ -1244,15 +1250,19 @@ class CO():
                             start_indexes.append(start_index)
                         else:
                             print(f'start_indexes {start_index} finish')
-                    start_indexes = list(set(start_indexes))
-                    for start_index in start_indexes:
+                    start_indexes_ = list(set(start_indexes))
+                    start_indexes = []
+                    for start_index in start_indexes_:
                         if start_index in orl_indexes_all:
                             new_index = orl_indexes_all.index(start_index)
                             orl_ns_all[new_index] += 1
+                            print(f'start_indexes {start_index} finish')
                         else:
                             orl_indexes_all.append(start_index)
                             orl_ns_all.append(1)
+                            start_indexes.append(start_index)
                     print(f'start_indexes: {len(start_indexes)}')
+                    print(f'len(orl_indexes_all): {len(orl_indexes_all)}')
                     if len(start_indexes) == 0:
                         break
                     start_observations = observations[start_indexes].to(self._impl.device)
@@ -1323,7 +1333,7 @@ class CO():
                 replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals)
                 return transitions, replay_dataset
             else:
-                replay_policy_actions = self._impl._policy(replay_observations.to(self._impl.device)).to('cpu')
+                replay_policy_actions = self._impl._policy(replay_observations.to(self._impl.device)).detach().to('cpu')
                 # replay_qs = self._impl._q_func(replay_observations.to(self._impl.device), replay_actions[:, :real_action_size].to(self._impl.device)).detach().to('cpu')
                 replay_qs = torch.zeros(replay_observations.shape[0])
                 if self._use_phi:
@@ -1592,7 +1602,7 @@ class CO():
                     replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals, replay_policy_actions, replay_qs)
                 return replay_dataset, replay_dataset
 
-    def generate_replay_data_online(self, env, max_save_num=1000, real_observation_size=1, real_action_size=1):
+    def generate_replay_data_online(self, env, test_id, test=False, max_save_num=1000, real_observation_size=1, real_action_size=1):
         replay_observations = []
         replay_actions = []
         replay_rewards = []
@@ -1600,64 +1610,69 @@ class CO():
         replay_terminals = []
         replay_policy_actions = []
         replay_qs = []
+        try:
+            env.reset_task(int(test_id))
+        except:
+            pass
         while len(replay_actions) < max_save_num:
             observation = env.reset()
-            observation = torch.from_numpy(observation).to(self._impl.device).unsqueeze(dim=1)
             replay_observations.append(observation)
-            print(f'observation: {observation.shape}')
+            observation = torch.from_numpy(observation).to(self._impl.device).unsqueeze(dim=0).to(torch.float32)
             episode_reward = 0.0
 
             i = 0
             while True:
                 # take action
                 action = self._impl._policy(observation)
-                replay_actions.append(actions)
-                action = action.cpu().detach().numpy()
+                action = action.squeeze().cpu().detach().numpy()
+                replay_actions.append(action)
 
                 observation, reward, done, pos = env.step(action)
-                observation = torch.from_numpy(observation).to(self._impl.device).unsqueeze(dim=1)
                 replay_next_observations.append(observation)
-                reward = torch.from_numpy(reward).to(self._impl.device).unsqueeze(dim=1)
                 replay_rewards.append(reward)
-                terminals = torch.from_numpy(done).to(self._impl.device).unsqueeze(dim=1)
-                replay_terminals.append(terminals)
+                replay_terminals.append(done)
 
                 if done:
                     break
                 if i > 1000:
                     break
                 replay_observations.append(observation)
+                observation = torch.from_numpy(observation).to(self._impl.device).unsqueeze(dim=0).to(torch.float32)
 
                 i += 1
+                if i >= 2 and test:
+                    break
         if self._replay_type == 'bc':
-            transitions = [Transition(real_observation_size, real_action_size, observation, action, reward, next_observation, terminal) for observation, action, reward, next_observation, terminal in zip(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals)]
+            transitions = [Transition((real_observation_size,), real_action_size, observation, action, reward, next_observation, terminal) for observation, action, reward, next_observation, terminal in zip(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals)]
         random_indexes = list(range(len(replay_actions)))
         random.shuffle(random_indexes)
         random_indexes = random_indexes[:max_save_num]
-        replay_observations = torch.cat(replay_observations, dim=0)[random_indexes]
-        replay_next_observations = torch.cat(replay_next_observations, dim=0)[random_indexes]
-        replay_actions = torch.cat(replay_actions, dim=0)[random_indexes]
-        replay_terminals = torch.cat(replay_terminals, dim=0)[random_indexes].detach().to('cpu')
-        replay_rewards = torch.cat(replay_rewards, dim=0)[random_indexes].detach().to('cpu')
-        replay_observations = replay_observations.detach().to('cpu')
-        replay_actions = replay_actions.detach().to('cpu')
+        replay_observations = torch.from_numpy(np.stack(replay_observations, axis=0)).to(self._impl.device).to(torch.float32)[random_indexes]
+        replay_next_observations = torch.from_numpy(np.stack(replay_next_observations, axis=0)).to(torch.float32)[random_indexes]
+        replay_actions = torch.from_numpy(np.stack(replay_actions, axis=0)).to(self._impl.device).to(torch.float32)[random_indexes]
+        replay_terminals = torch.from_numpy(np.array(replay_terminals)).to(torch.int32)[random_indexes]
+        replay_rewards = torch.from_numpy(np.array(replay_rewards)).to(torch.float32)[random_indexes]
         if self._replay_type != 'bc':
             transitions = [transitions[random_index] for random_index in random_indexes]
             replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals)
             return transitions, replay_dataset
         else:
             # online的情况下action就是由policy生成的。
-            replay_policy_actions = replay_actions
             replay_qs = self._impl._q_func(replay_observations, replay_actions).detach().to('cpu')
+            replay_policy_actions = replay_actions
             if self._use_phi:
-                replay_phis = self._impl._phi(replay_observations.to(self._impl.device), replay_actions[:, :real_action_size].to(self._impl.device)).detach().to('cpu')
-                replay_psis = self._impl._psi(replay_observations.to(self._impl.device)).detach().to('cpu')
+                replay_phis = self._impl._phi(replay_observations, replay_actions[:, :real_action_size]).detach().to('cpu')
+                replay_psis = self._impl._psi(replay_observations).detach().to('cpu')
+                replay_observations = replay_observations.detach().to('cpu')
+                replay_actions = replay_actions.detach().to('cpu')
                 replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals, replay_policy_actions, replay_qs, replay_phis, replay_psis)
             else:
+                replay_observations = replay_observations.detach().to('cpu')
+                replay_actions = replay_actions.detach().to('cpu')
                 replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals, replay_policy_actions, replay_qs)
             return replay_dataset, replay_dataset
 
-    def generate_replay(self, task_id, origin_datasets, envs, replay_type, experience_type, replay_datasets, save_datasets, max_save_num, real_action_size, real_observation_size, generate_type, indexes_euclid, distances_euclid, d_threshold, with_generate, test, model_path, algos_name, learned_tasks):
+    def generate_replay(self, task_id, origin_datasets, env, replay_type, experience_type, replay_datasets, save_datasets, max_save_num, real_action_size, real_observation_size, generate_type, indexes_euclid, distances_euclid, d_threshold, with_generate, test, model_path, algos_name, learned_tasks):
 
         if int(task_id) != len(origin_datasets.keys()) - 1:
             start_time = time.perf_counter()
@@ -1687,10 +1702,9 @@ class CO():
                 if not saved:
                     start_index = episode_num
                 replay_datasets[task_id], save_datasets[task_id] = self.generate_replay_data_trajectory(origin_datasets[task_id], episodes, start_index, max_save_num=max_save_num, random_save_num=0, real_observation_size=real_observation_size, real_action_size=real_action_size, with_generate=generate_type, test=test, indexes_euclid=indexes_euclid)
-                print(f"len(replay_datasets[task_id]): {len(replay_datasets[task_id])}")
             elif experience_type == 'online':
-                assert envs is not None
-                replay_datasets[task_id], save_datasets[task_id] = self.generate_replay_data_online(envs[task_id], max_save_num=max_save_num, real_observation_size=real_observation_size, real_action_size=real_action_size)
+                assert env is not None
+                replay_datasets[task_id], save_datasets[task_id] = self.generate_replay_data_online(env, task_id, test=test, max_save_num=max_save_num, real_observation_size=real_observation_size, real_action_size=real_action_size)
             else:
                 replay_datasets[task_id], save_datasets[task_id] = None, None
             print(f'Select Replay Buffer Time: {time.perf_counter() - start_time}')
@@ -1702,8 +1716,10 @@ class CO():
         for mean_scorer, mean_eval_episode in zip(mean_scorers, mean_eval_episodes):
             mean_qs.append(mean_scorer(self, mean_eval_episode))
         replay_qs = []
-        for n in learned_tasks:
-            replay_qs.append(q_replay_scorer(real_action_size=real_action_size, test_id=str(n))(self, save_datasets[n]))
+        for n in learned_tasks[:-1]:
+            if save_datasets[n] is not None:
+                replay_qs.append(q_replay_scorer(real_action_size=real_action_size, test_id=str(n))(self, save_datasets[n]))
+        replay_qs.append(0)
         no_replay_qs = [(mean_q * origin_dataset.observations.shape[0] - max_save_num * replay_q) / (origin_dataset.observations.shape[0] - max_save_num) for mean_q, origin_dataset, replay_q in zip(mean_qs, origin_datasets.values(), replay_qs)]
         for i, (mean_q, replay_q, no_replay_q) in enumerate(zip(mean_qs, replay_qs, no_replay_qs)):
             print(f'final test {i} mean_q: {mean_q}; replay_q: {replay_q}; no_replay_q : {no_replay_q}. ', end='')

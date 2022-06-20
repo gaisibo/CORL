@@ -192,7 +192,6 @@ class COTD3PlusBCImpl(COImpl, TD3PlusBCImpl):
                     model._min_logstds[task_id] = deepcopy(model._min_logstd)
         self._impl_id = task_id
     # self._using_id = task_id
-        print(f'add new id: {task_id}')
         if self._replay_critic:
             for q_func in self._q_func._q_funcs:
                 assert task_id not in q_func._fcs.keys()
@@ -225,7 +224,7 @@ class COTD3PlusBCImpl(COImpl, TD3PlusBCImpl):
                     model._max_logstds[task_id] = deepcopy(nn.Parameter(torch.empty(1, model._logstd.weight.shape[0], dtype=torch.float32).fill_(2.0).to(self.device)))
                     model._min_logstds[task_id] = deepcopy(nn.Parameter(torch.empty(1, model._logstd.weight.shape[0], dtype=torch.float32).fill_(-10.0).to(self.device)))
         if self._impl_id != task_id:
-            if self._clone_actor:
+            if self._clone_actor and self._replay_type == 'bc':
                 self._clone_policy._fcs[self._impl_id] = deepcopy(self._clone_policy._fc.state_dict())
                 self._clone_policy._fc.load_state_dict(self._clone_policy._fcs[task_id])
             else:

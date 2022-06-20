@@ -161,7 +161,7 @@ def td_error_scorer(real_action_size: int) -> Callable[..., Callable[...,float]]
 # 
 
 def evaluate_on_environment(
-    env: gym.Env, test_id: str, n_trials: int = 100, epsilon: float = 0.0, render: bool = False, mix: bool = False, add_on: bool = False,
+    env: gym.Env, test_id: str, clone_actor: bool = False, n_trials: int = 100, epsilon: float = 0.0, render: bool = False, mix: bool = False, add_on: bool = False,
 ) -> Callable[..., float]:
     """Returns scorer function of evaluation on environment.
     This function returns scorer function, which is suitable to the standard
@@ -208,6 +208,7 @@ def evaluate_on_environment(
             if mix:
                 observation = np.concatenate([observation, np.zeros([observation.shape[0], 6], dtype=np.float32)], axis=1)
                 observation = np.pad(observation, ((0, 0), (0, 6)), 'constant', constant_values=(0, 0))
+            observation = torch.from_numpy(observation).to(algo._impl.device).unsqueeze(dim=0).to(torch.float32)
             episode_reward = 0.0
 
             # frame stacking
@@ -221,16 +222,16 @@ def evaluate_on_environment(
                 if np.random.random() < epsilon:
                     action = env.action_space.sample()
                 else:
-                    if is_image:
-                        action = algo.predict([stacked_observation.eval()])[0]
+                    if clone_actor:
+                        action = algo._impl._clone_policy(observation)
+                        action = action.squeeze().cpu().detach().numpy()
                     else:
-                        action = algo.predict([observation])[0]
+                        action = algo._impl._policy(observation)
+                        action = action.squeeze().cpu().detach().numpy()
 
                 observation, reward, done, pos = env.step(action)
                 episode_reward += reward
-
-                if is_image:
-                    stacked_observation.append(observation)
+                observation = torch.from_numpy(observation).to(algo._impl.device).unsqueeze(dim=0).to(torch.float32)
 
                 if render:
                     env.render()

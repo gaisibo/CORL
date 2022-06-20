@@ -537,6 +537,8 @@ class COImpl():
                     replay_loss = replay_loss + replay_loss_
                     replay_losses.append(replay_loss_)
                 if self._replay_type in ['orl', 'ewc', 'r_walk', 'si'] or (not self._clone_actor and self._replay_type == 'bc'):
+                    print('backward')
+                    print(f'replay_batches: {replay_batches.keys()}')
                     time_replay_loss = self._replay_alpha * replay_loss / len(replay_batches)
                     self._actor_optim.zero_grad()
                     time_replay_loss.backward()
@@ -590,7 +592,7 @@ class COImpl():
             elif self._clone_actor and self._replay_type == 'bc':
                 with torch.no_grad():
                     observations = batch.observations.to(self.device)
-                    actions = self._policy(observations)
+                    actions = self._policy(observations).detach()
                 clone_actions = self._clone_policy(observations)
                 loss = torch.mean((actions - clone_actions) ** 2)
                 self._clone_actor_optim.zero_grad()

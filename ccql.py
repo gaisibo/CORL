@@ -89,8 +89,8 @@ def main(args, device):
     algos_name += '_' + str(args.seed)
     if args.add_name != '':
         algos_name += '_' + args.add_name
-    algos_name += '_' + 'singlehead' if args.single_head else 'multihead'
-    algos_name += '_' + 'clone' if args.clone_actor else 'noclone'
+    algos_name += '_singlehead' if args.single_head else '_multihead'
+    algos_name += '_clone' if args.clone_actor else '_noclone'
 
     pretrain_name = args.model_path
 
@@ -165,7 +165,10 @@ def main(args, device):
             )
             print(f'Training task {task_id} time: {time.perf_counter() - start_time}')
             co.save_model(args.model_path + algos_name + '_' + str(task_id) + '_no_clone.pt')
-            co.generate_replay(task_id, origin_datasets, envs, args.replay_type, args.experience_type, replay_datasets, save_datasets, args.max_save_num, real_action_size, real_observation_size, args.generate_type, indexes_euclids[task_id], distances_euclids[task_id], args.d_threshold, args.generate_type, args.test, args.model_path, algos_name, learned_tasks)
+            if env is not None:
+                co.generate_replay(task_id, origin_datasets, env, args.replay_type, args.experience_type, replay_datasets, save_datasets, args.max_save_num, real_action_size, real_observation_size, args.generate_type, indexes_euclids[task_id], distances_euclids[task_id], args.d_threshold, args.generate_type, args.test, args.model_path, algos_name, learned_tasks)
+            else:
+                co.generate_replay(task_id, origin_datasets, envs[task_id], args.replay_type, args.experience_type, replay_datasets, save_datasets, args.max_save_num, real_action_size, real_observation_size, args.generate_type, indexes_euclids[task_id], distances_euclids[task_id], args.d_threshold, args.generate_type, args.test, args.model_path, algos_name, learned_tasks)
             if args.test and int(task_id) >= 1:
                 break
     print('finish')
@@ -198,7 +201,7 @@ if __name__ == '__main__':
     parser.add_argument("--n_action_samples", default=4, type=int)
     parser.add_argument('--top_euclid', default=64, type=int)
     parser.add_argument('--replay_type', default='orl', type=str, choices=['orl', 'bc', 'ewc', 'gem', 'agem', 'r_walk', 'si'])
-    parser.add_argument('--experience_type', default='siamese', type=str, choices=['generate', 'model', 'coverage', 'random_transition', 'random_episode', 'max_reward', 'max_match', 'max_model', 'max_reward_end', 'max_reward_mean', 'max_match_end', 'max_match_mean', 'max_model_end', 'max_model_mean', 'min_reward', 'min_match', 'min_model', 'min_reward_end', 'min_reward_mean', 'min_match_end', 'min_match_mean', 'min_model_end', 'min_model_mean'])
+    parser.add_argument('--experience_type', default='siamese', type=str, choices=['online', 'generate', 'model', 'coverage', 'random_transition', 'random_episode', 'max_reward', 'max_match', 'max_model', 'max_reward_end', 'max_reward_mean', 'max_match_end', 'max_match_mean', 'max_model_end', 'max_model_mean', 'min_reward', 'min_match', 'min_model', 'min_reward_end', 'min_reward_mean', 'min_match_end', 'min_match_mean', 'min_model_end', 'min_model_mean'])
     parser.add_argument('--generate_type', default='none', type=str)
     parser.add_argument('--clone_actor', action='store_true')
     parser.add_argument('--sample_type', default='none', type=str, choices=['retrain_model', 'retrain_actor', 'noise', 'none'])
