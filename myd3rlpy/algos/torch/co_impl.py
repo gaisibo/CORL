@@ -537,8 +537,6 @@ class COImpl():
                     replay_loss = replay_loss + replay_loss_
                     replay_losses.append(replay_loss_)
                 if self._replay_type in ['orl', 'ewc', 'r_walk', 'si'] or (not self._clone_actor and self._replay_type == 'bc'):
-                    print('backward')
-                    print(f'replay_batches: {replay_batches.keys()}')
                     time_replay_loss = self._replay_alpha * replay_loss / len(replay_batches)
                     self._actor_optim.zero_grad()
                     time_replay_loss.backward()

@@ -1033,7 +1033,7 @@ class CO():
                     replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals, replay_policy_actions, replay_qs)
                 return replay_dataset, replay_dataset
 
-    def generate_replay_data_trajectory(self, dataset, episodes, start_index, max_save_num=1000, random_save_num=1000, max_export_time=1000, max_export_step=1000, real_action_size=1, real_observation_size=1, n_epochs=None, n_steps=500000,n_steps_per_epoch=5000, shuffle=True, with_generate='generate_model', test=False, indexes_euclid=None):
+    def generate_replay_data_trajectory(self, dataset, episodes, start_index, max_save_num=1000, random_save_num=1000, max_export_time=10, max_export_step=1000, real_action_size=1, real_observation_size=1, n_epochs=None, n_steps=500000,n_steps_per_epoch=5000, shuffle=True, with_generate='generate_model', test=False, indexes_euclid=None):
         assert self._impl is not None
         assert self._impl._policy is not None
         assert self._impl._q_func is not None
@@ -1098,7 +1098,7 @@ class CO():
             start += orl_len
         random.shuffle(orl_indexes_all)
         orl_ns_all = [0 for _ in orl_indexes_all]
-        orl_batch_size = max_save_num // max_export_step
+        orl_batch_size = 100
         orl_indexes_list = [orl_indexes_all[i:i+orl_batch_size] for i in range(0,len(orl_indexes_all) - 1,orl_batch_size)]
         orl_ns_list = [orl_ns_all[i:i+orl_batch_size] for i in range(0,len(orl_ns_all) - 1,orl_batch_size)]
 
@@ -1121,10 +1121,7 @@ class CO():
             near_variances = torch.mean(torch.cat(near_variances, dim=0))
 
         export_time = 0
-        # stop = False
         while len(orl_indexes_all) < max_save_num:
-            # if test and stop:
-            #     break
             for orl_indexes, orl_ns in zip(orl_indexes_list, orl_ns_list):
                 if len(orl_indexes_all) >= max_save_num:
                     break
@@ -1151,7 +1148,7 @@ class CO():
                     print(f'next_step: {export_step}')
                     start_actions = self._impl._policy(start_observations)
                     if 'noise' in self._sample_type:
-                        noise = 0.03 * max(1, (export_time / max_export_time)) * torch.randn(start_actions.shape, device=self._impl.device)
+                        noise = self._model_noise * max(1, (export_time / max_export_time)) * torch.randn(start_actions.shape, device=self._impl.device)
                         start_actions += noise
 
                     if indexes_euclid is not None:
@@ -1217,7 +1214,6 @@ class CO():
                                 near_indexes = torch.LongTensor([indexes_euclid[start_indexes[i], near_indexes[i]] for i in range(start_indexes.shape[0])]).to(self._impl.device)
                             else:
                                 near_indexes = indexes_euclid[start_indexes[0], near_indexes.item()].to(torch.int64).to(self._impl.device)
-                            near_indexes += 1
                         else:
                             idx = 0
                             batch_idx = 0
@@ -1234,9 +1230,8 @@ class CO():
                             near_distances = torch.cat(near_distances, dim=1)
                             near_distances, near_indexes_inner = torch.topk(near_distances, 1, largest=False, dim=1)
                             near_indexes = near_indexes.gather(1, near_indexes_inner).squeeze()
-                            near_indexes += 1
                         # 仅在dynamic model足够准确的情况下跳转，否则不动。
-                        start_next_indexes = torch.from_numpy(np.array(start_indexes).astype(np.int64)).to(self._impl.device) + 1
+                        start_next_indexes = torch.from_numpy(np.array(start_indexes).astype(np.int64)).to(self._impl.device)
                         near_indexes = torch.where(variances < near_variances, near_indexes, start_next_indexes)
                         # near_indexes = [near_index + 1 for near_index in near_indexes]
                     # elif 'siamese' in with_generate:
@@ -1247,7 +1242,7 @@ class CO():
                     start_indexes = []
                     for start_index in near_indexes:
                         if start_index not in terminals_stop:
-                            start_indexes.append(start_index)
+                            start_indexes.append(start_index + 1)
                         else:
                             print(f'start_indexes {start_index} finish')
                     start_indexes_ = list(set(start_indexes))
@@ -1257,6 +1252,8 @@ class CO():
                             new_index = orl_indexes_all.index(start_index)
                             orl_ns_all[new_index] += 1
                             print(f'start_indexes {start_index} finish')
+                            if self._sample_type != 'none' and export_time > 0:
+                                start_indexes.append(start_index)
                         else:
                             orl_indexes_all.append(start_index)
                             orl_ns_all.append(1)

@@ -229,7 +229,7 @@ class CO(CO, COMBO):
         orl_alpha = 1,
         replay_alpha = 1,
         retrain_model_alpha = 1,
-        select_time = 30,
+        select_time = 100,
 
         task_id = 0,
         single_head = True,
