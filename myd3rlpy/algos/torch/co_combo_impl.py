@@ -56,7 +56,7 @@ class COCOMBOImpl(COMBOImpl, COImpl):
         gamma: float,
         gem_alpha: float,
         agem_alpha: float,
-        ewc_r_walk_alpha: float,
+        ewc_rwalk_alpha: float,
         damping: float,
         epsilon: float,
         tau: float,
@@ -109,7 +109,7 @@ class COCOMBOImpl(COMBOImpl, COImpl):
 
         self._gem_alpha = gem_alpha
         self._agem_alpha = agem_alpha
-        self._ewc_r_walk_alpha = ewc_r_walk_alpha
+        self._ewc_rwalk_alpha = ewc_rwalk_alpha
         self._damping = damping
         self._epsilon = epsilon
 

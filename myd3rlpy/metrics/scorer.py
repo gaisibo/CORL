@@ -160,8 +160,122 @@ def td_error_scorer(real_action_size: int) -> Callable[..., Callable[...,float]]
 #     return id_scorer
 # 
 
+def match_on_environment(
+    env: gym.Env, replay_dataset, test_id: str, clone_actor: bool = False, n_trials: int = 100, epsilon: float = 0.0, render: bool = False, mix: bool = False, task_id_dim: int = 0,
+) -> Callable[..., float]:
+    """Returns scorer function of evaluation on environment.
+    This function returns scorer function, which is suitable to the standard
+    scikit-learn scorer function style.
+    The metrics of the scorer function is ideal metrics to evaluate the
+    resulted policies.
+    .. code-block:: python
+        import gym
+        from d3rlpy.algos import DQN
+        from d3rlpy.metrics.scorer import evaluate_on_environment
+        env = gym.make('CartPole-v0')
+        scorer = evaluate_on_environment(env)
+        cql = CQL()
+        mean_episode_return = scorer(cql)
+    Args:
+        env: gym-styled environment.
+        n_trials: the number of trials.
+        epsilon: noise factor for epsilon-greedy policy.
+        render: flag to render environment.
+    Returns:
+        scoerer function.
+    """
+
+    # for image observation
+    observation_shape = env.observation_space.shape
+    is_image = len(observation_shape) == 3
+
+    def scorer(algo: AlgoProtocol, *args: Any) -> float:
+        print(f"test_id: {test_id}")
+        try:
+            env.reset_task(int(test_id))
+        except:
+            pass
+        if is_image:
+            stacked_observation = StackedObservation(
+                observation_shape, algo.n_frames
+            )
+        save_id = algo._impl._impl_id
+        algo._impl.change_task(test_id)
+
+        trajectory_replay_observations = []
+        replay_observations = []
+        for observation, _, _, _, terminal, _, _ in replay_dataset:
+            replay_observations.append(observation)
+            if terminal == 1:
+                trajectory_replay_observations.append(replay_observations)
+                replay_observations = []
+
+        trajectory_observations = []
+
+        for _ in range(n_trials):
+            observation = env.reset()
+            if mix:
+                observation = np.concatenate([observation, np.zeros([observation.shape[0], 6], dtype=np.float32)], axis=1)
+                observation = np.pad(observation, ((0, 0), (0, 6)), 'constant', constant_values=(0, 0))
+            observation = torch.from_numpy(observation).to(algo._impl.device).unsqueeze(dim=0).to(torch.float32)
+            episode_reward = 0.0
+
+            # frame stacking
+            if is_image:
+                stacked_observation.clear()
+                stacked_observation.append(observation)
+
+            i = 0
+            observations = []
+            for _ in range(max([len(x) for x in trajectory_replay_observations])):
+                if task_id_dim != 0:
+                    task_id_tensor = torch.zeros(observation.shape[0], task_id_dim).to(observation.device).to(torch.float32)
+                    task_id_tensor[:, test_id] = 1
+                    observation = torch.cat([observation, task_id_tensor])
+                observations.append(observation)
+                # take action
+                if np.random.random() < epsilon:
+                    action = env.action_space.sample()
+                else:
+                    if clone_actor and int(save_id) != 0:
+                        action = algo._impl._clone_policy(observation)
+                        action = action.squeeze().cpu().detach().numpy()
+                    else:
+                        action = algo._impl._policy(observation)
+                        action = action.squeeze().cpu().detach().numpy()
+
+                observation, reward, done, pos = env.step(action)
+                episode_reward += reward
+                observation = torch.from_numpy(observation).to(algo._impl.device).unsqueeze(dim=0).to(torch.float32)
+
+                if render:
+                    env.render()
+
+                if done:
+                    break
+                if i > 1000:
+                    break
+
+                i += 1
+            trajectory_observations.append(observations.cpu())
+        algo._impl.change_task(save_id)
+
+        total_match = 0
+        for observations in trajectory_observations:
+            max_match = 0
+            for replay_observations in trajectory_replay_observations:
+                match = 0
+                for replay_observation, observation in zip(replay_observations, observations):
+                    match += torch.mean((replay_observation - observation) ** 2).item()
+                match /= min(len(replay_observations), len(observations))
+                max_match = max(max_match, match)
+            total_match += max_match
+        return total_match
+
+    return scorer
+
 def evaluate_on_environment(
-    env: gym.Env, test_id: str, clone_actor: bool = False, n_trials: int = 100, epsilon: float = 0.0, render: bool = False, mix: bool = False, add_on: bool = False,
+    env: gym.Env, test_id: str, clone_actor: bool = False, n_trials: int = 100, epsilon: float = 0.0, render: bool = False, mix: bool = False, add_on: bool = False, task_id_dim: int = 0,
 ) -> Callable[..., float]:
     """Returns scorer function of evaluation on environment.
     This function returns scorer function, which is suitable to the standard
@@ -218,11 +332,15 @@ def evaluate_on_environment(
 
             i = 0
             while True:
+                if task_id_dim != 0:
+                    task_id_tensor = torch.zeros(observation.shape[0], task_id_dim).to(observation.device).to(torch.float32)
+                    task_id_tensor[:, test_id] = 1
+                    observation = torch.cat([observation, task_id_tensor])
                 # take action
                 if np.random.random() < epsilon:
                     action = env.action_space.sample()
                 else:
-                    if clone_actor:
+                    if clone_actor and int(save_id) != 0:
                         action = algo._impl._clone_policy(observation)
                         action = action.squeeze().cpu().detach().numpy()
                     else:
@@ -276,17 +394,21 @@ def q_mean_scorer(real_action_size: int, test_id: str, batch_size: int = 1024) -
         with torch.no_grad():
             save_id = algo._impl._impl_id
             algo._impl.change_task(test_id)
-            qs = []
+            inner_qs = []
+            outer_qs = []
             dataloader = DataLoader(TensorDataset(torch.from_numpy(origin_dataset.observations), torch.from_numpy(origin_dataset.actions)), batch_size=batch_size, shuffle=False)
             for batch in dataloader:
                 observations, actions = batch
                 observations = observations.to(algo._impl.device)
                 actions = actions.to(algo._impl.device)[:, :real_action_size]
                 q = algo._impl._q_func.forward(observations, actions)
-                qs.append(q)
-            qs = torch.cat(qs, dim=0)
+                inner_qs.append(q)
+                q = algo._impl._q_func.forward(observations, algo._impl._policy(observations))
+                outer_qs.append(q)
+            inner_qs = torch.cat(inner_qs, dim=0)
+            outer_qs = torch.cat(outer_qs, dim=0)
             algo._impl.change_task(save_id)
-        return float(torch.mean(qs).detach().cpu().numpy())
+        return float(torch.mean(inner_qs).detach().cpu().numpy()), float(torch.mean(outer_qs).detach().cpu().numpy())
     return scorer
 
 def q_replay_scorer(real_action_size: int, test_id: str, batch_size: int = 1024) -> Callable[..., float]:
@@ -294,15 +416,19 @@ def q_replay_scorer(real_action_size: int, test_id: str, batch_size: int = 1024)
         with torch.no_grad():
             save_id = algo._impl._impl_id
             algo._impl.change_task(test_id)
-            qs = []
+            inner_qs = []
+            outer_qs = []
             dataloader = DataLoader(replay_dataset, batch_size=batch_size, shuffle=False)
             for batch in dataloader:
                 observations, actions = batch[:2]
                 observations = observations.to(algo._impl.device)
                 actions = actions.to(algo._impl.device)[:, :real_action_size]
                 q = algo._impl._q_func.forward(observations, actions)
-                qs.append(q)
-            qs = torch.cat(qs, dim=0)
+                inner_qs.append(q)
+                q = algo._impl._q_func.forward(observations, algo._impl._policy(observations))
+                outer_qs.append(q)
+            inner_qs = torch.cat(inner_qs, dim=0)
+            outer_qs = torch.cat(outer_qs, dim=0)
             algo._impl.change_task(save_id)
-        return float(torch.mean(qs).detach().cpu().numpy())
+        return float(torch.mean(inner_qs).detach().cpu().numpy()), float(torch.mean(outer_qs).detach().cpu().numpy())
     return scorer

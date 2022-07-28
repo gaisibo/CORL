@@ -72,7 +72,7 @@ class COImpl():
             )
         assert self._q_func is not None
         assert self._policy is not None
-        if self._replay_type in ['ewc', 'r_walk', 'si']:
+        if self._replay_type in ['ewc', 'rwalk', 'si']:
             if self._replay_critic:
                 # Store current parameters for the next task
                 self._critic_older_params = {n: p.clone().detach() for n, p in self._q_func.named_parameters() if p.requires_grad}
@@ -81,7 +81,7 @@ class COImpl():
             if self._use_model and self._replay_model:
                 # Store current parameters for the next task
                 self._model_older_params = {n: p.clone().detach() for n, p in self._dynamic.named_parameters() if p.requires_grad}
-            if self._replay_type in ['ewc', 'r_walk']:
+            if self._replay_type in ['ewc', 'rwalk']:
                 if self._replay_critic:
                     # Store fisher information weight importance
                     self._critic_fisher = {n: torch.zeros(p.shape).to(self.device) for n, p in self._q_func.named_parameters() if p.requires_grad}
@@ -90,7 +90,7 @@ class COImpl():
                 if self._use_model and self._replay_model:
                     # Store fisher information weight importance
                     self._model_fisher = {n: torch.zeros(p.shape).to(self.device) for n, p in self._dynamic.named_parameters() if p.requires_grad}
-                if self._replay_type == 'r_walk':
+                if self._replay_type == 'rwalk':
                     if self._replay_critic:
                         # Page 7: "task-specific parameter importance over the entire training trajectory."
                         self._critic_w = {n: torch.zeros(p.shape).to(self.device) for n, p in self._q_func.named_parameters() if p.requires_grad}
@@ -286,7 +286,7 @@ class COImpl():
                             replay_loss = replay_loss + torch.mean(self._critic_fisher[n] * (p - self._critic_older_params[n]).pow(2)) / 2
                     replay_losses.append(replay_loss_.cpu().detach().numpy())
                     replay_loss = replay_loss + replay_loss_
-                elif self._replay_type == 'r_walk':
+                elif self._replay_type == 'rwalk':
                     curr_feat_ext = {n: p.clone().detach() for n, p in self._q_func.named_parameters() if p.requires_grad}
                     # store gradients without regularization term
                     unreg_grads = {n: p.grad.clone().detach() for n, p in self._q_func.named_parameters()
@@ -329,7 +329,7 @@ class COImpl():
                     replay_losses.append(replay_cql_loss.cpu().detach().numpy())
                     replay_loss = replay_loss + replay_loss_
                     replay_losses.append(replay_loss_.cpu().detach().numpy())
-                if self._replay_type in ['orl', 'bc', 'ewc', 'r_walk', 'si']:
+                if self._replay_type in ['orl', 'bc', 'ewc', 'rwalk', 'si']:
                     time_replay_loss = self._replay_alpha * replay_loss / len(replay_batches)
                     self._critic_optim.zero_grad()
                     time_replay_loss.backward()
@@ -366,7 +366,7 @@ class COImpl():
         self._critic_optim.step()
 
         if replay_batches is not None and len(replay_batches) != 0:
-            if self._replay_type == 'r_walk':
+            if self._replay_type == 'rwalk':
                 assert unreg_grads is not None
                 assert curr_feat_ext is not None
                 with torch.no_grad():
@@ -380,32 +380,69 @@ class COImpl():
         return loss, replay_loss, replay_losses
 
     @train_api
-    def retrain_update_actor(self, batch: TorchMiniBatch) -> np.ndarray:
+    def replay_update_actor(self, batch_tran: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[torch.Tensor]]]=None) -> np.ndarray:
         assert self._q_func is not None
         assert self._policy is not None
         assert self._actor_optim is not None
+        batch = TorchMiniBatch(
+            batch_tran,
+            self.device,
+            scaler=self.scaler,
+            action_scaler=self.action_scaler,
+            reward_scaler=self.reward_scaler,
+        )
 
         # Q function should be inference mode for stability
-        with torch.enable_grad():
-            self.change_task(self._impl_id)
-            self._q_func.eval()
-            self._policy.train()
-            if self._use_phi:
-                self._phi.eval()
-                self._psi.eval()
-            if self._use_model:
-                self._dynamic.eval()
+        self._q_func.eval()
+        self._policy.train()
+        if self._use_phi:
+            self._phi.eval()
+            self._psi.eval()
+        if self._use_model:
+            self._dynamic.eval()
 
-            self._actor_optim.zero_grad()
+        unreg_grads = None
+        curr_feat_ext = None
+        loss = 0
+        replay_loss = 0
+        replay_losses = []
+        save_id = self._impl_id
+        if replay_batches is not None and len(replay_batches) != 0:
+            for i, replay_batch in replay_batches.items():
+                replay_loss = 0
+                replay_batch = [x.to(self.device) for x in replay_batch]
+                self.change_task(i)
+                replay_batch = dict(zip(replay_name[:-2], replay_batch))
+                replay_batch = Struct(**replay_batch)
 
-            loss = self.compute_actor_loss(batch)
+                with torch.no_grad():
+                    replay_observations = replay_batch.observations.to(self.device)
+                    replay_policy_actions = replay_batch.policy_actions.to(self.device)
+                actions = self._clone_policy(replay_observations)
+                replay_loss_ = torch.mean((replay_policy_actions - actions) ** 2)
+                replay_losses.append(replay_loss_.cpu().detach().numpy())
+                replay_loss = replay_loss + replay_loss_
+                time_replay_loss = self._replay_alpha * replay_loss / len(replay_batches)
+                self._clone_actor_optim.zero_grad()
+                time_replay_loss.backward()
+                self._clone_actor_optim.step()
+                replay_loss = replay_loss.cpu().detach().numpy()
 
-            loss.backward()
-            self._actor_optim.step()
+        clone_loss = 0
+        if replay_batches is not None and len(replay_batches) != 0:
+            with torch.no_grad():
+                observations = batch.observations.to(self.device)
+                actions = self._policy(observations).detach()
+            clone_actions = self._clone_policy(observations)
+            clone_loss = torch.mean((actions - clone_actions) ** 2)
+            self._clone_actor_optim.zero_grad()
+            clone_loss.backward()
+            self._clone_actor_optim.step()
+            clone_loss = clone_loss.cpu().detach().numpy()
 
-            loss = loss.cpu().detach().numpy()
+        loss = loss.cpu().detach().numpy()
 
-            return loss
+        return loss, replay_loss, clone_loss, replay_losses
 
     @train_api
     def begin_update_actor(self, batch_tran: TransitionMiniBatch) -> np.ndarray:
@@ -499,7 +536,7 @@ class COImpl():
                             replay_loss_ = torch.mean(self._actor_fisher[n] * (p - self._actor_older_params[n]).pow(2)) / 2
                     replay_losses.append(replay_loss_)
                     replay_loss = replay_loss + replay_loss_
-                elif self._replay_type == 'r_walk':
+                elif self._replay_type == 'rwalk':
                     curr_feat_ext = {n: p.clone().detach() for n, p in self._policy.named_parameters() if p.requires_grad}
                     # store gradients without regularization term
                     unreg_grads = {n: p.grad.clone().detach() for n, p in self._policy.named_parameters()
@@ -536,7 +573,7 @@ class COImpl():
                     replay_loss_ = self.compute_actor_loss(replay_batch) / len(replay_batches)
                     replay_loss = replay_loss + replay_loss_
                     replay_losses.append(replay_loss_)
-                if self._replay_type in ['orl', 'ewc', 'r_walk', 'si'] or (not self._clone_actor and self._replay_type == 'bc'):
+                if self._replay_type in ['orl', 'ewc', 'rwalk', 'si'] or (not self._clone_actor and self._replay_type == 'bc'):
                     time_replay_loss = self._replay_alpha * replay_loss / len(replay_batches)
                     self._actor_optim.zero_grad()
                     time_replay_loss.backward()
@@ -579,8 +616,9 @@ class COImpl():
 
         self._actor_optim.step()
 
+        clone_loss = 0
         if replay_batches is not None and len(replay_batches) != 0:
-            if self._replay_type == 'r_walk':
+            if self._replay_type == 'rwalk':
                 assert unreg_grads is not None
                 assert curr_feat_ext is not None
                 with torch.no_grad():
@@ -592,15 +630,15 @@ class COImpl():
                     observations = batch.observations.to(self.device)
                     actions = self._policy(observations).detach()
                 clone_actions = self._clone_policy(observations)
-                loss = torch.mean((actions - clone_actions) ** 2)
+                clone_loss = torch.mean((actions - clone_actions) ** 2)
                 self._clone_actor_optim.zero_grad()
-                loss.backward()
+                clone_loss.backward()
                 self._clone_actor_optim.step()
-
+                clone_loss = clone_loss.cpu().detach().numpy()
 
         loss = loss.cpu().detach().numpy()
 
-        return loss, replay_loss, replay_losses
+        return loss, replay_loss, clone_loss, replay_losses
 
     @train_api
     def begin_update_model(self, batch: TransitionMiniBatch):
@@ -770,7 +808,7 @@ class COImpl():
                             replay_loss_ = torch.sum(self._model_fisher[n] * (p - self._model_older_params[n]).pow(2)) / 2
                     replay_losses.append(replay_loss_)
                     replay_loss = replay_loss + replay_loss_
-                elif self._replay_type == 'r_walk':
+                elif self._replay_type == 'rwalk':
                     curr_feat_ext = {n: p.clone().detach() for n, p in self._dynamic.named_parameters() if p.requires_grad}
                     # store gradients without regularization term
                     unreg_grads = {n: p.grad.clone().detach() for n, p in self._dynamic.named_parameters()
@@ -823,7 +861,7 @@ class COImpl():
                     replay_loss_ = replay_loss_ / len(replay_batches)
                     replay_loss = replay_loss + replay_loss_
                     replay_losses.append(replay_loss_)
-                if self._replay_type in ['orl', 'bc', 'ewc', 'r_walk', 'si']:
+                if self._replay_type in ['orl', 'bc', 'ewc', 'rwalk', 'si']:
                     time_replay_loss = self._replay_alpha * replay_loss / len(replay_batches)
                     self._model_optim.zero_grad()
                     time_replay_loss.backward()
@@ -865,7 +903,7 @@ class COImpl():
         self._model_optim.step()
 
         if replay_batches is not None and len(replay_batches) != 0:
-            if self._replay_type == 'r_walk':
+            if self._replay_type == 'rwalk':
                 assert unreg_grads is not None
                 assert curr_feat_ext is not None
                 with torch.no_grad():
@@ -1043,7 +1081,7 @@ class COImpl():
         if self._use_model:
             self._model_grads_cs[self._impl_id] = torch.zeros(np.sum(self._model_grad_dims)).to(self.device)
 
-    def ewc_r_walk_post_train_process(self, iterator):
+    def ewc_rwalk_post_train_process(self, iterator):
         if self._replay_critic:
             # calculate Fisher information
             def update(batch):
@@ -1060,8 +1098,8 @@ class COImpl():
             curr_fisher = self.compute_fisher_matrix_diag(iterator, self._q_func, self._critic_optim, update)
             # merge fisher information, we do not want to keep fisher information for each task in memory
             for n in self._critic_fisher.keys():
-                # Added option to accumulate fisher over time with a pre-fixed growing self._ewc_r_walk_alpha
-                self._critic_fisher[n] = (self._ewc_r_walk_alpha * self._critic_fisher[n] + (1 - self._ewc_r_walk_alpha) * curr_fisher[n])
+                # Added option to accumulate fisher over time with a pre-fixed growing self._ewc_rwalk_alpha
+                self._critic_fisher[n] = (self._ewc_rwalk_alpha * self._critic_fisher[n] + (1 - self._ewc_rwalk_alpha) * curr_fisher[n])
 
         def update(batch):
             batch = TorchMiniBatch(
@@ -1077,8 +1115,8 @@ class COImpl():
         curr_fisher = self.compute_fisher_matrix_diag(iterator, self._policy, self._actor_optim, update)
         # merge fisher information, we do not want to keep fisher information for each task in memory
         for n in self._actor_fisher.keys():
-            # Added option to accumulate fisher over time with a pre-fixed growing self._ewc_r_walk_alpha
-            self._actor_fisher[n] = (self._ewc_r_walk_alpha * self._actor_fisher[n] + (1 - self._ewc_r_walk_alpha) * curr_fisher[n])
+            # Added option to accumulate fisher over time with a pre-fixed growing self._ewc_rwalk_alpha
+            self._actor_fisher[n] = (self._ewc_rwalk_alpha * self._actor_fisher[n] + (1 - self._ewc_rwalk_alpha) * curr_fisher[n])
 
         if self._use_model and self._replay_model:
             def update(batch):
@@ -1100,10 +1138,10 @@ class COImpl():
             curr_fisher = self.compute_fisher_matrix_diag(iterator, self._dynamic, self._model_optim, update)
             # merge fisher information, we do not want to keep fisher information for each task in memory
             for n in self._model_fisher.keys():
-                # Added option to accumulate fisher over time with a pre-fixed growing self._ewc_r_walk_alpha
-                self._model_fisher[n] = (self._ewc_r_walk_alpha * self._model_fisher[n] + (1 - self._ewc_r_walk_alpha) * curr_fisher[n])
+                # Added option to accumulate fisher over time with a pre-fixed growing self._ewc_rwalk_alpha
+                self._model_fisher[n] = (self._ewc_rwalk_alpha * self._model_fisher[n] + (1 - self._ewc_rwalk_alpha) * curr_fisher[n])
 
-        if self._replay_type == 'r_walk':
+        if self._replay_type == 'rwalk':
             if self._replay_critic:
                 # Page 7: Optimization Path-based Parameter Importance: importance scores computation
                 curr_score = {n: torch.zeros(p.shape).to(self.device) for n, p in self._q_func.named_parameters()

@@ -125,7 +125,7 @@ class AAImpl(CQLImpl):
         )
         assert self._q_func is not None
         assert self._policy is not None
-        if self._replay_type in ['ewc', 'r_walk']:
+        if self._replay_type in ['ewc', 'rwalk']:
             # Store fisher information weight importance
             self._critic_fisher = {n: torch.zeros(p.shape).to(self.device) for n, p in self._q_func.named_parameters() if p.requires_grad}
             # Store current parameters for the next task
@@ -134,7 +134,7 @@ class AAImpl(CQLImpl):
             self._actor_fisher = {n: torch.zeros(p.shape).to(self.device) for n, p in self._policy.named_parameters() if p.requires_grad}
             # Store current parameters for the next task
             self._actor_older_params = {n: p.clone().detach() for n, p in self._policy.named_parameters() if p.requires_grad}
-            if self._replay_type == 'r_walk':
+            if self._replay_type == 'rwalk':
                 # Page 7: "task-specific parameter importance over the entire training trajectory."
                 self._critic_w = {n: torch.zeros(p.shape).to(self.device) for n, p in self._q_func.named_parameters() if p.requires_grad}
                 self._critic_scores = {n: torch.zeros(p.shape).to(self.device) for n, p in self._q_func.named_parameters() if p.requires_grad}
@@ -244,7 +244,7 @@ class AAImpl(CQLImpl):
                 replay_loss = replay_loss_
                 replay_loss.backward()
                 store_grad(self._q_func.parameters, self._critic_grads_cs[i], self._critic_grad_dims)
-        elif replay_batches is not None and len(replay_batches) != 0 and self._replay_type == 'r_walk':
+        elif replay_batches is not None and len(replay_batches) != 0 and self._replay_type == 'rwalk':
             curr_feat_ext = {n: p.clone().detach() for n, p in self._q_func.named_parameters() if p.requires_grad}
 
         self._critic_optim.zero_grad()
@@ -285,7 +285,7 @@ class AAImpl(CQLImpl):
                     for n, p in self._q_func.named_parameters():
                         if n in self._critic_fisher.keys():
                             replay_loss += torch.sum(self._critic_fisher[n] * (p - self._critic_older_params[n]).pow(2)) / 2
-                elif self._replay_type == 'r_walk':
+                elif self._replay_type == 'rwalk':
                     # store gradients without regularization term
                     unreg_grads = {n: p.grad.clone().detach() for n, p in self._q_func.named_parameters()
                                    if p.grad is not None}
@@ -334,7 +334,7 @@ class AAImpl(CQLImpl):
         if step:
             self._critic_optim.step()
 
-        if self._replay_type == 'r_walk':
+        if self._replay_type == 'rwalk':
             assert unreg_grads is not None
             assert curr_feat_ext is not None
             with torch.no_grad():
@@ -422,7 +422,7 @@ class AAImpl(CQLImpl):
                 replay_loss = replay_loss_
                 replay_loss.backward()
                 store_grad(self._policy.parameters, self._actor_grads_cs[i], self._actor_grad_dims)
-        elif replay_batches is not None and len(replay_batches) != 0 and self._replay_type == 'r_walk':
+        elif replay_batches is not None and len(replay_batches) != 0 and self._replay_type == 'rwalk':
             curr_feat_ext = {n: p.clone().detach() for n, p in self._policy.named_parameters() if p.requires_grad}
 
         self._actor_optim.zero_grad()
@@ -457,7 +457,7 @@ class AAImpl(CQLImpl):
                     for n, p in self._q_func.named_parameters():
                         if n in self._critic_fisher.keys():
                             replay_loss += torch.sum(self._critic_fisher[n] * (p - self._critic_older_params[n]).pow(2)) / 2
-                elif self._replay_type == 'r_walk':
+                elif self._replay_type == 'rwalk':
                     # store gradients without regularization term
                     unreg_grads = {n: p.grad.clone().detach() for n, p in self._policy.named_parameters()
                                    if p.grad is not None}
@@ -515,7 +515,7 @@ class AAImpl(CQLImpl):
         if step:
             self._actor_optim.step()
 
-        if self._replay_type == 'r_walk':
+        if self._replay_type == 'rwalk':
             assert unreg_grads is not None
             assert curr_feat_ext is not None
             with torch.no_grad():

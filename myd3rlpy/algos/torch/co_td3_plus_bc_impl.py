@@ -54,7 +54,7 @@ class COTD3PlusBCImpl(COImpl, TD3PlusBCImpl):
         gamma: float,
         gem_alpha: float,
         agem_alpha: float,
-        ewc_r_walk_alpha: float,
+        ewc_rwalk_alpha: float,
         damping: float,
         epsilon: float,
         tau: float,
@@ -101,7 +101,7 @@ class COTD3PlusBCImpl(COImpl, TD3PlusBCImpl):
 
         self._gem_alpha = gem_alpha
         self._agem_alpha = agem_alpha
-        self._ewc_r_walk_alpha = ewc_r_walk_alpha
+        self._ewc_rwalk_alpha = ewc_rwalk_alpha
         self._damping = damping
         self._epsilon = epsilon
 
@@ -122,7 +122,6 @@ class COTD3PlusBCImpl(COImpl, TD3PlusBCImpl):
         self._model_n_ensembles = model_n_ensembles
         self._retrain_model_alpha = retrain_model_alpha
 
-        single_head = False
         self._single_head = single_head
         if single_head:
             self.change_task = self.change_task_singlehead
@@ -157,6 +156,7 @@ class COTD3PlusBCImpl(COImpl, TD3PlusBCImpl):
 
     def change_task_multihead(self, task_id):
         assert self._policy is not None
+        assert self._targ_policy is not None
         if self._impl_id is not None and self._impl_id == task_id:
             return
         if not self._clone_actor:
@@ -166,10 +166,13 @@ class COTD3PlusBCImpl(COImpl, TD3PlusBCImpl):
                 if self._replay_type == 'orl':
                     self._targ_policy._fcs = dict()
                     self._targ_policy._fcs[task_id] = deepcopy(self._targ_policy._fc.state_dict())
+                self._impl_id = task_id
         else:
+            # 第一个任务直接复制policy就行。
             if "_fcs" not in self._clone_policy.__dict__.keys():
                 self._clone_policy._fcs = dict()
-                self._clone_policy._fcs[task_id] = deepcopy(self._clone_policy._fc.state_dict())
+                self._clone_policy._fcs[task_id] = deepcopy(self._policy._fc.state_dict())
+                self._impl_id = task_id
         if self._replay_critic:
             if "_fcs" not in self._q_func._q_funcs[0].__dict__.keys():
                 for q_func in self._q_func._q_funcs:
@@ -190,11 +193,7 @@ class COTD3PlusBCImpl(COImpl, TD3PlusBCImpl):
                     model._max_logstds[task_id] = deepcopy(model._max_logstd)
                     model._min_logstds = dict()
                     model._min_logstds[task_id] = deepcopy(model._min_logstd)
-        self._impl_id = task_id
     # self._using_id = task_id
-        if self._replay_critic:
-            for q_func in self._q_func._q_funcs:
-                assert task_id not in q_func._fcs.keys()
         if self._clone_actor:
             if task_id not in self._clone_policy._fcs.keys():
                 self._clone_policy._fcs[task_id] = deepcopy(nn.Linear(self._clone_policy._fc.weight.shape[1], self._clone_policy._fc.weight.shape[0], bias=self._clone_policy._fc.bias is not None).to(self.device).state_dict())

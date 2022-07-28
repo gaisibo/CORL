@@ -187,7 +187,7 @@ class CO(CO, COMBO):
         gamma: float = 0.99,
         gem_alpha: float = 1,
         agem_alpha: float = 1,
-        ewc_r_walk_alpha: float = 0.5,
+        ewc_rwalk_alpha: float = 0.5,
         damping: float = 0.1,
         epsilon: float = 0.1,
         tau: float = 0.005,
@@ -276,7 +276,7 @@ class CO(CO, COMBO):
 
         self._gem_alpha = gem_alpha
         self._agem_alpha = agem_alpha
-        self._ewc_r_walk_alpha = ewc_r_walk_alpha
+        self._ewc_rwalk_alpha = ewc_rwalk_alpha
         self._damping = damping
         self._epsilon = epsilon
 
@@ -345,7 +345,7 @@ class CO(CO, COMBO):
             gamma=self._gamma,
             gem_alpha=self._gem_alpha,
             agem_alpha=self._agem_alpha,
-            ewc_r_walk_alpha=self._ewc_r_walk_alpha,
+            ewc_rwalk_alpha=self._ewc_rwalk_alpha,
             damping=self._damping,
             epsilon=self._epsilon,
             tau=self._tau,
@@ -425,9 +425,10 @@ class CO(CO, COMBO):
             metrics.update({"replay_critic_loss": replay_critic_loss})
 
         if self._grad_step % self._update_actor_interval == 0:
-            actor_loss, replay_actor_loss, _ = self._impl.update_actor(batch, replay_batches)
+            actor_loss, replay_actor_loss, replay_clone_loss, _ = self._impl.update_actor(batch, replay_batches)
             metrics.update({"actor_loss": actor_loss})
             metrics.update({"replay_actor_loss": replay_actor_loss})
+            metrics.update({"replay_clone_loss": replay_clone_loss})
             if self._temp_learning_rate > 0:
                 temp_loss, temp = self._impl.update_temp(batch)
                 metrics.update({"temp_loss": temp_loss, 'temp': temp})

@@ -19,17 +19,16 @@ from d3rlpy.dataset import MDPDataset
 from d3rlpy.torch_utility import get_state_dict, set_state_dict
 # from myd3rlpy.datasets import get_d4rl
 from utils.k_means import kmeans
-from myd3rlpy.metrics.scorer import bc_error_scorer, td_error_scorer, evaluate_on_environment, q_mean_scorer, q_replay_scorer
+from myd3rlpy.metrics.scorer import bc_error_scorer, td_error_scorer, evaluate_on_environment, match_on_environment, q_mean_scorer, q_replay_scorer
 from myd3rlpy.siamese_similar import similar_psi, similar_phi
 from myd3rlpy.dynamics.probabilistic_ensemble_dynamics import ProbabilisticEnsembleDynamics
 
 
 replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'terminals', 'means', 'std_logs', 'qs', 'phis', 'psis']
-# 暂时只练出来一个。
 def main(args, device):
     np.set_printoptions(precision=1, suppress=True)
     ask_indexes = False
-    if args.experience_type in ['model', 'coverage']:
+    if args.experience_type in ['model_prob', 'model_next', 'model_this', 'coverage']:
         ask_indexes = True
     if args.dataset in ['hopper_expert_v0', 'hopper_medium_v0', 'hopper_medium_expert_v0', 'hopper_medium_replay_v0', 'hopper_random_v0', 'halfcheetah_expert_v0', 'halfcheetah_medium_v0', 'halfcheetah_medium_expert_v0', 'halfcheetah_medium_replay_v0', 'halfcheetah_random_v0', 'walker2d_expert_v0', 'walker2d_medium_v0', 'walker2d_medium_expert_v0', 'walker2d_medium_replay_v0', 'walker2d_random_v0', 'mix_expert_v0', 'mix_medium_expert_v0', 'mix_medium_v0', 'mix_random_v0']:
         if args.dataset in ['hopper_expert_v0', 'hopper_medium_v0', 'hopper_medium_expert_v0', 'hopper_medium_replay_v0', 'hopper_random_v0']:
@@ -43,19 +42,31 @@ def main(args, device):
         else:
             raise NotImplementedError
         # task_datasets, origin_datasets, taskid_datasets, action_datasets, envs, real_action_size, real_observation_size, indexes_euclids, task_nums = split_gym(args.top_euclid, args.dataset.replace('_', '-'), device=device)
-        origin_datasets, indexes_euclids, distances_euclids, envs, real_action_size, real_observation_size, task_nums = split_gym(args.top_euclid, args.dataset.replace('_', '-'), device=device)
+        origin_datasets, taskid_datasets, indexes_euclids, distances_euclids, envs, real_action_size, real_observation_size, task_nums = split_gym(args.top_euclid, args.dataset.replace('_', '-'), device=device)
+        if args.single_head:
+            datasets = taskid_datasets
+        else:
+            datasets = origin_datasets
         env = None
-    elif args.dataset in ['ant_dir_expert', 'cheetah_dir_expert', 'walker_dir_expert', 'cheetah_vel_expert', 'ant_dir_medium', 'cheetah_dir_medium', 'walker_dir_medium', 'cheetah_vel_medium', 'ant_dir_random', 'cheetah_dir_random', 'walker_dir_random', 'cheetah_vel_random']:
+    elif args.dataset in ['ant_dir_expert', 'cheetah_dir_expert', 'walker_dir_expert', 'cheetah_vel_expert', 'ant_dir_medium', 'cheetah_dir_medium', 'walker_dir_medium', 'cheetah_vel_medium', 'ant_dir_random', 'cheetah_dir_random', 'walker_dir_random', 'cheetah_vel_random', 'ant_dir_medium_random', 'cheetah_dir_medium_random', 'walker_dir_medium_random', 'cheetah_vel_medium_random']:
         from dataset.split_macaw import split_macaw
         inner_paths = ['dataset/macaw/' + args.inner_path.replace('num', str(i)) for i in range(args.task_nums)]
         env_paths = ['dataset/macaw/' + args.env_path.replace('num', str(i)) for i in range(args.task_nums)]
-        origin_datasets, indexes_euclids, distances_euclids, env, real_action_size, real_observation_size = split_macaw(args.top_euclid, args.dataset, inner_paths, env_paths, ask_indexes=ask_indexes, device=device)
+        origin_datasets, taskid_datasets, indexes_euclids, distances_euclids, env, real_action_size, real_observation_size = split_macaw(args.top_euclid, args.dataset, inner_paths, env_paths, ask_indexes=ask_indexes, device=device)
+        if args.single_head:
+            datasets = taskid_datasets
+        else:
+            datasets = origin_datasets
         envs = None
     elif args.dataset in ['ant_umaze_random', 'ant_umaze_medium', 'ant_umaze_expert']:
         strs = args.dataset.split('_')
         if strs[1] == 'umaze':
             from dataset.split_antmaze import split_navigate_antmaze_umaze_v2
-            origin_datasets, indexes_euclids, distances_euclids, envs, real_action_size, real_observation_size, task_nums = split_navigate_antmaze_umaze_v2(args.top_euclid, device, strs[2])
+            origin_datasets, taskid_datasets, indexes_euclids, distances_euclids, envs, real_action_size, real_observation_size, task_nums = split_navigate_antmaze_umaze_v2(args.top_euclid, device, strs[2])
+            if args.single_head:
+                datasets = taskid_datasets
+            else:
+                datasets = origin_datasets
         else:
             raise NotImplementedError
         env = None
@@ -76,7 +87,7 @@ def main(args, device):
         use_phi = True
     else:
         use_phi = False
-    co = CO(use_gpu=not args.use_cpu, batch_size=args.batch_size, id_size=args.task_nums, replay_type=args.replay_type, experience_type=args.experience_type, sample_type=args.sample_type, reduce_replay=args.reduce_replay, use_phi=use_phi, use_model=args.use_model, replay_critic=args.replay_critic, replay_model=args.replay_model, replay_alpha=args.replay_alpha, generate_step=args.generate_step, model_noise=args.model_noise, retrain_time=args.retrain_time, orl_alpha=args.orl_alpha, single_head=args.single_head, clone_actor=args.clone_actor)
+    co = CO(use_gpu=not args.use_cpu, batch_size=args.batch_size, id_size=args.task_nums, replay_type=args.replay_type, experience_type=args.experience_type, sample_type=args.sample_type, reduce_replay=args.reduce_replay, use_phi=use_phi, use_model=args.use_model, replay_critic=args.replay_critic, replay_model=args.replay_model, replay_alpha=args.replay_alpha, generate_step=args.generate_step, model_noise=args.model_noise, retrain_time=args.retrain_time, orl_alpha=args.orl_alpha, single_head=args.single_head, clone_actor=args.clone_actor, clone_finish=args.clone_finish)
 
     experiment_name = "CO" + '_'
     algos_name = args.replay_type
@@ -91,6 +102,7 @@ def main(args, device):
         algos_name += '_' + args.add_name
     algos_name += '_singlehead' if args.single_head else '_multihead'
     algos_name += '_clone' if args.clone_actor else '_noclone'
+    algos_name += '_finish' if args.clone_finish else '_nofinish'
 
     pretrain_name = args.model_path
 
@@ -99,9 +111,11 @@ def main(args, device):
         save_datasets = dict()
         eval_datasets = dict()
         learned_tasks = []
-        for task_id, dataset in origin_datasets.items():
+        for task_id, dataset in datasets.items():
+            max_transition_len = max(list([len(episode.transitions) for episode in dataset.episodes]))
             if int(task_id) < args.read_policies:
                 replay_datasets[task_id] = torch.load(args.model_path + algos_name + '_' + str(task_id) + '_datasets.pt')
+                co._impl.change_task(int(task_id))
                 continue
             learned_tasks.append(task_id)
             task_id = str(task_id)
@@ -123,7 +137,7 @@ def main(args, device):
                 except BaseException as e:
                     print(f'Don\'t have pretrain_state_dict[{task_id}]')
                     raise e
-                if args.replay_type not in ['ewc', 'si', 'r_walk']:
+                if args.replay_type not in ['ewc', 'si', 'rwalk']:
                     for past_task_id in range(int(task_id)):
                         try:
                             replay_datasets[str(past_task_id)] = torch.load(f=args.model_path + algos_name + '_' + str(past_task_id) + '_datasets.pt')
@@ -136,9 +150,9 @@ def main(args, device):
             # train
             if not args.test:
                 if env is not None:
-                    scorers = dict(zip(['real_env' + str(n) for n in origin_datasets.keys()], [evaluate_on_environment(env, test_id=str(n), mix='mix' in args.dataset and n == '0', add_on=args.add_on) for n in learned_tasks]))
+                    scorers = dict(zip(['real_env' + str(n) for n in datasets.keys()], [evaluate_on_environment(env, test_id=str(n), mix='mix' in args.dataset and n == '0', add_on=args.add_on, clone_actor=args.clone_actor, task_id_dim=0 if not args.single_head else len(datasets.keys())) for n in learned_tasks]))
                 elif envs is not None:
-                    scorers = dict(zip(['real_env' + str(n) for n in origin_datasets.keys()], [evaluate_on_environment(envs[str(n)], test_id=str(n), mix='mix' in args.dataset and n == '0', add_on=args.add_on) for n in learned_tasks]))
+                    scorers = dict(zip(['real_env' + str(n) for n in datasets.keys()], [evaluate_on_environment(envs[str(n)], test_id=str(n), mix='mix' in args.dataset and n == '0', add_on=args.add_on, clone_actor=args.clone_actor) for n in learned_tasks]))
                 else:
                     raise NotImplementedError
             else:
@@ -149,7 +163,7 @@ def main(args, device):
                 replay_datasets,
                 real_action_size = real_action_size,
                 real_observation_size = real_observation_size,
-                eval_episodes=origin_datasets,
+                eval_episodes=datasets,
                 # n_epochs=args.n_epochs if not args.test else 1,
                 n_steps=args.n_steps,
                 n_steps_per_epoch=args.n_steps_per_epoch,
@@ -159,6 +173,7 @@ def main(args, device):
                 n_begin_steps_per_epoch=args.n_begin_steps_per_epoch,
                 dynamic_state_dict=dynamic_state_dict,
                 pretrain_state_dict=pretrain_state_dict,
+                pretrain_task_id=args.read_policies,
                 experiment_name=experiment_name + algos_name,
                 scorers = scorers,
                 test=args.test,
@@ -166,10 +181,68 @@ def main(args, device):
             print(f'Training task {task_id} time: {time.perf_counter() - start_time}')
             co.save_model(args.model_path + algos_name + '_' + str(task_id) + '_no_clone.pt')
             if env is not None:
-                co.generate_replay(task_id, origin_datasets, env, args.replay_type, args.experience_type, replay_datasets, save_datasets, args.max_save_num, real_action_size, real_observation_size, args.generate_type, indexes_euclids[task_id], distances_euclids[task_id], args.d_threshold, args.generate_type, args.test, args.model_path, algos_name, learned_tasks)
+                co.generate_replay(task_id, datasets, env, args.replay_type, args.experience_type, replay_datasets, save_datasets, args.max_save_num, max_transition_len, real_action_size, real_observation_size, args.generate_type, indexes_euclids[task_id], distances_euclids[task_id], args.d_threshold, args.generate_type, args.test, args.model_path, algos_name, learned_tasks)
             else:
-                co.generate_replay(task_id, origin_datasets, envs[task_id], args.replay_type, args.experience_type, replay_datasets, save_datasets, args.max_save_num, real_action_size, real_observation_size, args.generate_type, indexes_euclids[task_id], distances_euclids[task_id], args.d_threshold, args.generate_type, args.test, args.model_path, algos_name, learned_tasks)
-            if args.test and int(task_id) >= 1:
+                co.generate_replay(task_id, datasets, envs[task_id], args.replay_type, args.experience_type, replay_datasets, save_datasets, args.max_save_num, max_transition_len, real_action_size, real_observation_size, args.generate_type, indexes_euclids[task_id], distances_euclids[task_id], args.d_threshold, args.generate_type, args.test, args.model_path, algos_name, learned_tasks)
+            if args.test and int(task_id) >= 2:
+                break
+    else:
+        replay_datasets = dict()
+        learned_tasks = []
+        for task_id, dataset in datasets.items():
+            draw_path = args.model_path + algos_name + '_trajectories_' + str(task_id)
+            dynamic_path = args.model_path + args.dataset + '_' + str(task_id) + '_dynamic.pt'
+            try:
+                dynamic_state_dict = torch.load(dynamic_path, map_location=device)
+            except:
+                raise NotImplementedError
+            pretrain_path = args.model_path + args.algos + '_' + args.dataset + '_' + str(task_id) + '.pt'
+            try:
+                pretrain_state_dict = torch.load(pretrain_path, map_location=device)
+            except BaseException as e:
+                print(f'Don\'t have pretrain_state_dict[{task_id}]')
+                raise e
+            if args.replay_type not in ['ewc', 'si', 'rwalk']:
+                for past_task_id in range(int(task_id)):
+                    try:
+                        replay_datasets[str(past_task_id)] = torch.load(f=args.model_path + algos_name + '_' + str(past_task_id) + '_datasets.pt')
+                    except BaseException as e:
+                        print(f'Don\' have replay_datasets[{past_task_id}]')
+                        raise e
+            logger = co._prepare_logger(True, experiment_name, True, "d3rply_logs", True, None,)
+
+            # eval
+            if not args.test:
+                if env is not None:
+                    scorers = dict(zip(['real_env' + str(n) for n in datasets.keys()], [evaluate_on_environment(env, test_id=str(n), mix='mix' in args.dataset and n == '0', add_on=args.add_on, clone_actor=args.clone_actor, task_id_dim=0 if not args.single_head else len(datasets.keys())) for n in learned_tasks]))
+                elif envs is not None:
+                    scorers = dict(zip(['real_env' + str(n) for n in datasets.keys()], [evaluate_on_environment(envs[str(n)], test_id=str(n), mix='mix' in args.dataset and n == '0', add_on=args.add_on, clone_actor=args.clone_actor) for n in learned_tasks]))
+                else:
+                    raise NotImplementedError
+            else:
+                scorers = None
+            # setup logger
+            eval_episodes = datasets
+            if scorers and eval_episodes:
+                co._evaluate(eval_episodes, scorers, logger)
+            print(f'Evaling task {task_id} time: {time.perf_counter() - start_time}')
+
+            # eval
+            if not args.test:
+                if env is not None:
+                    scorers = {'match_env' + str(task_id): match_on_environment(env, replay_datasets[task_id], test_id=str(task_id), mix='mix' in args.dataset and task_id == '0', clone_actor=args.clone_actor, task_id_dim=0 if not args.single_head else len(datasets.keys()))}
+                elif envs is not None:
+                    scorers = {'match_env' + str(task_id): match_on_environment(envs[task_id], replay_datasets[task_id], test_id=str(task_id), mix='mix' in args.dataset and task_id == '0', clone_actor=args.clone_actor, task_id_dim=0 if not args.single_head else len(datasets.keys()))}
+                else:
+                    raise NotImplementedError
+            else:
+                scorers = None
+            # setup logger
+            eval_episodes = datasets
+            if scorers and eval_episodes:
+                co._evaluate(eval_episodes, scorers, logger)
+            print(f'Evaling task {task_id} time: {time.perf_counter() - start_time}')
+            if args.test and int(task_id) >= 2:
                 break
     print('finish')
 
@@ -200,10 +273,11 @@ if __name__ == '__main__':
     parser.add_argument("--n_begin_steps_per_epoch", default=5000, type=int)
     parser.add_argument("--n_action_samples", default=4, type=int)
     parser.add_argument('--top_euclid', default=64, type=int)
-    parser.add_argument('--replay_type', default='orl', type=str, choices=['orl', 'bc', 'ewc', 'gem', 'agem', 'r_walk', 'si'])
-    parser.add_argument('--experience_type', default='siamese', type=str, choices=['online', 'generate', 'model', 'coverage', 'random_transition', 'random_episode', 'max_reward', 'max_match', 'max_model', 'max_reward_end', 'max_reward_mean', 'max_match_end', 'max_match_mean', 'max_model_end', 'max_model_mean', 'min_reward', 'min_match', 'min_model', 'min_reward_end', 'min_reward_mean', 'min_match_end', 'min_match_mean', 'min_model_end', 'min_model_mean'])
+    parser.add_argument('--replay_type', default='orl', type=str, choices=['orl', 'bc', 'ewc', 'gem', 'agem', 'rwalk', 'si'])
+    parser.add_argument('--experience_type', default='siamese', type=str, choices=['all', 'none', 'online', 'generate', 'model_prob', 'model_next', 'model', 'model_this', 'coverage', 'random_transition', 'random_episode', 'max_reward', 'max_match', 'max_supervise', 'max_model', 'max_reward_end', 'max_reward_mean', 'max_match_end', 'max_match_mean', 'max_supervise_end', 'max_supervise_mean', 'max_model_end', 'max_model_mean', 'min_reward', 'min_match', 'min_supervise', 'min_model', 'min_reward_end', 'min_reward_mean', 'min_match_end', 'min_match_mean', 'min_supervise_end', 'min_supervise_mean', 'min_model_end', 'min_model_mean'])
     parser.add_argument('--generate_type', default='none', type=str)
     parser.add_argument('--clone_actor', action='store_true')
+    parser.add_argument('--clone_finish', action='store_true')
     parser.add_argument('--sample_type', default='none', type=str, choices=['retrain_model', 'retrain_actor', 'noise', 'none'])
     parser.add_argument('--use_model', action='store_true')
     parser.add_argument('--reduce_replay', default='retrain', type=str, choices=['retrain', 'no_retrain'])
@@ -228,6 +302,8 @@ if __name__ == '__main__':
     if not os.path.exists(args.model_path):
         os.makedirs(args.model_path)
     args.model_path += '/model_'
+    if args.experience_type == 'model':
+        args.experience_type = 'model_next'
     if 'model' in args.experience_type or args.experience_type == 'generate' or args.generate_type in ['generate', 'model', 'model_generate']:
         args.use_model = True
     args.use_model = True
@@ -237,6 +313,9 @@ if __name__ == '__main__':
         args.add_on = False
     else:
         args.add_on = True
+    if args.single_head:
+        args.clone_actor = False
+        args.clone_finish = False
 
     global DATASET_PATH
     DATASET_PATH = './.d4rl/datasets/'

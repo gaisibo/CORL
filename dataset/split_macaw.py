@@ -26,7 +26,7 @@ from mygym.envs.halfcheetah_wind import HalfCheetahWindEnv
 from mygym.envs.envs import HalfCheetahDirEnv, HalfCheetahVelEnv, AntDirEnv, AntGoalEnv, HumanoidDirEnv, WalkerRandParamsWrappedEnv, ML45Env
 
 
-def get_dataset(h5path):
+def get_dataset(h5path, expert=False, env=None):
     data_dict = {}
     with h5py.File(h5path, 'r') as dataset_file:
         for k in tqdm(get_keys(dataset_file), desc="load datafile"):
@@ -36,8 +36,6 @@ def get_dataset(h5path):
                 data_dict[k] = dataset_file[k][()]
 
     # Run a few quick sanity checks
-    if 'obs' in data_dict.keys():
-        data_dict['observations'] = data_dict['obs']
     for key in ['observations', 'actions', 'rewards', 'terminals']:
         assert key in data_dict, 'Dataset is missing key %s' % key
     N_samples = data_dict['observations'].shape[0]
@@ -82,15 +80,15 @@ def split_macaw(top_euclid, dataset_name, inner_paths, envs, include_goal=False,
             task_info = pickle.load(f)
             assert len(task_info) == 1, f'Unexpected task info: {task_info}'
             tasks.append(task_info[0])
-    if dataset_name in ['ant_dir_expert', 'ant_dir_medium', 'ant_dir_random']:
+    if dataset_name in ['ant_dir_expert', 'ant_dir_medium', 'ant_dir_random', 'ant_dir_medium_random']:
         env = AntDirEnv(tasks, len(envs), include_goal = include_goal or multitask)
-    elif dataset_name in ['cheetah_dir_expert', 'cheetah_dir_medium', 'cheetah_dir_random']:
+    elif dataset_name in ['cheetah_dir_expert', 'cheetah_dir_medium', 'cheetah_dir_random', 'cheetah_dir_medium_random']:
         env = HalfCheetahDirEnv(tasks, include_goal = include_goal or multitask)
-    elif dataset_name in ['cheetah_vel_expert', 'cheetah_vel_medium', 'cheetah_vel_random']:
+    elif dataset_name in ['cheetah_vel_expert', 'cheetah_vel_medium', 'cheetah_vel_random', 'cheetah_vel_medium_random']:
         print(inner_paths)
         print(envs)
         env = HalfCheetahVelEnv(tasks, include_goal = include_goal or multitask, one_hot_goal=one_hot_goal or multitask)
-    elif dataset_name in ['walker_dir_expert', 'walker_dir_medium', 'walker_dir_random']:
+    elif dataset_name in ['walker_dir_expert', 'walker_dir_medium', 'walker_dir_random', 'walker_dir_medium_random']:
         env = WalkerRandParamsWrappedEnv(tasks, len(envs), include_goal = include_goal or multitask)
     else:
         raise RuntimeError(f'Invalid env name {dataset_name}')
@@ -165,11 +163,11 @@ def split_gym(top_euclid, dataset_name, task_datasets, env, compare_dim=3, ask_i
             distances_euclids[dataset_num] = None
         observations = dataset.observations
         real_action_size = dataset.actions.shape[1]
-        # task_id_numpy = np.eye(task_nums)[int(dataset_num)].squeeze()
-        # task_id_numpy = np.broadcast_to(task_id_numpy, (dataset.observations.shape[0], task_nums))
+        task_id_numpy = np.eye(task_nums)[int(dataset_num)].squeeze()
+        task_id_numpy = np.broadcast_to(task_id_numpy, (dataset.observations.shape[0], task_nums))
         real_observation_size = dataset.observations.shape[1]
         # 用action保存一下indexes_euclid，用state保存一下task_id
-        # taskid_task_datasets[dataset_num] = MDPDataset(np.concatenate([observations, task_id_numpy], axis=1), dataset.actions, dataset.rewards, dataset.terminals, dataset.episode_terminals)
+        taskid_task_datasets[dataset_num] = MDPDataset(np.concatenate([observations, task_id_numpy], axis=1), dataset.actions, dataset.rewards, dataset.terminals, dataset.episode_terminals)
         # action_task_datasets[dataset_num] = MDPDataset(dataset.observations, np.concatenate([dataset.actions, indexes_euclid], axis=1), dataset.rewards, dataset.terminals, dataset.episode_terminals)
         origin_task_datasets[dataset_num] = MDPDataset(observations, dataset.actions, dataset.rewards, dataset.terminals, dataset.episode_terminals)
         # changed_task_datasets[dataset_num] = MDPDataset(np.concatenate([dataset.observations, task_id_numpy], axis=1), np.concatenate([dataset.actions, indexes_euclid], axis=1), dataset.rewards, dataset.terminals, dataset.episode_terminals)
@@ -185,4 +183,4 @@ def split_gym(top_euclid, dataset_name, task_datasets, env, compare_dim=3, ask_i
     # indexes_euclids = {'0': indexes_euclids['0'], '3': indexes_euclids['3'], '2': indexes_euclids['2'], '1': indexes_euclids['1']}
 
     # return changed_task_datasets, origin_task_datasets, taskid_task_datasets, action_task_datasets, envs, [None for _ in range(task_nums)], nearest_indexes, real_action_size, real_observation_size, indexes_euclids, task_nums
-    return origin_task_datasets, indexes_euclids, distances_euclids, env, real_action_size, real_observation_size
+    return origin_task_datasets, taskid_task_datasets, indexes_euclids, distances_euclids, env, real_action_size, real_observation_size

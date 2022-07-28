@@ -161,9 +161,9 @@ class CO(CO, CQL):
         self,
         *,
         actor_learning_rate: float = 1e-4,
-        critic_learning_rate: float = 3e-4,
+        critic_learning_rate: float = 1e-4,
         temp_learning_rate: float = 1e-4,
-        alpha_learning_rate: float = 1e-4,
+        alpha_learning_rate: float = 0,
         phi_learning_rate: float = 1e-4,
         psi_learning_rate: float = 1e-4,
         model_learning_rate: float = 1e-4,
@@ -189,7 +189,7 @@ class CO(CO, CQL):
         gamma: float = 0.99,
         gem_alpha: float = 1,
         agem_alpha: float = 1,
-        ewc_r_walk_alpha: float = 0.5,
+        ewc_rwalk_alpha: float = 0.5,
         damping: float = 0.1,
         epsilon: float = 0.1,
         tau: float = 0.005,
@@ -215,11 +215,12 @@ class CO(CO, CQL):
         reduce_replay = 'retrain',
         use_phi = False,
         use_model = False,
+        clone_actor = True,
+        clone_finish = True,
         replay_critic = False,
         replay_model = False,
-        clone_actor = True,
         generate_step = 100,
-        model_noise = 0,
+        model_noise = 0.3,
         retrain_time = 1,
         orl_alpha = 1,
         replay_alpha = 1,
@@ -227,7 +228,7 @@ class CO(CO, CQL):
         select_time = 100,
 
         task_id = 0,
-        single_head = True,
+        single_head = False,
         **kwargs: Any
     ):
         super().__init__(
@@ -265,7 +266,7 @@ class CO(CO, CQL):
 
         self._gem_alpha = gem_alpha
         self._agem_alpha = agem_alpha
-        self._ewc_r_walk_alpha = ewc_r_walk_alpha
+        self._ewc_rwalk_alpha = ewc_rwalk_alpha
         self._damping = damping
         self._epsilon = epsilon
 
@@ -289,6 +290,7 @@ class CO(CO, CQL):
 
         self._begin_grad_step = 0
 
+        self._dynamics = None
         self._model_learning_rate = model_learning_rate
         self._model_optim_factory = model_optim_factory
         self._model_encoder_factory = model_encoder_factory
@@ -297,6 +299,7 @@ class CO(CO, CQL):
         self._use_phi = use_phi
         self._use_model = use_model
         self._clone_actor = clone_actor
+        self._clone_finish = clone_finish
         self._replay_critic = replay_critic
         self._replay_model = replay_model
         self._generate_step = generate_step
@@ -336,7 +339,7 @@ class CO(CO, CQL):
             gamma=self._gamma,
             gem_alpha=self._gem_alpha,
             agem_alpha=self._agem_alpha,
-            ewc_r_walk_alpha=self._ewc_r_walk_alpha,
+            ewc_rwalk_alpha=self._ewc_rwalk_alpha,
             damping=self._damping,
             epsilon=self._epsilon,
             tau=self._tau,
@@ -359,7 +362,6 @@ class CO(CO, CQL):
             replay_model=self._replay_model,
             replay_alpha=self._replay_alpha,
             retrain_model_alpha=self._retrain_model_alpha,
-            # single_head 在impl里面被强制设为False了。
             single_head=self._single_head,
         )
         self._impl.build(task_id)
@@ -422,9 +424,10 @@ class CO(CO, CQL):
             metrics.update({"critic_loss": critic_loss})
             metrics.update({"replay_critic_loss": replay_critic_loss})
 
-        actor_loss, replay_actor_loss, _ = self._impl.update_actor(batch, replay_batches)
+        actor_loss, replay_actor_loss, replay_clone_loss, _ = self._impl.update_actor(batch, replay_batches)
         metrics.update({"actor_loss": actor_loss})
         metrics.update({"replay_actor_loss": replay_actor_loss})
+        metrics.update({"replay_clone_loss": replay_clone_loss})
 
         self._impl.update_critic_target()
         self._impl.update_actor_target()

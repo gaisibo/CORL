@@ -33,6 +33,7 @@ from d3rlpy.gpu import Device
 from d3rlpy.models.optimizers import AdamFactory, OptimizerFactory
 from d3rlpy.models.q_functions import QFunctionFactory
 from d3rlpy.algos.base import AlgoBase
+from d3rlpy.algos.td3_plus_bc import TD3PlusBC
 from d3rlpy.constants import (
     CONTINUOUS_ACTION_SPACE_MISMATCH_ERROR,
     DISCRETE_ACTION_SPACE_MISMATCH_ERROR,
@@ -41,7 +42,6 @@ from d3rlpy.constants import (
     ActionSpace,
 )
 from d3rlpy.base import LearnableBase
-from d3rlpy.algos.td3_plus_bc import TD3PlusBC
 from d3rlpy.iterators import TransitionIterator
 from d3rlpy.models.encoders import EncoderFactory
 from d3rlpy.metrics.scorer import dynamics_observation_prediction_error_scorer, dynamics_reward_prediction_error_scorer, dynamics_prediction_variance_scorer
@@ -185,7 +185,7 @@ class CO(CO, TD3PlusBC):
         gamma: float = 0.99,
         gem_alpha: float = 1,
         agem_alpha: float = 1,
-        ewc_r_walk_alpha: float = 0.5,
+        ewc_rwalk_alpha: float = 0.5,
         damping: float = 0.1,
         epsilon: float = 0.1,
         tau: float = 0.005,
@@ -210,6 +210,7 @@ class CO(CO, TD3PlusBC):
         use_phi = False,
         use_model = False,
         clone_actor = True,
+        clone_finish = True,
         replay_critic = False,
         replay_model = False,
         generate_step = 100,
@@ -221,7 +222,7 @@ class CO(CO, TD3PlusBC):
         select_time = 100,
 
         task_id = 0,
-        single_head = True,
+        single_head = False,
         **kwargs: Any
     ):
         super().__init__(
@@ -254,7 +255,7 @@ class CO(CO, TD3PlusBC):
 
         self._gem_alpha = gem_alpha
         self._agem_alpha = agem_alpha
-        self._ewc_r_walk_alpha = ewc_r_walk_alpha
+        self._ewc_rwalk_alpha = ewc_rwalk_alpha
         self._damping = damping
         self._epsilon = epsilon
 
@@ -287,6 +288,7 @@ class CO(CO, TD3PlusBC):
         self._use_phi = use_phi
         self._use_model = use_model
         self._clone_actor = clone_actor
+        self._clone_finish = clone_finish
         self._replay_critic = replay_critic
         self._replay_model = replay_model
         self._generate_step = generate_step
@@ -322,7 +324,7 @@ class CO(CO, TD3PlusBC):
             gamma=self._gamma,
             gem_alpha=self._gem_alpha,
             agem_alpha=self._agem_alpha,
-            ewc_r_walk_alpha=self._ewc_r_walk_alpha,
+            ewc_rwalk_alpha=self._ewc_rwalk_alpha,
             damping=self._damping,
             epsilon=self._epsilon,
             tau=self._tau,
@@ -342,7 +344,6 @@ class CO(CO, TD3PlusBC):
             replay_model=self._replay_model,
             replay_alpha=self._replay_alpha,
             retrain_model_alpha=self._retrain_model_alpha,
-            # single_head 在impl里面被强制设为False了。
             single_head=self._single_head,
         )
         self._impl.build(task_id)
@@ -386,11 +387,23 @@ class CO(CO, TD3PlusBC):
         self._grad_step += 1
         return loss
 
-    # 注意欧氏距离最近邻被塞到actions后面了。
-    def _update(self, batch: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[Tensor]]]=None) -> Dict[int, float]:
+    def _replay_update(self, batch: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[Tensor]]]=None) -> Dict[int, float]:
         assert self._impl is not None, IMPL_NOT_INITIALIZED_ERROR
         metrics = {}
 
+        if self._grad_step % self._update_actor_interval == 0:
+            actor_loss, replay_actor_loss, replay_clone_loss, _ = self._impl.update_actor(batch, replay_batches)
+            metrics.update({"actor_loss": actor_loss})
+            metrics.update({"replay_actor_loss": replay_actor_loss})
+            metrics.update({"replay_clone_loss": replay_clone_loss})
+            self._impl.update_critic_target()
+            self._impl.update_actor_target()
+
+        return metrics
+
+    def _update(self, batch: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[Tensor]]]=None) -> Dict[int, float]:
+        assert self._impl is not None, IMPL_NOT_INITIALIZED_ERROR
+        metrics = {}
 
         if not self._replay_critic:
             critic_loss, _, _ = self._impl.update_critic(batch)
@@ -401,9 +414,10 @@ class CO(CO, TD3PlusBC):
             metrics.update({"replay_critic_loss": replay_critic_loss})
 
         if self._grad_step % self._update_actor_interval == 0:
-            actor_loss, replay_actor_loss, _ = self._impl.update_actor(batch, replay_batches)
+            actor_loss, replay_actor_loss, replay_clone_loss, _ = self._impl.update_actor(batch, replay_batches)
             metrics.update({"actor_loss": actor_loss})
             metrics.update({"replay_actor_loss": replay_actor_loss})
+            metrics.update({"replay_clone_loss": replay_clone_loss})
             self._impl.update_critic_target()
             self._impl.update_actor_target()
 
