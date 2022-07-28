@@ -206,7 +206,7 @@ class COCQLImpl(COImpl, CQLImpl):
                     q_func._fcs = dict()
                     q_func._fcs[task_id] = deepcopy(q_func._fc.state_dict())
         if self._use_model and self._replay_model:
-            if "_fcs" not in self._dynamic._models[0].__dict__.keys():
+            if "_mus" not in self._dynamic._models[0].__dict__.keys():
                 for model in self._dynamic._models:
                     model._mus = dict()
                     model._mus[task_id] = deepcopy(model._mu.state_dict())
