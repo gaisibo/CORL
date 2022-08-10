@@ -361,6 +361,98 @@ def evaluate_on_environment(
 
     return scorer
 
+def dis_on_environment(
+    env: gym.Env, test_id: str, clone_actor: bool = False, n_trials: int = 100, epsilon: float = 0.0, render: bool = False, mix: bool = False, task_id_dim: int = 0,
+) -> Callable[..., float]:
+    """Returns scorer function of evaluation on environment.
+    This function returns scorer function, which is suitable to the standard
+    scikit-learn scorer function style.
+    The metrics of the scorer function is ideal metrics to evaluate the
+    resulted policies.
+    .. code-block:: python
+        import gym
+        from d3rlpy.algos import DQN
+        from d3rlpy.metrics.scorer import evaluate_on_environment
+        env = gym.make('CartPole-v0')
+        scorer = evaluate_on_environment(env)
+        cql = CQL()
+        mean_episode_return = scorer(cql)
+    Args:
+        env: gym-styled environment.
+        n_trials: the number of trials.
+        epsilon: noise factor for epsilon-greedy policy.
+        render: flag to render environment.
+    Returns:
+        scoerer function.
+    """
+
+    # for image observation
+    observation_shape = env.observation_space.shape
+    is_image = len(observation_shape) == 3
+
+    def scorer(algo: AlgoProtocol, *args: Any) -> float:
+        print(f"test_id: {test_id}")
+        try:
+            env.reset_task(int(test_id))
+        except:
+            pass
+        if is_image:
+            stacked_observation = StackedObservation(
+                observation_shape, algo.n_frames
+            )
+        save_id = algo._impl._impl_id
+        algo._impl.change_task(test_id)
+
+        episode_rewards = []
+        for _ in range(n_trials):
+            observation = env.reset()
+            if mix:
+                observation = np.concatenate([observation, np.zeros([observation.shape[0], 6], dtype=np.float32)], axis=1)
+                observation = np.pad(observation, ((0, 0), (0, 6)), 'constant', constant_values=(0, 0))
+            observation = torch.from_numpy(observation).to(algo._impl.device).unsqueeze(dim=0).to(torch.float32)
+            episode_reward = 0.0
+
+            # frame stacking
+            if is_image:
+                stacked_observation.clear()
+                stacked_observation.append(observation)
+
+            i = 0
+            while True:
+                if task_id_dim != 0:
+                    task_id_tensor = torch.zeros(observation.shape[0], task_id_dim).to(observation.device).to(torch.float32)
+                    task_id_tensor[:, test_id] = 1
+                    observation = torch.cat([observation, task_id_tensor])
+                # take action
+                if np.random.random() < epsilon:
+                    action = env.action_space.sample()
+                else:
+                    if clone_actor and int(save_id) != 0:
+                        action = algo._impl._clone_policy(observation)
+                        action = action.squeeze().cpu().detach().numpy()
+                    else:
+                        action = algo._impl._policy(observation)
+                        action = action.squeeze().cpu().detach().numpy()
+
+                observation, reward, done, pos = env.step(action)
+                episode_reward += 1
+                observation = torch.from_numpy(observation).to(algo._impl.device).unsqueeze(dim=0).to(torch.float32)
+
+                if render:
+                    env.render()
+
+                if done:
+                    break
+                if i > 1000:
+                    break
+
+                i += 1
+            episode_rewards.append(episode_reward)
+        algo._impl.change_task(save_id)
+        return float(np.max(episode_rewards))
+
+    return scorer
+
 def q_error_scorer(real_action_size: int, test_id: str) -> Callable[..., float]:
     def scorer(algo, replay_iterator):
         with torch.no_grad():

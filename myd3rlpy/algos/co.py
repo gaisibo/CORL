@@ -1266,9 +1266,9 @@ class CO():
         if indexes_euclid is None:
             # 直接算的话会超内存，必须一个一个batch来。
             batch_idx = 0
-            eval_batch_size = 10000
+            eval_batch_size = 1000
             near_variances = []
-            if 'near' in self._experience_type:
+            if 'next' in self._experience_type:
                 near_next_observations_list = []
                 while batch_idx + eval_batch_size < observations.shape[0]:
                     near_observations = observations[batch_idx: batch_idx + eval_batch_size, :real_observation_size].to(self._impl.device)
@@ -1285,7 +1285,8 @@ class CO():
                 near_next_observations = torch.from_numpy(np.stack([transition.next_observation for episode in episodes for transition in episode], axis=0))
 
         export_time = 0
-        while len(orl_indexes_all) < max_save_num:
+        old_orl_indexes_all = 0
+        while len(orl_indexes_all) < max_save_num and len(orl_indexes_all) > old_orl_indexes_all:
             for orl_indexes, orl_ns in zip(orl_indexes_list, orl_ns_list):
                 if len(orl_indexes_all) >= max_save_num:
                     break
@@ -1477,6 +1478,7 @@ class CO():
                     batch_retrain.device = self._impl.device
                     batch_retrain = cast(TorchMiniBatch, batch_retrain)
                     loss = self._retrain_model_update(batch_new, batch_retrain)
+            old_orl_indexes_all = len(orl_indexes_all)
         if self._sample_type == 'retrain_actor':
             self._impl._policy.load_state_dict(policy_state_dict)
 
@@ -1486,8 +1488,7 @@ class CO():
             orl_indexes_all = orl_indexes_all[:max_save_num]
         orl_indexes_random = list(set(range(len(all_transitions))) - set(orl_indexes_all))
         random.shuffle(orl_indexes_random)
-        orl_indexes_random = orl_indexes_random[:random_save_num]
-        test_transitions = [all_transitions[orl_index] for orl_index in orl_indexes_all]
+        orl_indexes_random = orl_indexes_random[: max_save_num - len(orl_indexes_all)]
         orl_indexes_all += orl_indexes_random
         transitions = [all_transitions[orl_index] for orl_index in orl_indexes_all]
         if with_generate == 'generate_model':
@@ -1607,10 +1608,7 @@ class CO():
                     transitions = [i for i, _ in sorted(zip(transitions, transition_log_probs), key=lambda x: x[1])]
             elif self._experience_type == 'coverage':
                 assert indexes_euclid is not None and distances_euclid is not None
-                distances_quantile = torch.quantile(distances_euclid, q=torch.arange(0, 1.01, 0.1), dim=0)
-                print(f"distances_quantile: {distances_quantile}")
-                assert False
-                near_n = torch.sum(torch.where(distances_euclids < d_threshold, torch.ones_like(distances_euclids), torch.zeros_like(distances_euclids)), dim=0)
+                near_n = torch.sum(torch.where(distances_euclid < d_threshold, torch.ones_like(distances_euclid), torch.zeros_like(distances_euclid)), dim=0)
                 transitions = [i for i, _ in sorted(zip(transitions, near_n), key=lambda x: x[1])]
             else:
                 raise NotImplementedError
@@ -1914,7 +1912,7 @@ class CO():
                 replay_datasets[task_id], save_datasets[task_id] = None, None
             elif replay_type == 'all':
                 replay_datasets[task_id], save_datasets[task_id] = self.generate_replay_data_all(origin_datasets[task_id], real_action_size=real_action_size, real_observation_size=real_observation_size)
-            elif experience_type in ['random_transition', 'max_reward', 'max_match', 'max_supervise', 'max_model', 'min_reward', 'min_match', 'min_supervise', 'min_model']:
+            elif experience_type in ['random_transition', 'max_reward', 'max_match', 'max_supervise', 'max_model', 'min_reward', 'min_match', 'min_supervise', 'min_model', 'coverage']:
                 replay_datasets[task_id], save_datasets[task_id] = self.generate_replay_data_transition(origin_datasets[task_id], max_save_num=max_save_num, real_action_size=real_action_size, real_observation_size=real_observation_size, with_generate=generate_type, indexes_euclid=indexes_euclid, distances_euclid=distances_euclid, d_threshold=d_threshold)
                 print(f"len(replay_datasets[task_id]): {len(replay_datasets[task_id])}")
             elif experience_type in ['random_episode', 'max_reward_end', 'max_reward_mean', 'max_match_end', 'max_match_mean', 'max_supervise_end', 'max_supervise_mean', 'max_model_end', 'max_model_mean', 'min_reward_end', 'min_reward_mean', 'min_match_end', 'min_match_mean', 'min_model_end', 'min_model_mean']:
@@ -1923,7 +1921,7 @@ class CO():
             elif experience_type == 'generate':
                 replay_datasets[task_id], save_datasets[task_id] = self.generate_new_data_replay(origin_datasets[task_id], max_save_num=max_save_num, real_observation_size=real_observation_size, real_action_size=real_action_size)
                 print(f"len(replay_datasets[task_id]): {len(replay_datasets[task_id])}")
-            elif experience_type == 'model':
+            elif experience_type in ['model', 'model_next', 'model_this', 'model_prob']:
                 episodes = origin_datasets[task_id].episodes
                 episode_num = 0
                 saved = False
@@ -1942,7 +1940,7 @@ class CO():
                 assert env is not None
                 replay_datasets[task_id], save_datasets[task_id] = self.generate_replay_data_online(env, task_id, test=test, max_save_num=max_save_num, real_observation_size=real_observation_size, real_action_size=real_action_size)
             else:
-                replay_datasets[task_id], save_datasets[task_id] = None, None
+                raise NotImplementedError
             print(f'Select Replay Buffer Time: {time.perf_counter() - start_time}')
             if save_datasets[task_id] is not None:
                 torch.save(save_datasets[task_id], f=model_path + algos_name + '_' + str(task_id) + '_datasets.pt')

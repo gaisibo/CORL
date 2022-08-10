@@ -625,7 +625,7 @@ class COImpl():
                     for n, p in self._policy.named_parameters():
                         if n in unreg_grads.keys():
                             self._actor_w[n] -= unreg_grads[n] * (p.detach() - curr_feat_ext[n])
-            elif self._clone_actor and self._replay_type == 'bc':
+            if self._clone_actor and self._replay_type == 'bc':
                 with torch.no_grad():
                     observations = batch.observations.to(self.device)
                     actions = self._policy(observations).detach()
