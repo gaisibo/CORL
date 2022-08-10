@@ -134,6 +134,61 @@ class CO():
             metrics.update({"replay_model_loss": replay_model_loss})
         return metrics
 
+    def build_with_dataset(self, dataset, real_action_size, real_observation_size, task_id):
+        if self._impl is None:
+            LOG.debug("Building models...")
+            action_size = real_action_size
+            print(f'real_action_size: {real_action_size}')
+            observation_shape = [real_observation_size]
+            self._create_impl(
+                self._process_observation_shape(observation_shape), action_size, task_id
+            )
+            self._impl._impl_id = task_id
+            LOG.debug("Models have been built.")
+        else:
+            self._impl.change_task(task_id)
+            self._impl.rebuild_critic()
+            LOG.warning("Skip building models since they're already built.")
+
+    def load_state_dict(self, pretrain_state_dict, pretrain_task_id):
+        pretrain_task_id = int(pretrain_task_id)
+        assert self._impl is not None
+        for key, value in pretrain_state_dict.items():
+            if 'actor' in key or 'critic' in key or 'policy' in key or 'q_func' in key:
+                try:
+                    obj = getattr(self._impl, key)
+                    if isinstance(obj, (torch.nn.Module)):
+                        obj = getattr(self._impl, key)
+                        for name, input_param in pretrain_state_dict[key].items():
+                            try:
+                                param = obj.state_dict()[name]
+                            except:
+                                continue
+                            if len(input_param.shape) == 2:
+                                if input_param.shape[0] == param.shape[0] and input_param.shape[1] != param.shape[1]:
+                                    input_param_append = torch.zeros(param.shape[0], param.shape[1] - input_param.shape[1]).to(param.dtype).to(param.device)
+                                    torch.nn.init.kaiming_normal_(input_param_append)
+                                    pretrain_state_dict[key][name] = torch.cat([input_param, input_param_append], dim=1)
+                                if input_param.shape[0] != param.shape[0] and input_param.shape[1] == param.shape[1]:
+                                    input_param_append = torch.zeros(param.shape[0] - input_param.shape[0], param.shape[1]).to(param.dtype).to(param.device)
+                                    torch.nn.init.kaiming_normal_(input_param_append)
+                                    pretrain_state_dict[key][name] = torch.cat([input_param, input_param_append], dim=0)
+                            elif len(input_param.shape) == 1:
+                                if input_param.shape[0] != param.shape[0]:
+                                    input_param_append = torch.zeros(param.shape[0] - input_param.shape[0]).to(param.dtype).to(param.device)
+                                    pretrain_state_dict[key][name] = torch.cat([input_param, input_param_append], dim=0)
+
+                        obj.load_state_dict(pretrain_state_dict[key])
+                except:
+                    key = str(key)
+                    obj = getattr(self._impl, key)
+                    if isinstance(obj, (torch.nn.Module)):
+                        obj = getattr(self._impl, key)
+                        obj.load_state_dict(pretrain_state_dict[key])
+        assert pretrain_task_id is not None
+        for preid in range(pretrain_task_id + 1):
+            self._impl.change_task(str(preid))
+
     def fit(
         self,
         task_id: str,

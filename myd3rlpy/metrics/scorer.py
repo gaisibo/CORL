@@ -161,7 +161,7 @@ def td_error_scorer(real_action_size: int) -> Callable[..., Callable[...,float]]
 # 
 
 def match_on_environment(
-    env: gym.Env, replay_dataset, test_id: str, clone_actor: bool = False, n_trials: int = 100, epsilon: float = 0.0, render: bool = False, mix: bool = False, task_id_dim: int = 0,
+    env: gym.Env, replay_dataset, test_id: str, clone_actor: bool = False, n_trials: int = 1, epsilon: float = 0.0, render: bool = False, mix: bool = False, task_id_dim: int = 0,
 ) -> Callable[..., float]:
     """Returns scorer function of evaluation on environment.
     This function returns scorer function, which is suitable to the standard
@@ -202,15 +202,10 @@ def match_on_environment(
         save_id = algo._impl._impl_id
         algo._impl.change_task(test_id)
 
-        trajectory_replay_observations = []
         replay_observations = []
-        for observation, _, _, _, terminal, _, _ in replay_dataset:
-            replay_observations.append(observation)
-            if terminal == 1:
-                trajectory_replay_observations.append(replay_observations)
-                replay_observations = []
-
-        trajectory_observations = []
+        for observation, _, _, _, _, _, _ in replay_dataset:
+            replay_observations.append(observation.to(algo._impl.device))
+        observations = []
 
         for _ in range(n_trials):
             observation = env.reset()
@@ -226,8 +221,7 @@ def match_on_environment(
                 stacked_observation.append(observation)
 
             i = 0
-            observations = []
-            for _ in range(max([len(x) for x in trajectory_replay_observations])):
+            for _ in range(1000):
                 if task_id_dim != 0:
                     task_id_tensor = torch.zeros(observation.shape[0], task_id_dim).to(observation.device).to(torch.float32)
                     task_id_tensor[:, test_id] = 1
@@ -257,19 +251,17 @@ def match_on_environment(
                     break
 
                 i += 1
-            trajectory_observations.append(observations.cpu())
         algo._impl.change_task(save_id)
 
         total_match = 0
-        for observations in trajectory_observations:
-            max_match = 0
-            for replay_observations in trajectory_replay_observations:
-                match = 0
-                for replay_observation, observation in zip(replay_observations, observations):
-                    match += torch.mean((replay_observation - observation) ** 2).item()
-                match /= min(len(replay_observations), len(observations))
-                max_match = max(max_match, match)
-            total_match += max_match
+        for i, observation in enumerate(observations):
+            min_match = []
+            for j, replay_observation in enumerate(replay_observations):
+                match_ = torch.mean((replay_observation - observation) ** 2).item()
+                min_match.append(match_)
+            min_match.sort()
+            total_match += sum(min_match[:5]) / 5
+        total_match /= len(observations)
         return total_match
 
     return scorer
