@@ -28,7 +28,7 @@ replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'termi
 def main(args, device):
     np.set_printoptions(precision=1, suppress=True)
     ask_indexes = False
-    if args.experience_type in ['model_prob', 'model_next', 'model_this', 'coverage']:
+    if args.experience_type in ['model_next', 'model_prob', 'model_this', 'coverage']:
         ask_indexes = True
     if args.dataset in ['hopper_expert_v0', 'hopper_medium_v0', 'hopper_medium_expert_v0', 'hopper_medium_replay_v0', 'hopper_random_v0', 'halfcheetah_expert_v0', 'halfcheetah_medium_v0', 'halfcheetah_medium_expert_v0', 'halfcheetah_medium_replay_v0', 'halfcheetah_random_v0', 'walker2d_expert_v0', 'walker2d_medium_v0', 'walker2d_medium_expert_v0', 'walker2d_medium_replay_v0', 'walker2d_random_v0', 'mix_expert_v0', 'mix_medium_expert_v0', 'mix_medium_v0', 'mix_random_v0']:
         if args.dataset in ['hopper_expert_v0', 'hopper_medium_v0', 'hopper_medium_expert_v0', 'hopper_medium_replay_v0', 'hopper_random_v0']:
@@ -48,7 +48,7 @@ def main(args, device):
         else:
             datasets = origin_datasets
         env = None
-    elif args.dataset in ['ant_dir_expert', 'cheetah_dir_expert', 'walker_dir_expert', 'cheetah_vel_expert', 'ant_dir_medium', 'cheetah_dir_medium', 'walker_dir_medium', 'cheetah_vel_medium', 'ant_dir_random', 'cheetah_dir_random', 'walker_dir_random', 'cheetah_vel_random', 'ant_dir_medium_random', 'cheetah_dir_medium_random', 'walker_dir_medium_random', 'cheetah_vel_medium_random']:
+    elif args.dataset in ['ant_dir_expert', 'cheetah_dir_expert', 'walker_dir_expert', 'cheetah_vel_expert', 'ant_dir_medium', 'cheetah_dir_medium', 'walker_dir_medium', 'cheetah_vel_medium', 'ant_dir_random', 'cheetah_dir_random', 'walker_dir_random', 'cheetah_vel_random', 'ant_dir_medium_random', 'cheetah_dir_medium_random', 'walker_dir_medium_random', 'cheetah_vel_medium_random', 'ant_dir_medium_replay', 'cheetah_dir_medium_replay', 'walker_dir_medium_replay', 'cheetah_vel_medium_replay']:
         from dataset.split_macaw import split_macaw
         inner_paths = ['dataset/macaw/' + args.inner_path.replace('num', str(i)) for i in range(args.task_nums)]
         env_paths = ['dataset/macaw/' + args.env_path.replace('num', str(i)) for i in range(args.task_nums)]
@@ -179,24 +179,27 @@ def main(args, device):
                 test=args.test,
             )
             print(f'Training task {task_id} time: {time.perf_counter() - start_time}')
-            co.save_model(args.model_path + algos_name + '_' + str(task_id) + '_no_clone.pt')
+            co.save_model(args.model_path + algos_name + '_' + str(task_id) + '.pt')
+            print(f"max_transition_len: {max_transition_len}")
             if env is not None:
                 co.generate_replay(task_id, datasets, env, args.replay_type, args.experience_type, replay_datasets, save_datasets, args.max_save_num, max_transition_len, real_action_size, real_observation_size, args.generate_type, indexes_euclids[task_id], distances_euclids[task_id], args.d_threshold, args.generate_type, args.test, args.model_path, algos_name, learned_tasks)
             else:
                 co.generate_replay(task_id, datasets, envs[task_id], args.replay_type, args.experience_type, replay_datasets, save_datasets, args.max_save_num, max_transition_len, real_action_size, real_observation_size, args.generate_type, indexes_euclids[task_id], distances_euclids[task_id], args.d_threshold, args.generate_type, args.test, args.model_path, algos_name, learned_tasks)
             if args.test and int(task_id) >= 2:
                 break
+            print(f"replay_datasets: {replay_datasets}")
     else:
         replay_datasets = dict()
         learned_tasks = []
         for task_id, dataset in datasets.items():
+            learned_tasks.append(task_id)
             draw_path = args.model_path + algos_name + '_trajectories_' + str(task_id)
             dynamic_path = args.model_path + args.dataset + '_' + str(task_id) + '_dynamic.pt'
             try:
                 dynamic_state_dict = torch.load(dynamic_path, map_location=device)
             except:
                 raise NotImplementedError
-            pretrain_path = args.model_path + args.algos + '_' + args.dataset + '_' + str(task_id) + '.pt'
+            pretrain_path = args.model_path + algos_name + '_' + str(task_id) + '_no_clone.pt'
             try:
                 pretrain_state_dict = torch.load(pretrain_path, map_location=device)
             except BaseException as e:
@@ -209,9 +212,12 @@ def main(args, device):
                     except BaseException as e:
                         print(f'Don\' have replay_datasets[{past_task_id}]')
                         raise e
+            co.build_with_dataset(dataset, real_action_size, real_observation_size, task_id)
+            co.load_state_dict(pretrain_state_dict)
             logger = co._prepare_logger(True, experiment_name, True, "d3rply_logs", True, None,)
 
             # eval
+            print(f'datasets: {datasets}')
             if not args.test:
                 if env is not None:
                     scorers = dict(zip(['real_env' + str(n) for n in datasets.keys()], [evaluate_on_environment(env, test_id=str(n), mix='mix' in args.dataset and n == '0', add_on=args.add_on, clone_actor=args.clone_actor, task_id_dim=0 if not args.single_head else len(datasets.keys())) for n in learned_tasks]))
@@ -222,28 +228,27 @@ def main(args, device):
             else:
                 scorers = None
             # setup logger
+            print(f'scorers: {scorers}')
             eval_episodes = datasets
             if scorers and eval_episodes:
                 co._evaluate(eval_episodes, scorers, logger)
-            print(f'Evaling task {task_id} time: {time.perf_counter() - start_time}')
 
             # eval
             if not args.test:
                 if env is not None:
-                    scorers = {'match_env' + str(task_id): match_on_environment(env, replay_datasets[task_id], test_id=str(task_id), mix='mix' in args.dataset and task_id == '0', clone_actor=args.clone_actor, task_id_dim=0 if not args.single_head else len(datasets.keys()))}
+                    scorers = dict(zip(['dis_env' + str(n) for n in datasets.keys()], [dis_on_environment(env, test_id=str(n), mix='mix' in args.dataset and n == '0', clone_actor=args.clone_actor, task_id_dim=0 if not args.single_head else len(datasets.keys())) for n in learned_tasks]))
                 elif envs is not None:
-                    scorers = {'match_env' + str(task_id): match_on_environment(envs[task_id], replay_datasets[task_id], test_id=str(task_id), mix='mix' in args.dataset and task_id == '0', clone_actor=args.clone_actor, task_id_dim=0 if not args.single_head else len(datasets.keys()))}
+                    scorers = dict(zip(['dis_env' + str(n) for n in datasets.keys()], [dis_on_environment(envs[str(n)], test_id=str(n), mix='mix' in args.dataset and n == '0', clone_actor=args.clone_actor) for n in learned_tasks]))
                 else:
                     raise NotImplementedError
             else:
                 scorers = None
             # setup logger
+            print(f'scorers: {scorers}')
             eval_episodes = datasets
             if scorers and eval_episodes:
                 co._evaluate(eval_episodes, scorers, logger)
-            print(f'Evaling task {task_id} time: {time.perf_counter() - start_time}')
-            if args.test and int(task_id) >= 2:
-                break
+            logger.commit(int(task_id), 0)
     print('finish')
 
 if __name__ == '__main__':

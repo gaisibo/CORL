@@ -66,7 +66,7 @@ def similar_euclid(obs_all, obs_transition, dataset_name, indexes_name, distance
     torch.save(near_indexes, indexes_name)
     torch.save(near_distances, distances_name)
     print(f'data saved')
-    return near_indexes, distances_name
+    return near_indexes, near_distances
 
 # 如果不存在一个obs有很多act的情况，可以不用这一个函数。
 def similar_euclid_obs(obs_batch, obs_near, input_indexes=None, eval_batch_size=2500, topk=10):

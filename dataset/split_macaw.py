@@ -80,15 +80,13 @@ def split_macaw(top_euclid, dataset_name, inner_paths, envs, include_goal=False,
             task_info = pickle.load(f)
             assert len(task_info) == 1, f'Unexpected task info: {task_info}'
             tasks.append(task_info[0])
-    if dataset_name in ['ant_dir_expert', 'ant_dir_medium', 'ant_dir_random', 'ant_dir_medium_random']:
+    if dataset_name in ['ant_dir_expert', 'ant_dir_medium', 'ant_dir_random', 'ant_dir_medium_random', 'ant_dir_medium_expert', 'ant_dir_medium_replay']:
         env = AntDirEnv(tasks, len(envs), include_goal = include_goal or multitask)
-    elif dataset_name in ['cheetah_dir_expert', 'cheetah_dir_medium', 'cheetah_dir_random', 'cheetah_dir_medium_random']:
+    elif dataset_name in ['cheetah_dir_expert', 'cheetah_dir_medium', 'cheetah_dir_random', 'cheetah_dir_medium_random', 'cheetah_dir_medium_expert', 'cheetah_dir_medium_replay']:
         env = HalfCheetahDirEnv(tasks, include_goal = include_goal or multitask)
-    elif dataset_name in ['cheetah_vel_expert', 'cheetah_vel_medium', 'cheetah_vel_random', 'cheetah_vel_medium_random']:
-        print(inner_paths)
-        print(envs)
+    elif dataset_name in ['cheetah_vel_expert', 'cheetah_vel_medium', 'cheetah_vel_random', 'cheetah_vel_medium_random', 'cheetah_vel_medium_expert', 'cheetah_vel_medium_replay']:
         env = HalfCheetahVelEnv(tasks, include_goal = include_goal or multitask, one_hot_goal=one_hot_goal or multitask)
-    elif dataset_name in ['walker_dir_expert', 'walker_dir_medium', 'walker_dir_random', 'walker_dir_medium_random']:
+    elif dataset_name in ['walker_dir_expert', 'walker_dir_medium', 'walker_dir_random', 'walker_dir_medium_random', 'walker_dir_medium_expert', 'walker_dir_medium_replay']:
         env = WalkerRandParamsWrappedEnv(tasks, len(envs), include_goal = include_goal or multitask)
     else:
         raise RuntimeError(f'Invalid env name {dataset_name}')
