@@ -267,7 +267,7 @@ def match_on_environment(
     return scorer
 
 def evaluate_on_environment(
-    env: gym.Env, test_id: str, clone_actor: bool = False, n_trials: int = 100, epsilon: float = 0.0, render: bool = False, mix: bool = False, add_on: bool = False, task_id_dim: int = 0,
+    env: gym.Env, test_id: str=None, clone_actor: bool = False, n_trials: int = 100, epsilon: float = 0.0, render: bool = False, mix: bool = False, add_on: bool = False, task_id_dim: int = 0,
 ) -> Callable[..., float]:
     """Returns scorer function of evaluation on environment.
     This function returns scorer function, which is suitable to the standard
@@ -296,17 +296,18 @@ def evaluate_on_environment(
     is_image = len(observation_shape) == 3
 
     def scorer(algo: AlgoProtocol, *args: Any) -> float:
-        print(f"test_id: {test_id}")
-        try:
-            env.reset_task(int(test_id))
-        except:
-            pass
+        if test_id is not None:
+            print(f"test_id: {test_id}")
+            try:
+                env.reset_task(int(test_id))
+            except:
+                pass
+            save_id = algo._impl._impl_id
+            algo._impl.change_task(test_id)
         if is_image:
             stacked_observation = StackedObservation(
                 observation_shape, algo.n_frames
             )
-        save_id = algo._impl._impl_id
-        algo._impl.change_task(test_id)
 
         episode_rewards = []
         for _ in range(n_trials):
@@ -324,7 +325,7 @@ def evaluate_on_environment(
 
             i = 0
             while True:
-                if task_id_dim != 0:
+                if test_id is not None and task_id_dim != 0:
                     task_id_tensor = torch.zeros(observation.shape[0], task_id_dim).to(observation.device).to(torch.float32)
                     task_id_tensor[:, test_id] = 1
                     observation = torch.cat([observation, task_id_tensor])
@@ -332,7 +333,7 @@ def evaluate_on_environment(
                 if np.random.random() < epsilon:
                     action = env.action_space.sample()
                 else:
-                    if clone_actor and int(save_id) != 0:
+                    if test_id is not None and clone_actor and int(save_id) != 0:
                         action = algo._impl._clone_policy(observation)
                         action = action.squeeze().cpu().detach().numpy()
                     else:
@@ -353,7 +354,8 @@ def evaluate_on_environment(
 
                 i += 1
             episode_rewards.append(episode_reward)
-        algo._impl.change_task(save_id)
+        if test_id is not None:
+            algo._impl.change_task(save_id)
         if add_on:
             return float(np.mean(episode_rewards))
         else:
@@ -362,7 +364,7 @@ def evaluate_on_environment(
     return scorer
 
 def dis_on_environment(
-    env: gym.Env, test_id: str, clone_actor: bool = False, n_trials: int = 100, epsilon: float = 0.0, render: bool = False, mix: bool = False, task_id_dim: int = 0,
+    env: gym.Env, test_id: str, replay_dataset, clone_actor: bool = False, n_trials: int = 10, epsilon: float = 0.0, render: bool = False, mix: bool = False, task_id_dim: int = 0
 ) -> Callable[..., float]:
     """Returns scorer function of evaluation on environment.
     This function returns scorer function, which is suitable to the standard
@@ -392,6 +394,8 @@ def dis_on_environment(
 
     def scorer(algo: AlgoProtocol, *args: Any) -> float:
         print(f"test_id: {test_id}")
+        replay_observations = replay_dataset.tensors[0]
+        replay_observations = replay_observations.to(algo._impl.device)
         try:
             env.reset_task(int(test_id))
         except:
@@ -435,8 +439,14 @@ def dis_on_environment(
                         action = action.squeeze().cpu().detach().numpy()
 
                 observation, reward, done, pos = env.step(action)
-                episode_reward += 1
-                observation = torch.from_numpy(observation).to(algo._impl.device).unsqueeze(dim=0).to(torch.float32)
+                observation = torch.from_numpy(observation).to(algo._impl.device)
+                min_dis = 10000
+                for replay_observation in replay_observations:
+                    dis = F.mse_loss(replay_observation, observation)
+                    if dis < min_dis:
+                        min_dis = dis
+                episode_reward += min_dis.cpu().item()
+                observation = observation.unsqueeze(dim=0).to(torch.float32)
 
                 if render:
                     env.render()
@@ -449,7 +459,7 @@ def dis_on_environment(
                 i += 1
             episode_rewards.append(episode_reward)
         algo._impl.change_task(save_id)
-        return float(np.max(episode_rewards))
+        return float(np.mean(episode_rewards))
 
     return scorer
 

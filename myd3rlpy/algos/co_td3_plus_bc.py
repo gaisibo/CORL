@@ -55,7 +55,6 @@ from online.eval_policy import eval_policy
 
 from myd3rlpy.siamese_similar import similar_mb, similar_mb_euclid, similar_phi, similar_psi
 # from myd3rlpy.dynamics.probabilistic_ensemble_dynamics import ProbabilisticEnsembleDynamics
-from myd3rlpy.algos.torch.co_td3_plus_bc_impl import COTD3PlusBCImpl as COImpl
 from myd3rlpy.algos.co import CO
 from utils.utils import Struct
 
@@ -121,7 +120,6 @@ class CO(CO, TD3PlusBC):
         impl (d3rlpy.algos.torch.td3_impl.TD3Impl): algorithm implementation.
     """
 
-    _impl: COImpl
     _actor_learning_rate: float
     _critic_learning_rate: float
     _phi_learning_rate: float
@@ -302,7 +300,13 @@ class CO(CO, TD3PlusBC):
     def _create_impl(
         self, observation_shape: Sequence[int], action_size: int, task_id: int
     ) -> None:
-        assert self._impl_name in ['co', 'gemco', 'agemco']
+        if self._impl_name == 'td3_plus_bc':
+            from myd3rlpy.algos.torch.co_td3_plus_bc_impl import COTD3PlusBCImpl as COImpl
+        elif self._impl_name == 'td3n':
+            from myd3rlpy.algos.torch.co_td3n_impl import COTD3NImpl as COImpl
+        else:
+            print(self._impl_name)
+            raise NotImplementedError
         self._impl = COImpl(
             observation_shape=observation_shape,
             action_size=action_size,
@@ -347,34 +351,6 @@ class CO(CO, TD3PlusBC):
             single_head=self._single_head,
         )
         self._impl.build(task_id)
-
-    def begin_update(self, batch: TransitionMiniBatch) -> Dict[int, float]:
-        """Update parameters with mini-batch of data.
-        Args:
-            batch: mini-batch data.
-        Returns:
-            dictionary of metrics.
-        """
-        loss = self._begin_update(batch)
-        self._begin_grad_step += 1
-        return loss
-
-    # 注意欧氏距离最近邻被塞到actions后面了。
-    def _begin_update(self, batch: TransitionMiniBatch) -> Dict[int, float]:
-        assert self._impl is not None, IMPL_NOT_INITIALIZED_ERROR
-        metrics = {}
-
-        if self._replay_critic:
-            critic_loss = self._impl.begin_update_critic(batch)
-            metrics.update({"begin_critic_loss": critic_loss})
-
-        if self._grad_step % self._update_actor_interval == 0:
-            actor_loss = self._impl.begin_update_actor(batch)
-            metrics.update({"begin_actor_loss": actor_loss})
-            self._impl.update_critic_target()
-            self._impl.update_actor_target()
-
-        return metrics
 
     def update(self, batch: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[Tensor]]]=None, batch2: TransitionMiniBatch = None) -> Dict[int, float]:
         """Update parameters with mini-batch of data.

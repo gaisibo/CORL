@@ -27,12 +27,13 @@ from d3rlpy.argument_utility import (
     check_q_func,
     check_use_gpu,
 )
-from d3rlpy.torch_utility import TorchMiniBatch, _get_attributes
+from d3rlpy.torch_utility import TorchMiniBatch, _get_attributes, hard_sync
 from d3rlpy.dataset import MDPDataset, Episode, TransitionMiniBatch, Transition
 from d3rlpy.gpu import Device
 from d3rlpy.models.optimizers import AdamFactory, OptimizerFactory
 from d3rlpy.models.q_functions import QFunctionFactory
-from d3rlpy.algos.base import AlgoBase
+from d3rlpy.algos.base import AlgoBase, AlgoImplBase
+from d3rlpy.algos.torch.base import TorchImplBase
 from d3rlpy.algos.combo import COMBO
 from d3rlpy.constants import (
     CONTINUOUS_ACTION_SPACE_MISMATCH_ERROR,
@@ -121,6 +122,18 @@ class CO():
         impl (d3rlpy.algos.torch.td3_impl.TD3Impl): algorithm implementation.
     """
     _sample_type: str
+
+    # 这里重新写是因为parralle版本的q_funcs不再包括很多q_func，而是并行处理的，所以不进行类型检查。
+    def copy_q_function_from(self, impl: AlgoImplBase) -> None:
+        impl = cast("TorchImplBase", impl)
+        # q_func = self.q_function.q_funcs[0]
+        # if not isinstance(impl.q_function.q_funcs[0], type(q_func)):
+        #     raise ValueError(
+        #         f"Invalid Q-function type: expected={type(q_func)},"
+        #         f"actual={type(impl.q_function.q_funcs[0])}"
+        #     )
+        hard_sync(self.q_function, impl.q_function)
+
     def _update_model(self, batch: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[Tensor]]] = None):
         assert self._impl is not None
         metrics = {}
@@ -197,14 +210,11 @@ class CO():
         env: gym.envs = None,
         seed: int = None,
         n_epochs: Optional[int] = None,
-        n_begin_epochs: Optional[int] = None,
         n_dynamic_epochs: Optional[int] = None,
         n_steps: Optional[int] = None,
         n_steps_per_epoch: int = 10000,
         n_dynamic_steps: Optional[int] = None,
         n_dynamic_steps_per_epoch: int = 10000,
-        n_begin_steps: Optional[int] = None,
-        n_begin_steps_per_epoch: int = 10000,
         dynamic_state_dict: Optional[Dict[str, Any]] = None,
         pretrain_state_dict: Optional[Dict[str, Any]] = None,
         pretrain_task_id: Optional[int] = None,
@@ -229,6 +239,7 @@ class CO():
         real_action_size: int = 0,
         real_observation_size: int = 0,
         test: bool = False,
+        epoch_num: Optional[int] = None,
         # train_dynamics = False,
     ) -> List[Tuple[int, Dict[int, float]]]:
         """Trains with the given dataset.
@@ -270,12 +281,9 @@ class CO():
                 env,
                 seed,
                 n_epochs,
-                n_begin_epochs,
                 n_dynamic_epochs,
                 n_steps,
                 n_steps_per_epoch,
-                n_begin_steps,
-                n_begin_steps_per_epoch,
                 n_dynamic_steps,
                 n_dynamic_steps_per_epoch,
                 dynamic_state_dict,
@@ -300,6 +308,7 @@ class CO():
                 real_action_size,
                 real_observation_size,
                 test,
+                epoch_num,
                 # train_dynamics,
             )
         )
@@ -313,12 +322,9 @@ class CO():
         env: gym.envs = None,
         seed: int = None,
         n_epochs: Optional[int] = None,
-        n_begin_epochs: Optional[int] = None,
         n_dynamic_epochs: Optional[int] = None,
         n_steps: Optional[int] = 500000,
         n_steps_per_epoch: int = 5000,
-        n_begin_steps: Optional[int] = 500000,
-        n_begin_steps_per_epoch: int = 5000,
         n_dynamic_steps: Optional[int] = 500000,
         n_dynamic_steps_per_epoch: int = 5000,
         dynamic_state_dict: Optional[Dict[str, Any]] = None,
@@ -345,6 +351,7 @@ class CO():
         real_action_size: int = 0,
         real_observation_size: int = 0,
         test: bool = False,
+        epoch_num: Optional[int] = None,
     ) -> Generator[Tuple[int, Dict[int, float]], None, None]:
         """Iterate over epochs steps to train with the given dataset. At each
              iteration algo methods and properties can be changed or queried.
@@ -392,7 +399,7 @@ class CO():
             LOG.debug("Models have been built.")
         else:
             self._impl.change_task(task_id)
-            self._impl.rebuild_critic()
+            # self._impl.rebuild_critic()
             LOG.warning("Skip building models since they're already built.")
 
         # setup logger
@@ -683,14 +690,21 @@ class CO():
                         callback(self, epoch, total_step)
 
                 # save loss to loss history dict
-                self._loss_history["epoch"].append(epoch)
+                if epoch_num is None:
+                    self._loss_history["epoch"].append(epoch)
+                else:
+                    self._loss_history["epoch"].append(epoch_num)
                 self._loss_history["step"].append(total_step)
                 for name, vals in epoch_loss.items():
                     if vals:
                         self._loss_history[name].append(np.mean(vals))
 
                 if scorers and eval_episodes:
-                    self._evaluate(eval_episodes, scorers, logger)
+                    try:
+                        self._evaluate(eval_episodes, scorers, logger)
+                    except:
+                        print(type(scorers))
+                        self._evaluate(eval_episodes, scorers, logger)
 
                 # save metrics
                 metrics = logger.commit(epoch, total_step)
@@ -1286,8 +1300,11 @@ class CO():
 
         export_time = 0
         old_orl_indexes_all = 0
-        while len(orl_indexes_all) < max_save_num and len(orl_indexes_all) > old_orl_indexes_all:
+        while len(orl_indexes_all) < max_save_num:
             for orl_indexes, orl_ns in zip(orl_indexes_list, orl_ns_list):
+                if 'none' in self._sample_type:
+                    if len(orl_indexes_all) > old_orl_indexes_all:
+                        break
                 if len(orl_indexes_all) >= max_save_num:
                     break
                 # if test and stop:
@@ -1352,9 +1369,9 @@ class CO():
                         # 找到最接近中间的，也就是最准的。
                         start_next_observations, _, variances = self._impl._dynamic.predict_with_variance(start_observations[:, :real_observation_size], start_actions[:, :real_action_size])
                         variances = torch.mean(variances, dim=1)
-                        mean_start_next_observations = torch.mean(start_next_observations, dim=1).unsqueeze(dim=1).expand(-1, start_next_observations.shape[1], -1)
-                        _, diff_mean_start_next_observations_indices = torch.max(torch.mean(start_next_observations - mean_start_next_observations, dim=2), dim=1)
-                        start_next_observations = torch.stack([start_next_observations[i][diff_mean_start_next_observations_indices[i]] for i in range(diff_mean_start_next_observations_indices.shape[0])])
+                        # mean_start_next_observations = torch.mean(start_next_observations, dim=1).unsqueeze(dim=1).expand(-1, start_next_observations.shape[1], -1)
+                        # _, diff_mean_start_next_observations_indices = torch.max(torch.mean(start_next_observations - mean_start_next_observations, dim=2), dim=1)
+                        start_next_observations = torch.stack([start_next_observations[i][random.randint(0, len(start_next_observations[i]) - 1)] for i in range(start_next_observations.shape[0])])
                         if 'retrain' in self._sample_type:
                             start_next_actions = self._impl._policy(start_next_observations)
 
@@ -1908,10 +1925,8 @@ class CO():
 
         if int(task_id) != len(origin_datasets.keys()) - 1:
             start_time = time.perf_counter()
-            if replay_type in ['ewc', 'si', 'rwalk', 'none']:
+            if replay_type in ['ewc', 'si', 'rwalk', 'none'] or experience_type in ['none', 'all']:
                 replay_datasets[task_id], save_datasets[task_id] = None, None
-            elif replay_type == 'all':
-                replay_datasets[task_id], save_datasets[task_id] = self.generate_replay_data_all(origin_datasets[task_id], real_action_size=real_action_size, real_observation_size=real_observation_size)
             elif experience_type in ['random_transition', 'max_reward', 'max_match', 'max_supervise', 'max_model', 'min_reward', 'min_match', 'min_supervise', 'min_model', 'coverage']:
                 replay_datasets[task_id], save_datasets[task_id] = self.generate_replay_data_transition(origin_datasets[task_id], max_save_num=max_save_num, real_action_size=real_action_size, real_observation_size=real_observation_size, with_generate=generate_type, indexes_euclid=indexes_euclid, distances_euclid=distances_euclid, d_threshold=d_threshold)
                 print(f"len(replay_datasets[task_id]): {len(replay_datasets[task_id])}")
@@ -1940,6 +1955,7 @@ class CO():
                 assert env is not None
                 replay_datasets[task_id], save_datasets[task_id] = self.generate_replay_data_online(env, task_id, test=test, max_save_num=max_save_num, real_observation_size=real_observation_size, real_action_size=real_action_size)
             else:
+                print(f'experience_type: {experience_type}')
                 raise NotImplementedError
             print(f'Select Replay Buffer Time: {time.perf_counter() - start_time}')
             if save_datasets[task_id] is not None:

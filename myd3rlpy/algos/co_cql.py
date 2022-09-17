@@ -161,9 +161,9 @@ class CO(CO, CQL):
         self,
         *,
         actor_learning_rate: float = 1e-4,
-        critic_learning_rate: float = 1e-4,
+        critic_learning_rate: float = 3e-4,
         temp_learning_rate: float = 1e-4,
-        alpha_learning_rate: float = 0,
+        alpha_learning_rate: float = 1e-4,
         phi_learning_rate: float = 1e-4,
         psi_learning_rate: float = 1e-4,
         model_learning_rate: float = 1e-4,
@@ -313,7 +313,6 @@ class CO(CO, CQL):
     def _create_impl(
         self, observation_shape: Sequence[int], action_size: int, task_id: int
     ) -> None:
-        assert self._impl_name in ['co', 'gemco', 'agemco']
         self._impl = COImpl(
             observation_shape=observation_shape,
             action_size=action_size,
@@ -366,34 +365,6 @@ class CO(CO, CQL):
         )
         self._impl.build(task_id)
 
-    def begin_update(self, batch: TransitionMiniBatch) -> Dict[int, float]:
-        """Update parameters with mini-batch of data.
-        Args:
-            batch: mini-batch data.
-        Returns:
-            dictionary of metrics.
-        """
-        loss = self._begin_update(batch)
-        self._begin_grad_step += 1
-        return loss
-
-    # 注意欧氏距离最近邻被塞到actions后面了。
-    def _begin_update(self, batch: TransitionMiniBatch) -> Dict[int, float]:
-        assert self._impl is not None, IMPL_NOT_INITIALIZED_ERROR
-        metrics = {}
-
-        if self._replay_critic:
-            critic_loss = self._impl.begin_update_critic(batch)
-            metrics.update({"begin_critic_loss": critic_loss})
-
-        if self._grad_step % self._update_actor_interval == 0:
-            actor_loss = self._impl.begin_update_actor(batch)
-            metrics.update({"begin_actor_loss": actor_loss})
-            self._impl.update_critic_target()
-            self._impl.update_actor_target()
-
-        return metrics
-
     def update(self, batch: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[Tensor]]]=None, batch2: TransitionMiniBatch = None) -> Dict[int, float]:
         """Update parameters with mini-batch of data.
         Args:
@@ -416,13 +387,13 @@ class CO(CO, CQL):
             alpha_loss, alpha = self._impl.update_alpha(batch)
             metrics.update({"alpha_loss": alpha_loss, "alpha": alpha})
 
-        if not self._replay_critic:
-            critic_loss, _, _ = self._impl.update_critic(batch)
-            metrics.update({"critic_loss": critic_loss})
-        else:
+        if self._replay_critic:
             critic_loss, replay_critic_loss, _ = self._impl.update_critic(batch, replay_batches)
             metrics.update({"critic_loss": critic_loss})
             metrics.update({"replay_critic_loss": replay_critic_loss})
+        else:
+            critic_loss, _, _ = self._impl.update_critic(batch)
+            metrics.update({"critic_loss": critic_loss})
 
         actor_loss, replay_actor_loss, replay_clone_loss, _ = self._impl.update_actor(batch, replay_batches)
         metrics.update({"actor_loss": actor_loss})

@@ -164,9 +164,6 @@ def split_gym(top_euclid, dataset_name, task_datasets, env, compare_dim=3, ask_i
         task_id_numpy = np.eye(task_nums)[int(dataset_num)].squeeze()
         task_id_numpy = np.broadcast_to(task_id_numpy, (dataset.observations.shape[0], task_nums))
         real_observation_size = dataset.observations.shape[1]
-        print(f"real_action_size: {real_action_size}")
-        print(f"real_observation_size: {real_observation_size}")
-        assert False
         # 用action保存一下indexes_euclid，用state保存一下task_id
         taskid_task_datasets[dataset_num] = MDPDataset(np.concatenate([observations, task_id_numpy], axis=1), dataset.actions, dataset.rewards, dataset.terminals, dataset.episode_terminals)
         # action_task_datasets[dataset_num] = MDPDataset(dataset.observations, np.concatenate([dataset.actions, indexes_euclid], axis=1), dataset.rewards, dataset.terminals, dataset.episode_terminals)

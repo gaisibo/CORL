@@ -71,25 +71,10 @@ def get_d4rl_local(dataset, timeout=300) -> MDPDataset:
 
     return mdp_dataset
 
-def split_macaw(top_euclid, dataset_name, inner_paths, envs, include_goal=False, multitask=False, one_hot_goal=False, ask_indexes=False, device='cuda:0'):
+def squential_macaw(dataset_name, inner_paths, epoch, step, device='cuda:0'):
+    env = gym.make(dataset_name)
     task_datasets = dict()
     # nearest_indexes = dict()
-    tasks = []
-    for i, env in enumerate(envs):
-        with open(env, 'rb') as f:
-            task_info = pickle.load(f)
-            assert len(task_info) == 1, f'Unexpected task info: {task_info}'
-            tasks.append(task_info[0])
-    if dataset_name in ['ant_dir_expert', 'ant_dir_medium', 'ant_dir_random', 'ant_dir_medium_random', 'ant_dir_medium_expert', 'ant_dir_medium_replay']:
-        env = AntDirEnv(tasks, len(envs), include_goal = include_goal or multitask)
-    elif dataset_name in ['cheetah_dir_expert', 'cheetah_dir_medium', 'cheetah_dir_random', 'cheetah_dir_medium_random', 'cheetah_dir_medium_expert', 'cheetah_dir_medium_replay']:
-        env = HalfCheetahDirEnv(tasks, include_goal = include_goal or multitask)
-    elif dataset_name in ['cheetah_vel_expert', 'cheetah_vel_medium', 'cheetah_vel_random', 'cheetah_vel_medium_random', 'cheetah_vel_medium_expert', 'cheetah_vel_medium_replay']:
-        env = HalfCheetahVelEnv(tasks, include_goal = include_goal or multitask, one_hot_goal=one_hot_goal or multitask)
-    elif dataset_name in ['walker_dir_expert', 'walker_dir_medium', 'walker_dir_random', 'walker_dir_medium_random', 'walker_dir_medium_expert', 'walker_dir_medium_replay']:
-        env = WalkerRandParamsWrappedEnv(tasks, len(envs), include_goal = include_goal or multitask)
-    else:
-        raise RuntimeError(f'Invalid env name {dataset_name}')
     for i, inner_path in enumerate(inner_paths):
         task_datasets[str(i)] = get_d4rl_local(get_dataset(inner_path))
         # task_dataset_terminals = task_datasets[str(i)].terminals
@@ -97,7 +82,8 @@ def split_macaw(top_euclid, dataset_name, inner_paths, envs, include_goal=False,
         # task_dataset_starts = np.where(task_dataset_terminals[:-1] == 1)[0] + 1
         # np.insert(task_dataset_starts, 0, 0)
         # nearest_indexes[str(i)] = task_dataset_starts
-    return split_gym(top_euclid, dataset_name, task_datasets, env, compare_dim=3, ask_indexes=ask_indexes, device=device)
+    return task_datasets, env
+    # return split_gym(top_euclid, dataset_name, task_datasets, env, compare_dim=3, ask_indexes=ask_indexes, device=device)
 
 def split_gym(top_euclid, dataset_name, task_datasets, env, compare_dim=3, ask_indexes=False, device='cuda:0'):
 
@@ -164,9 +150,6 @@ def split_gym(top_euclid, dataset_name, task_datasets, env, compare_dim=3, ask_i
         task_id_numpy = np.eye(task_nums)[int(dataset_num)].squeeze()
         task_id_numpy = np.broadcast_to(task_id_numpy, (dataset.observations.shape[0], task_nums))
         real_observation_size = dataset.observations.shape[1]
-        print(f"real_action_size: {real_action_size}")
-        print(f"real_observation_size: {real_observation_size}")
-        assert False
         # 用action保存一下indexes_euclid，用state保存一下task_id
         taskid_task_datasets[dataset_num] = MDPDataset(np.concatenate([observations, task_id_numpy], axis=1), dataset.actions, dataset.rewards, dataset.terminals, dataset.episode_terminals)
         # action_task_datasets[dataset_num] = MDPDataset(dataset.observations, np.concatenate([dataset.actions, indexes_euclid], axis=1), dataset.rewards, dataset.terminals, dataset.episode_terminals)

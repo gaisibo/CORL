@@ -21,6 +21,9 @@ from d3rlpy.preprocessing import ActionScaler, RewardScaler, Scaler
 from d3rlpy.torch_utility import TorchMiniBatch, soft_sync, train_api, torch_api
 from d3rlpy.dataset import TransitionMiniBatch
 from d3rlpy.models.builders import create_probabilistic_ensemble_dynamics_model
+from d3rlpy.algos.base import AlgoImplBase
+from d3rlpy.algos.torch.base import TorchImplBase
+from d3rlpy.torch_utility import hard_sync
 
 from myd3rlpy.models.builders import create_phi, create_psi
 from myd3rlpy.algos.torch.gem import overwrite_grad, store_grad, project2cone2
@@ -30,6 +33,17 @@ from utils.utils import Struct
 
 replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'terminals', 'policy_actions', 'qs', 'phis', 'psis']
 class COImpl():
+    def copy_q_function_from(self, impl: AlgoImplBase) -> None:
+        impl = cast("TorchImplBase", impl)
+        # 因为parallel改变了q_funcs的结构，这里就没必要检查类型了。
+        # q_func = self.q_function.q_funcs[0]
+        # if not isinstance(impl.q_function.q_funcs[0], type(q_func)):
+        #     raise ValueError(
+        #         f"Invalid Q-function type: expected={type(q_func)},"
+        #         f"actual={type(impl.q_function.q_funcs[0])}"
+        #     )
+        hard_sync(self.q_function, impl.q_function)
+
     def build(self, task_id):
         if self._use_phi:
             self._phi = create_phi(self._observation_shape, self._action_size, self._critic_encoder_factory)
@@ -49,6 +63,7 @@ class COImpl():
             self._dynamic = None
 
         super().build()
+
         if self._clone_actor and self._replay_type == 'bc':
             self._clone_policy = copy.deepcopy(self._policy)
             self._clone_actor_optim = self._actor_optim_factory.create(
@@ -164,41 +179,6 @@ class COImpl():
         self._targ_q_func = copy.deepcopy(self._q_func)
 
     @train_api
-    def begin_update_critic(self, batch_tran: TransitionMiniBatch):
-        batch = TorchMiniBatch(
-            batch_tran,
-            self.device,
-            scaler=self.scaler,
-            action_scaler=self.action_scaler,
-            reward_scaler=self.reward_scaler,
-        )
-        assert self._critic_optim is not None
-        assert self._q_func is not None
-        assert self._policy is not None
-        self.change_task(self._impl_id)
-        self._q_func.train()
-        self._policy.eval()
-        if self._use_phi:
-            self._phi.eval()
-            self._psi.eval()
-        if self._use_model:
-            self._dynamic.eval()
-
-        self._critic_optim.zero_grad()
-
-        q_tpn = self.compute_target(batch)
-
-        loss = self.compute_critic_loss(batch, q_tpn)
-
-        loss.backward()
-        self._critic_optims[self._impl_id].step()
-
-        loss = loss.cpu().detach().numpy()
-        self.change_task(self._impl_id)
-
-        return loss
-
-    @train_api
     def retrain_update_critic(self, batch: TorchMiniBatch):
         assert self._critic_optim is not None
         assert self._q_func is not None
@@ -271,11 +251,11 @@ class COImpl():
                     replay_loss = replay_loss + replay_cql_loss
                 elif self._replay_type == "bc":
                     with torch.no_grad():
-                        replay_observations = replay_batch.observations.to(self.device).detach()
-                        replay_qs = replay_batch.qs.to(self.device).detach()
-                        replay_actions = replay_batch.actions.to(self.device).detach()
+                        replay_observations = replay_batch.observations.to(self.device)
+                        replay_qs = replay_batch.qs.to(self.device)
+                        replay_actions = replay_batch.actions.to(self.device)
 
-                    q = self._q_func(replay_observations, replay_actions[:, :self._action_size])
+                    q = self._q_func(replay_observations, replay_actions)
                     replay_bc_loss = F.mse_loss(replay_qs, q) / len(replay_batches)
                     replay_losses.append(replay_bc_loss.cpu().detach().numpy())
                     replay_loss = replay_loss + replay_bc_loss
@@ -329,17 +309,19 @@ class COImpl():
                     replay_losses.append(replay_cql_loss.cpu().detach().numpy())
                     replay_loss = replay_loss + replay_loss_
                     replay_losses.append(replay_loss_.cpu().detach().numpy())
-                if self._replay_type in ['orl', 'bc', 'ewc', 'rwalk', 'si']:
-                    time_replay_loss = self._replay_alpha * replay_loss / len(replay_batches)
-                    self._critic_optim.zero_grad()
-                    time_replay_loss.backward()
-                    self._critic_optim.step()
-                    replay_loss = replay_loss.cpu().detach().numpy()
+                # if self._replay_type in ['orl', 'bc', 'ewc', 'rwalk', 'si']:
+                #     time_replay_loss = self._replay_alpha * replay_loss / len(replay_batches)
+                #     self._critic_optim.zero_grad()
+                #     time_replay_loss.backward()
+                #     self._critic_optim.step()
+                #     replay_loss = replay_loss.cpu().detach().numpy()
 
         self.change_task(save_id)
         self._critic_optim.zero_grad()
         q_tpn = self.compute_target(batch)
         loss = self.compute_critic_loss(batch, q_tpn)
+        if self._replay_type in ['orl', 'ewc', 'rwalk', 'si', 'bc']:
+            loss = loss + self._replay_alpha * replay_loss
         loss.backward()
         if replay_batches is not None and len(replay_batches) != 0:
             if self._replay_type == 'agem':
@@ -375,7 +357,8 @@ class COImpl():
                             self._critic_w[n] -= unreg_grads[n] * (p.detach() - curr_feat_ext[n])
 
         loss = loss.cpu().detach().numpy()
-        self.change_task(self._impl_id)
+        if not isinstance(replay_loss, int):
+            replay_loss = replay_loss.cpu().detach().numpy()
 
         return loss, replay_loss, replay_losses
 
@@ -441,42 +424,9 @@ class COImpl():
             clone_loss = clone_loss.cpu().detach().numpy()
 
         loss = loss.cpu().detach().numpy()
+        print(f'replay_losses: {replay_losses}')
 
         return loss, replay_loss, clone_loss, replay_losses
-
-    @train_api
-    def begin_update_actor(self, batch_tran: TransitionMiniBatch) -> np.ndarray:
-        assert self._q_func is not None
-        assert self._policy is not None
-        assert self._actor_optim is not None
-        batch = TorchMiniBatch(
-            batch_tran,
-            self.device,
-            scaler=self.scaler,
-            action_scaler=self.action_scaler,
-            reward_scaler=self.reward_scaler,
-        )
-
-        # Q function should be inference mode for stability
-        self.change_task(self._impl_id)
-        self._q_func.eval()
-        self._policy.train()
-        if self._use_phi:
-            self._phi.eval()
-            self._psi.eval()
-        if self._use_model:
-            self._dynamic.eval()
-
-        self._actor_optim.zero_grad()
-
-        loss = self.compute_actor_loss(batch)
-
-        loss.backward()
-        self._actor_optims[self._impl_id].step()
-
-        loss = loss.cpu().detach().numpy()
-
-        return loss
 
     @train_api
     def update_actor(self, batch_tran: TransitionMiniBatch, replay_batches: Optional[Dict[int, List[torch.Tensor]]]=None) -> np.ndarray:
@@ -573,12 +523,12 @@ class COImpl():
                     replay_loss_ = self.compute_actor_loss(replay_batch) / len(replay_batches)
                     replay_loss = replay_loss + replay_loss_
                     replay_losses.append(replay_loss_)
-                if self._replay_type in ['orl', 'ewc', 'rwalk', 'si'] or (not self._clone_actor and self._replay_type == 'bc'):
-                    time_replay_loss = self._replay_alpha * replay_loss / len(replay_batches)
-                    self._actor_optim.zero_grad()
-                    time_replay_loss.backward()
-                    self._actor_optim.step()
-                    replay_loss = replay_loss.cpu().detach().numpy()
+                # if self._replay_type in ['orl', 'ewc', 'rwalk', 'si'] or (not self._clone_actor and self._replay_type == 'bc'):
+                #     time_replay_loss = self._replay_alpha * replay_loss / len(replay_batches)
+                #     self._actor_optim.zero_grad()
+                #     time_replay_loss.backward()
+                #     self._actor_optim.step()
+                #     replay_loss = replay_loss.cpu().detach().numpy()
                 elif self._clone_actor and self._replay_type == 'bc':
                     time_replay_loss = self._replay_alpha * replay_loss / len(replay_batches)
                     self._clone_actor_optim.zero_grad()
@@ -589,6 +539,8 @@ class COImpl():
         self.change_task(save_id)
         self._actor_optim.zero_grad()
         loss += self.compute_actor_loss(batch)
+        if self._replay_type in ['orl', 'ewc', 'rwalk', 'si'] or (not self._clone_actor and self._replay_type == 'bc'):
+            loss = loss + self._replay_alpha * replay_loss
         loss.backward()
 
         if replay_batches is not None and len(replay_batches) != 0:
@@ -637,43 +589,10 @@ class COImpl():
                 clone_loss = clone_loss.cpu().detach().numpy()
 
         loss = loss.cpu().detach().numpy()
+        if not isinstance(replay_loss, int):
+            replay_loss = replay_loss.cpu().detach().numpy()
 
         return loss, replay_loss, clone_loss, replay_losses
-
-    @train_api
-    def begin_update_model(self, batch: TransitionMiniBatch):
-        assert self._dynamic is not None
-        assert self._model_optim is not None
-        batch = TorchMiniBatch(
-            batch,
-            self.device,
-            scaler=self.scaler,
-            action_scaler=self.action_scaler,
-            reward_scaler=self.reward_scaler,
-        )
-
-        self._q_func.eval()
-        self._policy.eval()
-        self._dynamic.train()
-        if self._use_phi:
-            self._phi.eval()
-            self._psi.eval()
-
-        self._model_optim.zero_grad()
-        loss = self._dynamic.compute_error(
-            observations=batch.observations,
-            actions=batch.actions[:, :self._action_size],
-            rewards=batch.rewards,
-            next_observations=batch.next_observations,
-        )
-
-        self._model_optims[self._impl_id].zero_grad()
-        loss.backward()
-        self._model_optims[self._impl_id].step()
-
-        loss = loss.cpu().detach().numpy()
-
-        return loss
 
     @train_api
     def only_update_model(self, batch: TransitionMiniBatch):
@@ -1008,7 +927,7 @@ class COImpl():
         assert self._q_func is not None
         assert self._targ_q_func is not None
         soft_sync(self._targ_q_func, self._q_func, self._tau)
-        if self._replay_type == 'orl' and '_fcs' in self._q_func._q_funcs[0].__dict__:
+        if self._replay_type == 'orl' and '_q_funcs' in self._q_func.__dict__ and '_fcs' in self._q_func._q_funcs[0].__dict__:
             if self._replay_critic:
                 with torch.no_grad():
                     for q_func, targ_q_func in zip(self._q_func._q_funcs, self._targ_q_func._q_funcs):
