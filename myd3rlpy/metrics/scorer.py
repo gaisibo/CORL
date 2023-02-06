@@ -1,8 +1,10 @@
+import copy
 import pdb
 import os
 from typing import List, cast, Callable, Any, Dict, Tuple, Optional
 import matplotlib.pyplot as plt
 from typing_extensions import Protocol
+from tqdm import trange
 import gym
 import numpy as np
 import torch
@@ -214,7 +216,6 @@ def match_on_environment(
                 observation = np.pad(observation, ((0, 0), (0, 6)), 'constant', constant_values=(0, 0))
             observation = torch.from_numpy(observation).to(algo._impl.device).unsqueeze(dim=0).to(torch.float32)
             episode_reward = 0.0
-
             # frame stacking
             if is_image:
                 stacked_observation.clear()
@@ -363,8 +364,8 @@ def evaluate_on_environment(
 
     return scorer
 
-def dis_on_environment(
-    env: gym.Env, test_id: str, replay_dataset, clone_actor: bool = False, n_trials: int = 10, epsilon: float = 0.0, render: bool = False, mix: bool = False, task_id_dim: int = 0
+def single_evaluate_on_environment(
+    env: gym.Env, n_trials: int = 2, epsilon: float = 0.0, render: bool = False,
 ) -> Callable[..., float]:
     """Returns scorer function of evaluation on environment.
     This function returns scorer function, which is suitable to the standard
@@ -383,6 +384,65 @@ def dis_on_environment(
         env: gym-styled environment.
         n_trials: the number of trials.
         epsilon: noise factor for epsilon-greedy policy.
+        render: flag to render environment.
+    Returns:
+        scoerer function.
+    """
+
+    # for image observation
+    observation_shape = env.observation_space.shape
+
+    def scorer(algo: AlgoProtocol, *args: Any) -> float:
+        episode_rewards = []
+        for _ in trange(n_trials):
+            observation = env.reset()
+            observation = torch.from_numpy(observation).to(algo._impl.device).unsqueeze(dim=0).to(torch.float32)
+            episode_reward = 0.0
+
+            i = 0
+            while True:
+                # take action
+                action = algo._impl.fine_tuned_action(observation)
+                # action = algo._impl._policy(observation)
+                action = action.squeeze().cpu().detach().numpy()
+
+                observation, reward, done, pos = env.step(action)
+                episode_reward += reward
+                observation = torch.from_numpy(observation).to(algo._impl.device).unsqueeze(dim=0).to(torch.float32)
+
+                if render:
+                    env.render()
+
+                if done:
+                    break
+                if i > 1000:
+                    break
+
+                i += 1
+            episode_rewards.append(episode_reward)
+        return float(np.max(episode_rewards))
+
+    return scorer
+
+def dis_on_environment(
+    env: gym.Env, test_id: str, replay_dataset, clone_actor: bool = False, n_trials: int = 10, render: bool = False, mix: bool = False, task_id_dim: int = 0
+) -> Callable[..., float]:
+    """Returns scorer function of evaluation on environment.
+    This function returns scorer function, which is suitable to the standard
+    scikit-learn scorer function style.
+    The metrics of the scorer function is ideal metrics to evaluate the
+    resulted policies.
+    .. code-block:: python
+        import gym
+        from d3rlpy.algos import DQN
+        from d3rlpy.metrics.scorer import evaluate_on_environment
+        env = gym.make('CartPole-v0')
+        scorer = evaluate_on_environment(env)
+        cql = CQL()
+        mean_episode_return = scorer(cql)
+    Args:
+        env: gym-styled environment.
+        n_trials: the number of trials.
         render: flag to render environment.
     Returns:
         scoerer function.
@@ -428,15 +488,8 @@ def dis_on_environment(
                     task_id_tensor[:, test_id] = 1
                     observation = torch.cat([observation, task_id_tensor])
                 # take action
-                if np.random.random() < epsilon:
-                    action = env.action_space.sample()
-                else:
-                    if clone_actor and int(save_id) != 0:
-                        action = algo._impl._clone_policy(observation)
-                        action = action.squeeze().cpu().detach().numpy()
-                    else:
-                        action = algo._impl._policy(observation)
-                        action = action.squeeze().cpu().detach().numpy()
+                action = algo._impl._policy(observation)
+                action = action.squeeze().cpu().detach().numpy()
 
                 observation, reward, done, pos = env.step(action)
                 observation = torch.from_numpy(observation).to(algo._impl.device)
@@ -526,3 +579,25 @@ def q_replay_scorer(real_action_size: int, test_id: str, batch_size: int = 1024)
             algo._impl.change_task(save_id)
         return float(torch.mean(inner_qs).detach().cpu().numpy()), float(torch.mean(outer_qs).detach().cpu().numpy())
     return scorer
+
+def dataset_value_scorer(
+    algo: AlgoProtocol, episodes: List[Episode]
+) -> float:
+    r"""Returns average value estimation.
+    This metrics suggests the scale for estimation of Q functions.
+    If average value estimation is too large, the Q functions overestimate
+    action-values, which possibly makes training failed.
+    .. math::
+        \mathbb{E}_{s_t \sim D} [ \max_a Q_\theta (s_t, a)]
+    Args:
+        algo: algorithm.
+        episodes: list of episodes.
+    Returns:
+        average value estimation.
+    """
+    total_values = []
+    for episode in episodes:
+        for batch in _make_batches(episode, WINDOW_SIZE, algo.n_frames):
+            values = algo.predict_value(batch.observations, batch.actions)
+            total_values += cast(np.ndarray, values).tolist()
+    return float(np.mean(total_values))

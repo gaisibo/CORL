@@ -71,7 +71,7 @@ def get_d4rl_local(dataset, timeout=300) -> MDPDataset:
 
     return mdp_dataset
 
-def squential_macaw(dataset_name, inner_paths, epoch, step, device='cuda:0'):
+def sequential_mujoco(dataset_name, inner_paths, device='cuda:0'):
     env = gym.make(dataset_name)
     task_datasets = dict()
     # nearest_indexes = dict()
@@ -130,28 +130,28 @@ def split_gym(top_euclid, dataset_name, task_datasets, env, compare_dim=3, ask_i
     real_action_size = 0
     real_observation_size = 0
     for dataset_num, dataset in task_datasets.items():
-        if ask_indexes:
-            indexes_name = 'near_indexes/' + dataset_name + '/' + str(dataset_num) + '.pt'
-            distances_name = 'near_distances/' + dataset_name + '/' + str(dataset_num) + '.pt'
-            if os.path.exists(indexes_name) and os.path.exists(distances_name):
-                indexes_euclid = torch.load(indexes_name)
-                distances_euclid = torch.load(distances_name)
-            else:
-                transitions = [transition for episode in dataset.episodes for transition in episode]
-                observations = np.stack([transition.observation for transition in transitions], axis=0)
-                indexes_euclid, distances_euclid = similar_euclid(dataset.observations, observations, dataset_name, indexes_name, distances_name, compare_dim=compare_dim, device=device)
-            indexes_euclids[dataset_num] = indexes_euclid
-            distances_euclids[dataset_num] = distances_euclid
-        else:
-            indexes_euclids[dataset_num] = None
-            distances_euclids[dataset_num] = None
-        observations = dataset.observations
+        # if ask_indexes:
+        #     indexes_name = 'near_indexes/' + dataset_name + '/' + str(dataset_num) + '.pt'
+        #     distances_name = 'near_distances/' + dataset_name + '/' + str(dataset_num) + '.pt'
+        #     if os.path.exists(indexes_name) and os.path.exists(distances_name):
+        #         indexes_euclid = torch.load(indexes_name)
+        #         distances_euclid = torch.load(distances_name)
+        #     else:
+        #         transitions = [transition for episode in dataset.episodes for transition in episode]
+        #         observations = np.stack([transition.observation for transition in transitions], axis=0)
+        #         indexes_euclid, distances_euclid = similar_euclid(dataset.observations, observations, dataset_name, indexes_name, distances_name, compare_dim=compare_dim, device=device)
+        #     indexes_euclids[dataset_num] = indexes_euclid
+        #     distances_euclids[dataset_num] = distances_euclid
+        # else:
+        #     indexes_euclids[dataset_num] = None
+        #     distances_euclids[dataset_num] = None
+        # observations = dataset.observations
         real_action_size = dataset.actions.shape[1]
-        task_id_numpy = np.eye(task_nums)[int(dataset_num)].squeeze()
-        task_id_numpy = np.broadcast_to(task_id_numpy, (dataset.observations.shape[0], task_nums))
+        # task_id_numpy = np.eye(task_nums)[int(dataset_num)].squeeze()
+        # task_id_numpy = np.broadcast_to(task_id_numpy, (dataset.observations.shape[0], task_nums))
         real_observation_size = dataset.observations.shape[1]
-        # 用action保存一下indexes_euclid，用state保存一下task_id
-        taskid_task_datasets[dataset_num] = MDPDataset(np.concatenate([observations, task_id_numpy], axis=1), dataset.actions, dataset.rewards, dataset.terminals, dataset.episode_terminals)
+        # # 用action保存一下indexes_euclid，用state保存一下task_id
+        # taskid_task_datasets[dataset_num] = MDPDataset(np.concatenate([observations, task_id_numpy], axis=1), dataset.actions, dataset.rewards, dataset.terminals, dataset.episode_terminals)
         # action_task_datasets[dataset_num] = MDPDataset(dataset.observations, np.concatenate([dataset.actions, indexes_euclid], axis=1), dataset.rewards, dataset.terminals, dataset.episode_terminals)
         origin_task_datasets[dataset_num] = MDPDataset(observations, dataset.actions, dataset.rewards, dataset.terminals, dataset.episode_terminals)
         # changed_task_datasets[dataset_num] = MDPDataset(np.concatenate([dataset.observations, task_id_numpy], axis=1), np.concatenate([dataset.actions, indexes_euclid], axis=1), dataset.rewards, dataset.terminals, dataset.episode_terminals)
@@ -167,4 +167,4 @@ def split_gym(top_euclid, dataset_name, task_datasets, env, compare_dim=3, ask_i
     # indexes_euclids = {'0': indexes_euclids['0'], '3': indexes_euclids['3'], '2': indexes_euclids['2'], '1': indexes_euclids['1']}
 
     # return changed_task_datasets, origin_task_datasets, taskid_task_datasets, action_task_datasets, envs, [None for _ in range(task_nums)], nearest_indexes, real_action_size, real_observation_size, indexes_euclids, task_nums
-    return origin_task_datasets, taskid_task_datasets, indexes_euclids, distances_euclids, env, real_action_size, real_observation_size
+    return origin_task_datasets, env, real_observation_size, real_action_size

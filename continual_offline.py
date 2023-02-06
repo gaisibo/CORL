@@ -87,7 +87,7 @@ def main(args, device):
         use_phi = True
     else:
         use_phi = False
-    co = CO(use_gpu=not args.use_cpu, batch_size=args.batch_size, id_size=args.task_nums, replay_type=args.replay_type, experience_type=args.experience_type, sample_type=args.sample_type, reduce_replay=args.reduce_replay, use_phi=use_phi, use_model=args.use_model, replay_critic=args.replay_critic, replay_model=args.replay_model, replay_alpha=args.replay_alpha, generate_step=args.generate_step, model_noise=args.model_noise, retrain_time=args.retrain_time, orl_alpha=args.orl_alpha, single_head=args.single_head, clone_actor=args.clone_actor, clone_finish=args.clone_finish)
+    co = CO(impl_name=args.algo, use_gpu=not args.use_cpu, batch_size=args.batch_size, id_size=args.task_nums, replay_type=args.replay_type, experience_type=args.experience_type, sample_type=args.sample_type, reduce_replay=args.reduce_replay, use_phi=use_phi, use_model=args.use_model, replay_critic=args.replay_critic, replay_model=args.replay_model, replay_alpha=args.replay_alpha, generate_step=args.generate_step, model_noise=args.model_noise, retrain_time=args.retrain_time, orl_alpha=args.orl_alpha, single_head=args.single_head, clone_actor=args.clone_actor, clone_finish=args.clone_finish)
 
     experiment_name = "CO" + '_'
     algos_name = args.replay_type
@@ -154,8 +154,6 @@ def main(args, device):
                         n_steps_per_epoch=args.n_steps_per_epoch,
                         n_dynamic_steps=args.n_dynamic_steps,
                         n_dynamic_steps_per_epoch=args.n_dynamic_steps_per_epoch,
-                        n_begin_steps=args.n_begin_steps,
-                        n_begin_steps_per_epoch=args.n_begin_steps_per_epoch,
                         dynamic_state_dict=dynamic_state_dict,
                         pretrain_state_dict=pretrain_state_dict,
                         pretrain_task_id=args.read_policies,
@@ -209,8 +207,6 @@ def main(args, device):
                     n_steps_per_epoch=args.n_steps_per_epoch,
                     n_dynamic_steps=args.n_dynamic_steps,
                     n_dynamic_steps_per_epoch=args.n_dynamic_steps_per_epoch,
-                    n_begin_steps=args.n_begin_steps,
-                    n_begin_steps_per_epoch=args.n_begin_steps_per_epoch,
                     dynamic_state_dict=dynamic_state_dict,
                     pretrain_state_dict=pretrain_state_dict,
                     pretrain_task_id=args.read_policies,
@@ -234,10 +230,10 @@ def main(args, device):
                 eval_datasets[task_id] = dataset
                 draw_path = args.model_path + algos_name + '_trajectories_' + str(task_id)
                 dynamic_path = args.model_path + args.dataset + '_' + str(task_id) + '_dynamic.pt'
-                print(dynamic_path)
                 try:
                     dynamic_state_dict = torch.load(dynamic_path, map_location=device)
-                except:
+                except Exception as e:
+                    print(e)
                     dynamic_state_dict = None
                     raise NotImplementedError
                 if int(task_id) == args.read_policies:
@@ -279,8 +275,6 @@ def main(args, device):
                     n_steps_per_epoch=args.n_steps_per_epoch,
                     n_dynamic_steps=args.n_dynamic_steps,
                     n_dynamic_steps_per_epoch=args.n_dynamic_steps_per_epoch,
-                    n_begin_steps=args.n_begin_steps,
-                    n_begin_steps_per_epoch=args.n_begin_steps_per_epoch,
                     dynamic_state_dict=dynamic_state_dict,
                     pretrain_state_dict=pretrain_state_dict,
                     pretrain_task_id=args.read_policies,
@@ -394,7 +388,7 @@ if __name__ == '__main__':
     parser.add_argument("--n_begin_steps_per_epoch", default=5000, type=int)
     parser.add_argument("--n_action_samples", default=4, type=int)
     parser.add_argument('--top_euclid', default=64, type=int)
-    parser.add_argument('--replay_type', default='orl', type=str, choices=['orl', 'bc', 'ewc', 'gem', 'agem', 'rwalk', 'si'])
+    parser.add_argument('--replay_type', default='orl', type=str, choices=['none', 'orl', 'bc', 'ewc', 'gem', 'agem', 'rwalk', 'si'])
     parser.add_argument('--experience_type', default='siamese', type=str, choices=['all', 'none', 'single', 'online', 'generate', 'model_prob', 'model_next', 'model', 'model_this', 'coverage', 'random_transition', 'random_episode', 'max_reward', 'max_match', 'max_supervise', 'max_model', 'max_reward_end', 'max_reward_mean', 'max_match_end', 'max_match_mean', 'max_supervise_end', 'max_supervise_mean', 'max_model_end', 'max_model_mean', 'min_reward', 'min_match', 'min_supervise', 'min_model', 'min_reward_end', 'min_reward_mean', 'min_match_end', 'min_match_mean', 'min_supervise_end', 'min_supervise_mean', 'min_model_end', 'min_model_mean'])
     parser.add_argument('--generate_type', default='none', type=str)
     parser.add_argument('--clone_actor', action='store_true')
@@ -448,6 +442,6 @@ if __name__ == '__main__':
     seeds = [12345, 1234, 123, 12, 1]
     random.seed(seeds[args.seed])
     np.random.seed(seeds[args.seed])
-    torch.seed(seeds[args.seed])
-    torch.cuda.seed(seeds[args.seed])
+    torch.manual_seed(seeds[args.seed])
+    torch.cuda.manual_seed(seeds[args.seed])
     main(args, device)

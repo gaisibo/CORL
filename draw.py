@@ -4,13 +4,13 @@ import matplotlib.pyplot as plt
 
 if __name__ == '__main__':
     for m in ['model']:
-        for c in ['bc']:
+        for c in ['bc', 'si', 'orl']:
             for a in ['10', '3', '1', '0.3', '0.1', '0.03']:
-                name = './output_' + m + '_' + c + '_hopper_medium_v0_10000_' + a + '_draw.txt'
+                name = './result_td3_plus_bc_' + m + '_' + c + '_hopper_medium_v0_10000_' + a + '_draw.txt'
                 if os.path.exists(name):
                     print(f'drawing ' + name)
                     plt.figure()
-                    fig_name = './output_' + m + '_' + c + '_hopper_medium_v0_10000_' + a + '_.png'
+                    fig_name = './result_td3_plus_bc_' + m + '_' + c + '_hopper_medium_v0_10000_' + a + '_.png'
                     r = []
                     for num in range(4):
                         r.append([])

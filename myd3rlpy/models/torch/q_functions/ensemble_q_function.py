@@ -114,8 +114,8 @@ class ParallelEnsembleQFunction(ParallelizedEnsembleFlattenMLP):  # type: ignore
         gamma: float = 0.99,
         reduction: str = "mean",
     ) -> torch.Tensor:
-        assert target.ndim == 2
-        value = self.forward(observations, actions)
+        # assert target.ndim == 2
+        value = self.forward(observations, actions, reduction='none')
         y = rewards + gamma * target * (1 - terminals)
         loss = F.mse_loss(value, y, reduction="none")
         return compute_reduce(loss, reduction)
@@ -147,14 +147,16 @@ class ParallelEnsembleQFunction(ParallelizedEnsembleFlattenMLP):  # type: ignore
         return [0 for _ in range(self.ensemble_size)]
 
 class ParallelEnsembleDiscreteQFunction(ParallelEnsembleQFunction):
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, reduction=None) -> torch.Tensor:
         values = super().forward(x)
+        if reduction is None:
+            reduction = self.reduction
         return _reduce_ensemble(values, self.reduction)
 
     def __call__(
-        self, x: torch.Tensor
+        self, x: torch.Tensor, reduction=None
     ) -> torch.Tensor:
-        return cast(torch.Tensor, super().__call__(x))
+        return cast(torch.Tensor, super().__call__(x, reduction))
 
     def compute_target(
         self,
@@ -167,15 +169,17 @@ class ParallelEnsembleDiscreteQFunction(ParallelEnsembleQFunction):
 
 class ParallelEnsembleContinuousQFunction(ParallelEnsembleQFunction):
     def forward(
-        self, x: torch.Tensor, action: torch.Tensor
+        self, x: torch.Tensor, action: torch.Tensor, reduction=None
     ) -> torch.Tensor:
         values = super().forward(x, action)
-        return _reduce_ensemble(values, reduction=self.reduction)
+        if reduction is None:
+            reduction = self.reduction
+        return _reduce_ensemble(values, reduction=reduction)
 
     def __call__(
-        self, x: torch.Tensor, action: torch.Tensor
+        self, x: torch.Tensor, action: torch.Tensor, reduction=None
     ) -> torch.Tensor:
-        return cast(torch.Tensor, super().__call__(x, action))
+        return cast(torch.Tensor, super().__call__(x, action, reduction))
 
     def compute_target(
         self,

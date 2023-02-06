@@ -28,8 +28,10 @@ from dataset.sequential_mujoco import sequential_mujoco
 replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'terminals', 'means', 'std_logs', 'qs', 'phis', 'psis']
 def main(args, device):
     np.set_printoptions(precision=1, suppress=True)
-    inner_paths = 'dataset/sequential_mujoco'
-    datasets, env, real_observation_size, real_action_size = sequential_mujoco(args.dataset, args.dataset_num)
+    inner_paths = [f'dataset/online/sac_{args.dataset}/itr_{x}.hdf5' for x in args.dataset_num]
+    datasets, env = sequential_mujoco(args.dataset, inner_paths)
+    real_observation_size = datasets['0'].observations.shape[1]
+    real_action_size = datasets['0'].actions.shape[1]
 
     # prepare algorithm
     if args.algo in ['td3_plus_bc', 'td3n']:
@@ -44,6 +46,9 @@ def main(args, device):
     elif args.algo == 'cql':
         n_critics = 2
         from myd3rlpy.algos.co_cql import CO
+    elif args.algo == 'sacn':
+        n_critics = 100
+        from myd3rlpy.algos.co_sacn import CO
     else:
         raise NotImplementedError
     if args.experience_type == 'siamese':
@@ -58,6 +63,7 @@ def main(args, device):
     algos_name += "_" + args.experience_type
     algos_name += '_' + args.sample_type
     algos_name += '_' + args.dataset
+    algos_name += '_' + args.dataset_num_str
     algos_name += '_' + str(args.max_save_num)
     algos_name += '_' + str(args.replay_alpha)
     algos_name += '_' + str(args.seed)
@@ -73,7 +79,7 @@ def main(args, device):
         replay_datasets = dict()
         save_datasets = dict()
         eval_datasets = dict()
-        for task_id, dataset in enumerate(datasets):
+        for task_id, dataset in datasets.items():
             max_transition_len = max(list([len(episode.transitions) for episode in dataset.episodes]))
             if int(task_id) < args.read_policies:
                 replay_datasets[task_id] = torch.load(args.model_path + algos_name + '_' + str(task_id) + '_datasets.pt')
@@ -154,6 +160,8 @@ def main(args, device):
                 replay_qs = co._impl._q_func(replay_observations.to(co._impl.device), replay_actions.to(co._impl.device)).detach().to('cpu')
                 replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals, replay_policy_actions, replay_qs)
             elif args.replay_type == 'ewc':
+                replay_dataset = None
+            elif args.replay_type == 'none':
                 replay_dataset = None
             replay_datasets[task_id] = replay_dataset
     else:
@@ -239,17 +247,17 @@ if __name__ == '__main__':
     parser.add_argument('--topk', default=4, type=int)
     parser.add_argument('--max_save_num', default=1000, type=int)
     parser.add_argument('--task_split_type', default='undirected', type=str)
-    parser.add_argument('--algo', default='td3_plus_bc', type=str, choices=['combo', 'td3_plus_bc', 'td3n', 'cql'])
+    parser.add_argument('--algo', default='td3_plus_bc', type=str, choices=['combo', 'td3_plus_bc', 'td3n', 'cql', 'sacn'])
     parser.add_argument('--eval', action='store_true')
     parser.add_argument('--test', action='store_true')
-    parser.add_argument("--n_steps", default=150000, type=int)
-    parser.add_argument("--n_steps_per_epoch", default=5000, type=int)
+    parser.add_argument("--n_steps", default=9000000, type=int)
+    parser.add_argument("--n_steps_per_epoch", default=3000, type=int)
     parser.add_argument("--n_dynamic_steps", default=500000, type=int)
     parser.add_argument("--n_dynamic_steps_per_epoch", default=5000, type=int)
     parser.add_argument("--n_action_samples", default=4, type=int)
     parser.add_argument('--top_euclid', default=64, type=int)
-    parser.add_argument('--replay_type', default='bc', type=str, choices=['orl', 'bc', 'ewc', 'gem', 'agem', 'rwalk', 'si'])
-    parser.add_argument('--experience_type', default='siamese', type=str, choices=['all', 'none', 'single', 'online', 'generate', 'model_prob', 'model_next', 'model', 'model_this', 'coverage', 'random_transition', 'random_episode', 'max_reward', 'max_match', 'max_supervise', 'max_model', 'max_reward_end', 'max_reward_mean', 'max_match_end', 'max_match_mean', 'max_supervise_end', 'max_supervise_mean', 'max_model_end', 'max_model_mean', 'min_reward', 'min_match', 'min_supervise', 'min_model', 'min_reward_end', 'min_reward_mean', 'min_match_end', 'min_match_mean', 'min_supervise_end', 'min_supervise_mean', 'min_model_end', 'min_model_mean'])
+    parser.add_argument('--replay_type', default='bc', type=str, choices=['none', 'orl', 'bc', 'ewc', 'gem', 'agem', 'rwalk', 'si'])
+    parser.add_argument('--experience_type', default='none', type=str, choices=['all', 'none', 'single', 'online', 'generate', 'model_prob', 'model_next', 'model', 'model_this', 'coverage', 'random_transition', 'random_episode', 'max_reward', 'max_match', 'max_supervise', 'max_model', 'max_reward_end', 'max_reward_mean', 'max_match_end', 'max_match_mean', 'max_supervise_end', 'max_supervise_mean', 'max_model_end', 'max_model_mean', 'min_reward', 'min_match', 'min_supervise', 'min_model', 'min_reward_end', 'min_reward_mean', 'min_match_end', 'min_match_mean', 'min_supervise_end', 'min_supervise_mean', 'min_model_end', 'min_model_mean'])
     parser.add_argument('--generate_type', default='none', type=str)
     parser.add_argument('--clone_actor', action='store_true')
     parser.add_argument('--clone_finish', action='store_true')
@@ -284,6 +292,7 @@ if __name__ == '__main__':
     if args.single_head:
         args.clone_actor = False
         args.clone_finish = False
+    args.dataset_num_str = args.dataset_num
     args.dataset_num = args.dataset_num.split('-')
     args.dataset_num = [x for x in args.dataset_num]
     if args.replay_type == 'orl':

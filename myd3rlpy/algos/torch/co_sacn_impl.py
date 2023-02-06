@@ -20,30 +20,34 @@ from d3rlpy.models.torch.policies import squash_action
 from d3rlpy.preprocessing import ActionScaler, RewardScaler, Scaler
 from d3rlpy.torch_utility import TorchMiniBatch, soft_sync, train_api, torch_api
 from d3rlpy.dataset import TransitionMiniBatch
-from d3rlpy.algos.torch.td3_impl import TD3Impl
+from d3rlpy.algos.torch.sac_impl import SACImpl
 from d3rlpy.models.builders import create_probabilistic_ensemble_dynamics_model
 
 from myd3rlpy.models.builders import create_phi, create_psi
 from myd3rlpy.algos.torch.gem import overwrite_grad, store_grad, project2cone2
 from myd3rlpy.algos.torch.agem import project
-from myd3rlpy.algos.torch.co_deterministic_impl import CODeterministicImpl
+from myd3rlpy.algos.torch.co_probabilistic_impl import COProbabilisticImpl
 from myd3rlpy.models.builders import create_parallel_continuous_q_function
+from myd3rlpy.models.torch.q_functions.ensemble_q_function import ParallelEnsembleContinuousQFunction
 from utils.utils import Struct
 
 
 replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'terminals', 'policy_actions', 'qs', 'phis', 'psis']
-class COTD3NImpl(CODeterministicImpl, TD3Impl):
+class COSACNImpl(COProbabilisticImpl, SACImpl):
+    _q_func: ParallelEnsembleContinuousQFunction
     def __init__(
         self,
         observation_shape: Sequence[int],
         action_size: int,
         actor_learning_rate: float,
         critic_learning_rate: float,
+        temp_learning_rate: float,
         phi_learning_rate: float,
         psi_learning_rate: float,
         model_learning_rate: float,
         actor_optim_factory: OptimizerFactory,
         critic_optim_factory: OptimizerFactory,
+        temp_optim_factory: OptimizerFactory,
         phi_optim_factory: OptimizerFactory,
         psi_optim_factory: OptimizerFactory,
         model_optim_factory: OptimizerFactory,
@@ -60,9 +64,7 @@ class COTD3NImpl(CODeterministicImpl, TD3Impl):
         epsilon: float,
         tau: float,
         n_critics: int,
-        target_smoothing_sigma: float,
-        target_smoothing_clip: float,
-        alpha: float,
+        initial_temperature: float,
         use_gpu: Optional[Device],
         scaler: Optional[Scaler],
         action_scaler: Optional[ActionScaler],
@@ -82,17 +84,17 @@ class COTD3NImpl(CODeterministicImpl, TD3Impl):
             action_size = action_size,
             actor_learning_rate = actor_learning_rate,
             critic_learning_rate = critic_learning_rate,
+            temp_learning_rate = temp_learning_rate,
             actor_optim_factory = actor_optim_factory,
             critic_optim_factory = critic_optim_factory,
+            temp_optim_factory = temp_optim_factory,
             actor_encoder_factory = actor_encoder_factory,
             critic_encoder_factory = critic_encoder_factory,
             q_func_factory = q_func_factory,
             gamma = gamma,
             tau = tau,
             n_critics = n_critics,
-            target_smoothing_sigma = target_smoothing_sigma,
-            target_smoothing_clip = target_smoothing_clip,
-            alpha = alpha,
+            initial_temperature = initial_temperature,
             use_gpu = use_gpu,
             scaler = scaler,
             action_scaler = action_scaler,
@@ -138,44 +140,22 @@ class COTD3NImpl(CODeterministicImpl, TD3Impl):
             self._observation_shape,
             self._action_size,
             n_ensembles=self._n_critics,
+            # 根据Why So Pessimistic?，这里应该是每个Q单独计算自己的target。
             reduction='min',
         )
 
-    def compute_critic_loss(
-        self, batch: TorchMiniBatch, q_tpn: torch.Tensor
-    ) -> torch.Tensor:
-        assert self._q_func is not None
-        loss = self._q_func.compute_error(
-            observations=batch.observations,
-            actions=batch.actions[:, :self._action_size],
-            rewards=batch.rewards,
-            target=q_tpn,
-            terminals=batch.terminals,
-            gamma=self._gamma ** batch.n_steps,
-        )
-        return loss
-
-    def compute_actor_loss(self, batch: TorchMiniBatch) -> torch.Tensor:
-        assert self._policy is not None
-        assert self._q_func is not None
-        action = self._policy(batch.observations)
-        q_t = self._q_func(batch.observations, action)[0]
-        return -q_t.mean()
-
     def compute_target(self, batch: TorchMiniBatch) -> torch.Tensor:
-        assert self._targ_policy is not None
+        assert self._policy is not None
+        assert self._log_temp is not None
         assert self._targ_q_func is not None
         with torch.no_grad():
-            action = self._targ_policy(batch.next_observations)
-            # smoothing target
-            noise = torch.randn(action.shape, device=batch.device)
-            scaled_noise = self._target_smoothing_sigma * noise
-            clipped_noise = scaled_noise.clamp(
-                -self._target_smoothing_clip, self._target_smoothing_clip
+            action, log_prob = self._policy.sample_with_log_prob(
+                batch.next_observations
             )
-            smoothed_action = action + clipped_noise
-            clipped_action = smoothed_action.clamp(-1.0, 1.0)
-            return self._targ_q_func.compute_target(
+            entropy = self._log_temp().exp() * log_prob
+            target = self._targ_q_func.forward(
                 batch.next_observations,
-                clipped_action,
+                action,
+                reduction='none',
             )
+            return target - entropy

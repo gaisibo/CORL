@@ -266,6 +266,7 @@ class COImpl():
                             replay_loss = replay_loss + torch.mean(self._critic_fisher[n] * (p - self._critic_older_params[n]).pow(2)) / 2
                     replay_losses.append(replay_loss_.cpu().detach().numpy())
                     replay_loss = replay_loss + replay_loss_
+                    break
                 elif self._replay_type == 'rwalk':
                     curr_feat_ext = {n: p.clone().detach() for n, p in self._q_func.named_parameters() if p.requires_grad}
                     # store gradients without regularization term
@@ -280,17 +281,19 @@ class COImpl():
                             replay_loss_ = replay_loss_ + torch.mean((self._critic_fisher[n] + self._critic_scores[n]) * (p - self._critic_older_params[n]).pow(2)) / 2
                     replay_losses.append(replay_loss_.cpu().detach().numpy())
                     replay_loss = replay_loss + replay_loss_
+                    break
                 elif self._replay_type == 'si':
-                    for n, p in model.named_parameters():
+                    for n, p in self._q_func.named_parameters():
                         if p.grad is not None and n in self._critic_fisher.keys():
                             self._critic_W[n].add_(-p.grad * (p.detach() - self._critic_older_params[n]))
                         self._critic_older_params[n] = p.detach().clone()
                     replay_loss_ = 0
-                    for n, p in self.named_parameters():
+                    for n, p in self.q_func.named_parameters():
                         if p.requires_grad:
                             replay_loss_ = replay_loss_ + torch.mean(self._critic_omega[n] * (p - self._critic_older_params[n]) ** 2)
                     replay_losses.append(replay_loss_.cpu().detach().numpy())
                     replay_loss = replay_loss + replay_loss_
+                    break
                 elif self._replay_type == 'gem':
                     replay_batch = cast(TorchMiniBatch, replay_batch)
                     q_tpn = self.compute_target(replay_batch)
@@ -486,6 +489,7 @@ class COImpl():
                             replay_loss_ = torch.mean(self._actor_fisher[n] * (p - self._actor_older_params[n]).pow(2)) / 2
                     replay_losses.append(replay_loss_)
                     replay_loss = replay_loss + replay_loss_
+                    break
                 elif self._replay_type == 'rwalk':
                     curr_feat_ext = {n: p.clone().detach() for n, p in self._policy.named_parameters() if p.requires_grad}
                     # store gradients without regularization term
@@ -500,6 +504,7 @@ class COImpl():
                             replay_loss_ = replay_loss_  + torch.mean((self._actor_fisher[n] + self._actor_scores[n]) * (p - self._actor_older_params[n]).pow(2)) / 2
                     replay_losses.append(replay_loss_)
                     replay_loss = replay_loss + replay_loss_
+                    break
                 elif self._replay_type == 'si':
                     for n, p in self._policy.named_parameters():
                         if p.grad is not None and n in self._actor_fisher.keys():
@@ -511,6 +516,7 @@ class COImpl():
                             replay_loss_ = replay_loss_ + torch.mean(self._actor_omega[n] * (p - self._actor_older_params[n]) ** 2)
                     replay_losses.append(replay_loss_)
                     replay_loss = replay_loss + replay_loss_
+                    break
                 elif self._replay_type == 'gem':
                     replay_batch = cast(TorchMiniBatch, replay_batch)
                     replay_loss_ = self.compute_actor_loss(replay_batch) / len(replay_batches)

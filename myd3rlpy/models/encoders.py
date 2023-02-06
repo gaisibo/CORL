@@ -3,20 +3,14 @@ from typing import Any, ClassVar, Dict, List, Optional, Sequence, Type, Union
 
 from torch import nn
 
-from d3rlpy.decorators import pretty_repr
-from d3rlpy.torch_utility import Swish
-from d3rlpy.models.encoders import EncoderFactory, register_encoder_factory, _create_activation
-from d3rlpy.models.torch import (
-    Encoder,
-    EncoderWithAction,
-    PixelEncoder,
-    PixelEncoderWithAction,
-    VectorEncoder,
-    VectorEncoderWithAction,
+from d3rlpy.models.encoder import EncoderFactory, register_encoder_factory, _create_activation
+from myd3rlpy.models.torch import (
+    VAEEncoder,
+    VAEEncoderWithAction,
 )
 
 
-class LargeVectorEncoderFactory(EncoderFactory):
+class VAEEncoderFactory(EncoderFactory):
     """Vector encoder factory class.
 
     This is the default encoder factory for vector observation.
@@ -31,7 +25,7 @@ class LargeVectorEncoderFactory(EncoderFactory):
 
     """
 
-    TYPE: ClassVar[str] = "large_vector"
+    TYPE: ClassVar[str] = "vector"
     _hidden_units: Sequence[int]
     _activation: str
     _use_batch_norm: bool
@@ -40,26 +34,32 @@ class LargeVectorEncoderFactory(EncoderFactory):
 
     def __init__(
         self,
-        hidden_units: Optional[Sequence[int]] = None,
+        hidden_units1: Optional[Sequence[int]] = None,
+        hidden_units2: Optional[Sequence[int]] = None,
         activation: str = "relu",
         use_batch_norm: bool = False,
         dropout_rate: Optional[float] = None,
         use_dense: bool = False,
     ):
-        if hidden_units is None:
-            self._hidden_units = [1024, 1024]
+        if hidden_units1 is None:
+            self._hidden_units1 = [256, 256]
         else:
-            self._hidden_units = hidden_units
+            self._hidden_units1 = hidden_units1
+        if hidden_units2 is None:
+            self._hidden_units2 = [256, 256]
+        else:
+            self._hidden_units2 = hidden_units2
         self._activation = activation
         self._use_batch_norm = use_batch_norm
         self._dropout_rate = dropout_rate
         self._use_dense = use_dense
 
-    def create(self, observation_shape: Sequence[int]) -> VectorEncoder:
+    def create(self, observation_shape: Sequence[int]) -> VAEEncoder:
         assert len(observation_shape) == 1
-        return VectorEncoder(
+        return VAEEncoder(
             observation_shape=observation_shape,
-            hidden_units=self._hidden_units,
+            hidden_units1=self._hidden_units1,
+            hidden_units2=self._hidden_units2,
             use_batch_norm=self._use_batch_norm,
             dropout_rate=self._dropout_rate,
             use_dense=self._use_dense,
@@ -71,12 +71,13 @@ class LargeVectorEncoderFactory(EncoderFactory):
         observation_shape: Sequence[int],
         action_size: int,
         discrete_action: bool = False,
-    ) -> VectorEncoderWithAction:
+    ) -> VAEEncoderWithAction:
         assert len(observation_shape) == 1
-        return VectorEncoderWithAction(
+        return VAEEncoderWithAction(
             observation_shape=observation_shape,
             action_size=action_size,
-            hidden_units=self._hidden_units,
+            hidden_units1=self._hidden_units1,
+            hidden_units2=self._hidden_units2,
             use_batch_norm=self._use_batch_norm,
             dropout_rate=self._dropout_rate,
             use_dense=self._use_dense,
@@ -86,11 +87,16 @@ class LargeVectorEncoderFactory(EncoderFactory):
 
     def get_params(self, deep: bool = False) -> Dict[str, Any]:
         if deep:
-            hidden_units = copy.deepcopy(self._hidden_units)
+            hidden_units1 = copy.deepcopy(self._hidden_units1)
         else:
-            hidden_units = self._hidden_units
+            hidden_units1 = self._hidden_units1
+        if deep:
+            hidden_units2 = copy.deepcopy(self._hidden_units2)
+        else:
+            hidden_units2 = self._hidden_units2
         params = {
-            "hidden_units": hidden_units,
+            "hidden_units1": hidden_units1,
+            "hidden_units2": hidden_units2,
             "activation": self._activation,
             "use_batch_norm": self._use_batch_norm,
             "dropout_rate": self._dropout_rate,
@@ -98,4 +104,4 @@ class LargeVectorEncoderFactory(EncoderFactory):
         }
         return params
 
-register_encoder_factory(LargeVectorEncoderFactory)
+register_encoder_factory(VAEEncoderFactory)
