@@ -31,6 +31,7 @@ from utils.utils import Struct
 
 replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'terminals', 'policy_actions', 'qs', 'phis', 'psis']
 class STImpl(STImpl, CQLImpl):
+
     def compute_critic_loss(
             self, batch: TorchMiniBatch, q_tpn: torch.Tensor, clone_critic: bool = False, online: bool = False
     ) -> torch.Tensor:
@@ -80,34 +81,29 @@ class STImpl(STImpl, CQLImpl):
             loss = (entropy - q_t).mean()
         return loss
 
-    def copy_network(self):
-        self._clone_policy = copy.deepcopy(self._policy)
-        self._clone_q_func = copy.deepcopy(self._q_func)
-        self._transformer = copy.deepcopy(self._transformer)
-
-    def reinit_network(self):
-        initial_val = math.log(self._initial_temperature)
-        self._log_temp = create_parameter((1, 1), initial_val)
-        initial_val = math.log(self._initial_alpha)
-        self._log_alpha = create_parameter((1, 1), initial_val)
-        if self._use_gpu:
-            self.to_gpu(self._use_gpu)
-        else:
-            self.to_cpu()
-        self._actor_optim = self._actor_optim_factory.create(
-            self._policy.parameters(), lr=self._actor_learning_rate
-        )
-        if self._temp_learning_rate > 0:
-            self._temp_optim = self._temp_optim_factory.create(
-                self._log_temp.parameters(), lr=self._temp_learning_rate
-            )
-        self._critic_optim = self._critic_optim_factory.create(
-            self._q_func.parameters(), lr=self._critic_learning_rate
-        )
-        if self._alpha_learning_rate > 0:
-            self._alpha_optim = self._alpha_optim_factory.create(
-                self._log_alpha.parameters(), lr=self._alpha_learning_rate
-            )
+    # def reinit_network(self):
+    #     initial_val = math.log(self._initial_temperature)
+    #     self._log_temp = create_parameter((1, 1), initial_val)
+    #     initial_val = math.log(self._initial_alpha)
+    #     self._log_alpha = create_parameter((1, 1), initial_val)
+    #     if self._use_gpu:
+    #         self.to_gpu(self._use_gpu)
+    #     else:
+    #         self.to_cpu()
+    #     self._actor_optim = self._actor_optim_factory.create(
+    #         self._policy.parameters(), lr=self._actor_learning_rate
+    #     )
+    #     if self._temp_learning_rate > 0:
+    #         self._temp_optim = self._temp_optim_factory.create(
+    #             self._log_temp.parameters(), lr=self._temp_learning_rate
+    #         )
+    #     self._critic_optim = self._critic_optim_factory.create(
+    #         self._q_func.parameters(), lr=self._critic_learning_rate
+    #     )
+    #     if self._alpha_learning_rate > 0:
+    #         self._alpha_optim = self._alpha_optim_factory.create(
+    #             self._log_alpha.parameters(), lr=self._alpha_learning_rate
+    #         )
 
     def _build_actor(self) -> None:
         self._policy = create_squashed_normal_policy(

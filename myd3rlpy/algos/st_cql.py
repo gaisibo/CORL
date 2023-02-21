@@ -55,6 +55,7 @@ from online.eval_policy import eval_policy
 
 from myd3rlpy.algos.st import ST
 from myd3rlpy.algos.torch.state_vae_impl import StateVAEImpl as StateVAEImpl
+from myd3rlpy.models.vaes import VAEFactory, create_vae_factory
 from utils.utils import Struct
 
 
@@ -121,11 +122,16 @@ class ST(ST, CQL):
 
     _actor_learning_rate: float
     _critic_learning_rate: float
+    _vae_learning_rate: float
     _actor_optim_factory: OptimizerFactory
     _critic_optim_factory: OptimizerFactory
+    _vae_optim_factory: OptimizerFactory
     _actor_encoder_factory: EncoderFactory
     _critic_encoder_factory: EncoderFactory
+    _vae_encoder_factory: EncoderFactory
     _q_func_factory: QFunctionFactory
+    _vae_factory: VAEFactory
+    _feature_size: int
     # actor必须被重放，没用选择。
     _tau: float
     _n_critics: int
@@ -147,8 +153,7 @@ class ST(ST, CQL):
     _select_time: int
     _model_noise: float
 
-    _task_id: str
-    _single_head: bool
+    _merge: bool
 
     def __init__(
         self,
@@ -156,6 +161,8 @@ class ST(ST, CQL):
         critic_replay_lambda=1,
         actor_replay_type='rl',
         actor_replay_lambda=1,
+        vae_replay_type = 'bc',
+        vae_replay_lambda = 1,
         gem_alpha: float = 1,
         agem_alpha: float = 1,
         ewc_rwalk_alpha: float = 0.5,
@@ -167,20 +174,25 @@ class ST(ST, CQL):
         log_prob_topk = 10,
         experience_type = 'random_transition',
         sample_type = 'retrain',
+
         match_prop_quantile = 0.5,
         match_epsilon = 0.1,
         random_sample_times = 10,
 
-        critic_update_time = 1,
+        critic_update_step = 100000,
 
-        clone_actor = False,
-        clone_critic = False,
-        clone_train_time = 200000,
+        clone_critic = True,
+        clone_actor = True,
+        merge = False,
+        coldstart_step = 5000,
 
         fine_tuned_step = 1,
 
         use_vae = False,
-        vae_args = None,
+        vae_learning_rate = 1e-3,
+        vae_optim_factory = AdamFactory(),
+        vae_factory = 'vector',
+        feature_size = 256,
 
         **kwargs: Any
     ):
@@ -191,6 +203,8 @@ class ST(ST, CQL):
         self._critic_replay_lambda = critic_replay_lambda
         self._actor_replay_type = actor_replay_type
         self._actor_replay_lambda = actor_replay_lambda
+        self._vae_replay_type = vae_replay_type
+        self._vae_replay_lambda = vae_replay_lambda
 
         self._gem_alpha = gem_alpha
         self._agem_alpha = agem_alpha
@@ -205,22 +219,26 @@ class ST(ST, CQL):
         self._experience_type = experience_type
         self._sample_type = sample_type
 
-        self._begin_grad_step = 0
-
         self._match_prop_quantile = match_prop_quantile
         self._match_epsilon = match_epsilon
         self._random_sample_times = random_sample_times
 
-        self._critic_update_time = critic_update_time
+        self._critic_update_step = critic_update_step
 
-        self._clone_actor = clone_actor
         self._clone_critic = clone_critic
-        self._clone_train_time = clone_train_time
-
+        self._clone_actor = clone_actor
+        self._coldstart_step = coldstart_step
+        self._merge = merge
         self._fine_tuned_step = fine_tuned_step
 
         self._use_vae = use_vae
-        self._vae_args = vae_args
+        self._vae_learning_rate = vae_learning_rate
+        self._vae_optim_factory = vae_optim_factory
+        if isinstance(vae_factory, str):
+            self._vae_factory = create_vae_factory(vae_factory)
+        else:
+            self._vae_factory = vae_factory
+        self._feature_size = feature_size
 
     def _create_impl(
         self, observation_shape: Sequence[int], action_size: int
@@ -230,19 +248,26 @@ class ST(ST, CQL):
             'action_size':action_size,
             'actor_learning_rate':self._actor_learning_rate,
             'critic_learning_rate':self._critic_learning_rate,
+            'vae_learning_rate':self._vae_learning_rate,
             'temp_learning_rate':self._temp_learning_rate,
             'alpha_learning_rate':self._alpha_learning_rate,
             'actor_optim_factory':self._actor_optim_factory,
             'critic_optim_factory':self._critic_optim_factory,
+            'vae_optim_factory':self._vae_optim_factory,
             'temp_optim_factory':self._temp_optim_factory,
             'alpha_optim_factory':self._alpha_optim_factory,
             'actor_encoder_factory':self._actor_encoder_factory,
             'critic_encoder_factory':self._critic_encoder_factory,
+            'vae_factory': self._vae_factory,
+            'use_vae': self._use_vae,
+            'feature_size': self._feature_size,
             'q_func_factory':self._q_func_factory,
             'critic_replay_type':self._critic_replay_type,
             'critic_replay_lambda':self._critic_replay_lambda,
             'actor_replay_type':self._actor_replay_type,
             'actor_replay_lambda':self._actor_replay_lambda,
+            'vae_replay_type':self._vae_replay_type,
+            'vae_replay_lambda':self._vae_replay_lambda,
             'gamma':self._gamma,
             'gem_alpha':self._gem_alpha,
             'agem_alpha':self._agem_alpha,
@@ -261,8 +286,6 @@ class ST(ST, CQL):
             'scaler':self._scaler,
             'action_scaler':self._action_scaler,
             'reward_scaler':self._reward_scaler,
-            'clone_actor': self._clone_actor,
-            'clone_critic': self._clone_critic,
             'fine_tuned_step': self._fine_tuned_step,
         }
         if self._impl_name == 'cql':
@@ -285,77 +308,40 @@ class ST(ST, CQL):
         )
         self._impl.build()
 
-    def _create_vae_impl(
-        self, observation_shape: Sequence[int], action_size: int
-    ) -> None:
-        # 'learning_rate':self._vae_learning_rate,
-        # 'optim_factory':self._vae_optim_factory,
-        # 'factory':self._vae_factory,
-        # 'replay_type':self._vae_replay_type,
-        # 'replay_lambda':self._vae_replay_lambda,
-        impl_dict = self._vae_args
-        impl_dict['observation_shape'] = observation_shape
-        impl_dict['action_size'] = action_size
-        impl_dict['gem_alpha'] = self._gem_alpha
-        impl_dict['agem_alpha'] = self._agem_alpha
-        impl_dict['ewc_rwalk_alpha'] = self._ewc_rwalk_alpha
-        impl_dict['use_gpu'] = self._use_gpu
-        impl_dict['scaler'] = self._scaler
-        impl_dict['action_scaler'] = self._action_scaler
-        impl_dict['reward'] = self._reward_scaler
-        self._vae_impl = StateVAEImpl(
-            **impl_dict
-        )
-        self._vae_impl.build()
-
-    def update(self, batch: TransitionMiniBatch, clone_critic: bool=False, clone_actor: bool=False, online: bool = False, batch_num: int=0, total_step: int=0, replay_batch: Optional[List[Tensor]]=None) -> Dict[int, float]:
-    # def update(self, batch: TransitionMiniBatch, online: bool = False, batch_num: int=0, total_step: int=0, replay_batch: Optional[List[Tensor]]=None) -> Dict[int, float]:
-        """Update parameters with mini-batch of data.
-        Args:
-            batch: mini-batch data.
-        Returns:
-            dictionary of metrics.
-        """
-        loss = self._update(batch, clone_critic, clone_actor, online, batch_num, total_step, replay_batch)
-        loss.update(self._vae_update(batch, replay_batch))
-        # loss = self._update(batch, online, batch_num, total_step, replay_batch)
-        self._grad_step += 1
-        return loss
-
-    def _vae_update(self, batch: TransitionMiniBatch, replay_batch: Optional[List[Tensor]]=None):
-        assert self._vae_impl is not None, IMPL_NOT_INITIALIZED_ERROR
-        metrics = {}
-        vae_loss, replay_vae_loss = self._vae_impl.update(batch, replay_batch)
-        # actor_loss, replay_actor_loss = self._impl.update_actor(batch, replay_batch, online=online)
-        metrics.update({"vae_loss": vae_loss})
-        metrics.update({"replay_vae_loss": replay_vae_loss})
-
-        return metrics
-
     # 注意欧氏距离最近邻被塞到actions后面了。
-    def _update(self, batch: TransitionMiniBatch, clone_critic: bool, clone_actor: bool, online: bool, batch_num: int, total_step: int, replay_batch: Optional[List[Tensor]]=None) -> Dict[int, float]:
-    # def _update(self, batch: TransitionMiniBatch, online: bool, batch_num: int, total_step: int, replay_batch: Optional[List[Tensor]]=None) -> Dict[int, float]:
+    def _update(self, batch: TransitionMiniBatch, online: bool, batch_num: int, total_step: int, coldstart_step: Optional[int] = None, replay_batch: Optional[List[Tensor]]=None) -> Dict[int, float]:
+        if coldstart_step is None:
+            coldstart_step = self._coldstart_step
         assert self._impl is not None, IMPL_NOT_INITIALIZED_ERROR
         metrics = {}
-        if self._temp_learning_rate > 0:
-            temp_loss, temp = self._impl.update_temp(batch)
-            metrics.update({"temp_loss": temp_loss, "temp": temp})
-        if self._alpha_learning_rate > 0:
-            alpha_loss, alpha = self._impl.update_alpha(batch)
-            metrics.update({"alpha_loss": alpha_loss, "alpha": alpha})
+        if not self._merge or total_step < coldstart_step:
+            if self._temp_learning_rate > 0:
+                temp_loss, temp = self._impl.update_temp(batch)
+                metrics.update({"temp_loss": temp_loss, "temp": temp})
+            if self._alpha_learning_rate > 0:
+                alpha_loss, alpha = self._impl.update_alpha(batch)
+                metrics.update({"alpha_loss": alpha_loss, "alpha": alpha})
 
-        if batch_num % self._critic_update_time  == 0:
-            critic_loss, replay_critic_loss = self._impl.update_critic(batch, replay_batch, clone_critic, online=online)
-            metrics.update({"critic_loss": critic_loss})
-            metrics.update({"replay_critic_loss": replay_critic_loss})
+            if total_step > self._critic_update_step:
+                critic_loss, replay_critic_loss = self._impl.update_critic(batch, replay_batch, clone_critic=self._clone_critic, online=online)
+                metrics.update({"critic_loss": critic_loss})
+                metrics.update({"replay_critic_loss": replay_critic_loss})
 
-        actor_loss, replay_actor_loss = self._impl.update_actor(batch, replay_batch, clone_actor, online=online)
-        # actor_loss, replay_actor_loss = self._impl.update_actor(batch, replay_batch, online=online)
-        metrics.update({"actor_loss": actor_loss})
-        metrics.update({"replay_actor_loss": replay_actor_loss})
+            actor_loss, replay_actor_loss = self._impl.update_actor(batch, replay_batch, clone_actor=self._clone_actor, online=online)
+            # actor_loss, replay_actor_loss = self._impl.update_actor(batch, replay_batch, online=online)
+            metrics.update({"actor_loss": actor_loss})
+            metrics.update({"replay_actor_loss": replay_actor_loss})
 
-        self._impl.update_critic_target()
-        self._impl.update_actor_target()
+            if self._use_vae and not online:
+                vae_loss, replay_vae_loss = self._impl.update_vae(batch, replay_batch)
+                # actor_loss, replay_actor_loss = self._impl.update_actor(batch, replay_batch, online=online)
+                metrics.update({"vae_loss": vae_loss})
+                metrics.update({"replay_vae_loss": replay_vae_loss})
+
+            self._impl.update_critic_target()
+            self._impl.update_actor_target()
+        elif not online:
+            self._merge_update(batch, replay_batch)
 
         return metrics
 

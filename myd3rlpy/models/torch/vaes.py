@@ -20,7 +20,7 @@ class VAE(nn.Module, metaclass=ABCMeta):
         pass
 
     @abstractmethod
-    def generate(self, num: int, x: torch.Tensor) -> torch.Tensor:
+    def generate(self, num: int) -> torch.Tensor:
         pass
 
     # @abstractmethod
@@ -143,7 +143,7 @@ class VectorVAE(VAE):
         x_ = self.decode(z)
         return x_, mu, logvar
 
-    def generate(self, num: int, x: torch.Tensor) -> torch.Tensor:
-        z = torch.randn(num, self._feature_size).to(x.device).to(x.dtype)
+    def generate(self, num: int) -> torch.Tensor:
+        z = torch.randn(num, self._feature_size).to(self._mu.weight.device).to(self._mu.weight.dtype)
         x_ = self.decode(z)
         return x_

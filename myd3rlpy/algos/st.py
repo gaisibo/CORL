@@ -30,7 +30,7 @@ from d3rlpy.argument_utility import (
     check_q_func,
     check_use_gpu,
 )
-from d3rlpy.torch_utility import TorchMiniBatch, _get_attributes, hard_sync
+from d3rlpy.torch_utility import TorchMiniBatch, _get_attributes, hard_sync, map_location, get_state_dict
 from d3rlpy.dataset import MDPDataset, Episode, TransitionMiniBatch, Transition
 from d3rlpy.gpu import Device
 from d3rlpy.models.optimizers import AdamFactory, OptimizerFactory
@@ -59,7 +59,9 @@ from online.eval_policy import eval_policy
 
 # from myd3rlpy.dynamics.probabilistic_ensemble_dynamics import ProbabilisticEnsembleDynamics
 from myd3rlpy.algos.torch.co_impl import COImpl
+from myd3rlpy.algos.torch.state_vae_impl import StateVAEImpl
 from myd3rlpy.metrics.scorer import q_mean_scorer, q_replay_scorer
+from myd3rlpy.models.vaes import create_vae_factory
 from utils.utils import Struct
 
 
@@ -125,6 +127,34 @@ class ST():
     """
     _sample_type: str
 
+    def update(self, batch: TransitionMiniBatch, online: bool = False, batch_num: int=0, total_step: int=0, coldstart_step: Optional[int] = None, replay_batch: Optional[List[Tensor]]=None) -> Dict[int, float]:
+    # def update(self, batch: TransitionMiniBatch, online: bool = False, batch_num: int=0, total_step: int=0, replay_batch: Optional[List[Tensor]]=None) -> Dict[int, float]:
+        """Update parameters with mini-batch of data.
+        Args:
+            batch: mini-batch data.
+        Returns:
+            dictionary of metrics.
+        """
+        loss = self._update(batch, online, batch_num, total_step, coldstart_step, replay_batch)
+        self._grad_step += 1
+        return loss
+
+    # 注意欧氏距离最近邻被塞到actions后面了。
+    def _merge_update(self, batch: TransitionMiniBatch, replay_batch: Optional[List[Tensor]]=None) -> Dict[int, float]:
+        assert self._impl is not None, IMPL_NOT_INITIALIZED_ERROR
+        metrics = {}
+        critic_loss = self._impl.merge_update_critic(batch, replay_batch)
+        metrics.update({"critic_loss": critic_loss})
+
+        actor_loss = self._impl.merge_update_actor(batch, replay_batch)
+        metrics.update({"actor_loss": actor_loss})
+
+        if self._use_vae:
+            vae_loss = self._impl.merge_update_vae(batch, replay_batch)
+            metrics.update({"vae_loss": vae_loss})
+
+        return metrics
+
     def build_with_dataset(self, dataset, dataset_id):
         if self._impl is None:
             LOG.debug("Building models...")
@@ -136,20 +166,9 @@ class ST():
             self._impl._impl_id = dataset_id
             LOG.debug("Models have been built.")
         else:
+            self._impl._impl_id = dataset_id
             # self._impl.rebuild_critic()
             LOG.warning("Skip building models since they're already built.")
-        if self._use_vae and self._vae_impl is None:
-            LOG.debug("Building VAE")
-            observation_shape = dataset.get_observation_shape()
-            self.create_vae_impl(
-                self._process_observation_shape(observation_shape),
-            )
-            self._vae_impl._impl_id = dataset_id
-            LOG.debug("VAE have been built.")
-        elif self._vae_impl is not None:
-            LOG.warning("Skip building vae since they're already built.")
-        if self._use_vae:
-            self._impl._vae_impl = self._vae_impl
 
     def make_iterator(self, dataset, replay_dataset, n_steps, n_steps_per_epoch, n_epochs, shuffle):
         if replay_dataset is not None:
@@ -209,6 +228,27 @@ class ST():
         else:
             raise ValueError(f"invalid dataset type: {type(dataset)}")
 
+        # initialize scaler
+        if self._scaler:
+            LOG.debug("Fitting scaler...", scaler=self._scaler.get_type())
+            self._scaler.fit(transitions)
+
+        # initialize action scaler
+        if self._action_scaler:
+            LOG.debug(
+                "Fitting action scaler...",
+                action_scaler=self._action_scaler.get_type(),
+            )
+            self._action_scaler.fit(transitions)
+
+        # initialize reward scaler
+        if self._reward_scaler:
+            LOG.debug(
+                "Fitting reward scaler...",
+                reward_scaler=self._reward_scaler.get_type(),
+            )
+            self._reward_scaler.fit(transitions)
+
         if n_steps is not None:
             assert n_steps >= n_steps_per_epoch
             n_epochs = n_steps // n_steps_per_epoch
@@ -246,6 +286,7 @@ class ST():
         replay_iterator: Optional[Iterator] = None,
         replay_dataloader: Optional[DataLoader] = None,
         n_epochs: Optional[int] = None,
+        coldstart_step: Optional[int] = None,
         save_metrics: bool = True,
         experiment_name: Optional[str] = None,
         with_timestamp: bool = True,
@@ -308,6 +349,7 @@ class ST():
                 replay_iterator,
                 replay_dataloader,
                 n_epochs,
+                coldstart_step,
                 save_metrics,
                 experiment_name,
                 with_timestamp,
@@ -340,6 +382,7 @@ class ST():
         replay_iterator: Optional[TransitionIterator] = None,
         replay_dataloader: Optional[DataLoader] = None,
         n_epochs: Optional[int] = None,
+        coldstart_step: Optional[int] = None,
         save_metrics: bool = True,
         experiment_name: Optional[str] = None,
         with_timestamp: bool = True,
@@ -405,20 +448,9 @@ class ST():
             self._impl._impl_id = dataset_id
             LOG.debug("Models have been built.")
         else:
+            self._impl._impl_id = dataset_id
             # self._impl.rebuild_critic()
             LOG.warning("Skip building models since they're already built.")
-        if self._use_vae and self._vae_impl is None:
-            LOG.debug("Building VAE")
-            observation_shape = dataset.get_observation_shape()
-            self.create_vae_impl(
-                self._process_observation_shape(observation_shape),
-            )
-            self._vae_impl._impl_id = dataset_id
-            LOG.debug("VAE have been built.")
-        elif self._vae_impl is not None:
-            LOG.warning("Skip building vae since they're already built.")
-        if self._use_vae:
-            self._impl._vae_impl = self._vae_impl
 
         # setup logger
         logger = self._prepare_logger(
@@ -489,7 +521,7 @@ class ST():
 
                     # update parameters
                     with logger.measure_time("algorithm_update"):
-                        loss = self.update(batch, clone_critic=self._clone_critic, clone_actor=self._clone_actor, batch_num=batch_num, total_step=total_step, replay_batch=replay_batch)
+                        loss = self.update(batch, batch_num=batch_num, total_step=total_step, coldstart_step=coldstart_step, replay_batch=replay_batch)
                         # self._impl.increase_siamese_alpha(epoch - n_epochs, itr / len(iterator))
 
                     # record metrics
@@ -552,7 +584,7 @@ class ST():
             self._impl.actor_gem_post_train_process()
         if self._impl_name in ['mgcql', 'mqcql', 'mrcql']:
             self._impl.match_prop_post_train_process(iterator)
-        self._impl.reinit_network()
+        # self._impl.reinit_network()
 
         if scorers_list and eval_episodes_list:
             for scorer_num, (scorers, eval_episodes) in enumerate(zip(scorers_list, eval_episodes_list)):
@@ -564,9 +596,10 @@ class ST():
                 self._evaluate(eval_episodes, rename_scorers, logger)
                 # save metrics
                 metrics = logger.commit(0, 0)
-        if self._clone_actor or self._clone_critic:
+        if self._merge or self._use_vae:
             self._impl.save_clone_data()
-            self._vae_impl.save_clone_data()
+        self._impl._targ_q_func = copy.deepcopy(self._impl._q_func)
+        self._impl._targ_policy = copy.deepcopy(self._impl._policy)
 
     def online_fit(
         self,

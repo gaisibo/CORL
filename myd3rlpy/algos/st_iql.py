@@ -24,16 +24,14 @@ from d3rlpy.argument_utility import (
     ScalerArg,
     UseGPUArg,
     check_encoder,
-    check_q_func,
     check_use_gpu,
 )
 from d3rlpy.torch_utility import TorchMiniBatch, _get_attributes
 from d3rlpy.dataset import MDPDataset, Episode, TransitionMiniBatch, Transition
 from d3rlpy.gpu import Device
 from d3rlpy.models.optimizers import AdamFactory, OptimizerFactory
-from d3rlpy.models.q_functions import QFunctionFactory
 from d3rlpy.algos.base import AlgoBase
-from d3rlpy.algos.td3_plus_bc import TD3PlusBC
+from d3rlpy.algos.iql import IQL
 from d3rlpy.constants import (
     CONTINUOUS_ACTION_SPACE_MISMATCH_ERROR,
     DISCRETE_ACTION_SPACE_MISMATCH_ERROR,
@@ -60,7 +58,7 @@ from utils.utils import Struct
 
 
 replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'terminals', 'policy_actions', 'qs', 'phis', 'psis']
-class ST(ST, TD3PlusBC):
+class ST(ST, IQL):
     r"""Twin Delayed Deep Deterministic Policy Gradients algorithm.
     TD3 is an improved DDPG-based algorithm.
     Major differences from DDPG are as follows.
@@ -93,8 +91,6 @@ class ST(ST, TD3PlusBC):
             encoder factory for the actor.
         critic_encoder_factory (d3rlpy.models.encoders.EncoderFactory or str):
             encoder factory for the critic.
-        q_func_factory (d3rlpy.models.q_functions.QFunctionFactory or str):
-            Q function factory.
         batch_size (int): mini-batch size.
         n_frames (int): the number of frames to stack for image observation.
         n_steps (int): N-step TD calculation.
@@ -122,11 +118,17 @@ class ST(ST, TD3PlusBC):
 
     _actor_learning_rate: float
     _critic_learning_rate: float
+    _vae_learning_rate: float
     _actor_optim_factory: OptimizerFactory
     _critic_optim_factory: OptimizerFactory
+    _vae_optim_factory: OptimizerFactory
     _actor_encoder_factory: EncoderFactory
     _critic_encoder_factory: EncoderFactory
-    _q_func_factory: QFunctionFactory
+    _value_encoder_factory: EncoderFactory
+    _vae_encoder_factory: EncoderFactory
+    _vae_factory: VAEFactory
+    _feature_size: int
+    # actor必须被重放，没用选择。
     _tau: float
     _n_critics: int
     _update_actor_interval: int
@@ -138,16 +140,27 @@ class ST(ST, TD3PlusBC):
     _rollout_horizon: int
     _rollout_batch_size: int
     _use_gpu: Optional[Device]
+    _critic_replay_type: bool
+    _critic_replay_lambda: float
+    _actor_replay_type: bool
+    _actor_replay_lambda: float
+    _replay_model: bool
+    _generate_step: int
+    _select_time: int
+    _model_noise: float
+
+    _task_id: str
+    _single_head: bool
+    _merge: bool
 
     def __init__(
         self,
-        critic_replay_type='orl',
+        critic_replay_type='bc',
         critic_replay_lambda=1,
-        actor_replay_type='orl',
+        actor_replay_type='rl',
         actor_replay_lambda=1,
         vae_replay_type = 'bc',
         vae_replay_lambda = 1,
-        conservative_threshold=0.1,
         gem_alpha: float = 1,
         agem_alpha: float = 1,
         ewc_rwalk_alpha: float = 0.5,
@@ -159,11 +172,14 @@ class ST(ST, TD3PlusBC):
         log_prob_topk = 10,
         experience_type = 'random_transition',
         sample_type = 'retrain',
+        match_prop_quantile = 0.5,
+        match_epsilon = 0.1,
+        random_sample_times = 10,
 
         critic_update_step = 100000,
 
-        clone_critic = True,
-        clone_actor = True,
+        clone_critic = False,
+        clone_actor = False,
         merge = False,
         coldstart_step = 5000,
 
@@ -178,7 +194,7 @@ class ST(ST, TD3PlusBC):
         **kwargs: Any
     ):
         super().__init__(
-            kwargs = kwargs,
+            **kwargs,
         )
         self._critic_replay_type = critic_replay_type
         self._critic_replay_lambda = critic_replay_lambda
@@ -200,7 +216,11 @@ class ST(ST, TD3PlusBC):
         self._experience_type = experience_type
         self._sample_type = sample_type
 
-        self._conservative_threshold = conservative_threshold
+        self._begin_grad_step = 0
+
+        self._match_prop_quantile = match_prop_quantile
+        self._match_epsilon = match_epsilon
+        self._random_sample_times = random_sample_times
 
         self._critic_update_step = critic_update_step
 
@@ -222,80 +242,77 @@ class ST(ST, TD3PlusBC):
     def _create_impl(
         self, observation_shape: Sequence[int], action_size: int
     ) -> None:
-        if self._impl_name == 'td3_plus_bc':
-            from myd3rlpy.algos.torch.st_td3_plus_bc_impl import STTD3PlusBCImpl as STImpl
-        elif self._impl_name == 'td3n':
-            from myd3rlpy.algos.torch.st_td3n_impl import STTD3NImpl as STImpl
-        else:
-            print(self._impl_name)
-            raise NotImplementedError
+        impl_dict = {
+            'observation_shape':observation_shape,
+            'action_size':action_size,
+            'actor_learning_rate':self._actor_learning_rate,
+            'critic_learning_rate':self._critic_learning_rate,
+            'vae_learning_rate':self._vae_learning_rate,
+            'actor_optim_factory':self._actor_optim_factory,
+            'critic_optim_factory':self._critic_optim_factory,
+            'vae_optim_factory':self._vae_optim_factory,
+            'actor_encoder_factory':self._actor_encoder_factory,
+            'critic_encoder_factory':self._critic_encoder_factory,
+            'value_encoder_factory':self._value_encoder_factory,
+            'vae_factory': self._vae_factory,
+            'use_vae': self._use_vae,
+            'feature_size': self._feature_size,
+            'critic_replay_type':self._critic_replay_type,
+            'critic_replay_lambda':self._critic_replay_lambda,
+            'actor_replay_type':self._actor_replay_type,
+            'actor_replay_lambda':self._actor_replay_lambda,
+            'vae_replay_type':self._vae_replay_type,
+            'vae_replay_lambda':self._vae_replay_lambda,
+            'gamma':self._gamma,
+            'gem_alpha':self._gem_alpha,
+            'agem_alpha':self._agem_alpha,
+            'ewc_rwalk_alpha':self._ewc_rwalk_alpha,
+            'damping':self._damping,
+            'epsilon':self._epsilon,
+            'tau':self._tau,
+            'n_critics':self._n_critics,
+            'expectile': self._expectile,
+            'weight_temp': self._weight_temp,
+            'max_weight': self._max_weight,
+            'use_gpu':self._use_gpu,
+            'scaler':self._scaler,
+            'action_scaler':self._action_scaler,
+            'reward_scaler':self._reward_scaler,
+            'fine_tuned_step': self._fine_tuned_step,
+        }
+        assert self._impl_name == 'iql'
+        from myd3rlpy.algos.torch.st_iql_impl import STImpl as STImpl
         self._impl = STImpl(
-            observation_shape=observation_shape,
-            action_size=action_size,
-            actor_learning_rate=self._actor_learning_rate,
-            critic_learning_rate=self._critic_learning_rate,
-            vae_learning_rate=self._vae_learning_rate,
-            actor_optim_factory=self._actor_optim_factory,
-            critic_optim_factory=self._critic_optim_factory,
-            vae_optim_factory=self._vae_optim_factory,
-            actor_encoder_factory=self._actor_encoder_factory,
-            critic_encoder_factory=self._critic_encoder_factory,
-            vae_factory = self._vae_factory,
-            use_vae = self._use_vae,
-            feature_size = self._feature_size,
-            q_func_factory=self._q_func_factory,
-            critic_replay_type=self._critic_replay_type,
-            critic_replay_lambda=self._critic_replay_lambda,
-            actor_replay_type=self._actor_replay_type,
-            actor_replay_lambda=self._actor_replay_lambda,
-            vae_replay_type=self._vae_replay_type,
-            vae_replay_lambda=self._vae_replay_lambda,
-            # conservative_threshold=self._conservative_threshold,
-            gamma=self._gamma,
-            gem_alpha=self._gem_alpha,
-            agem_alpha=self._agem_alpha,
-            ewc_rwalk_alpha=self._ewc_rwalk_alpha,
-            damping=self._damping,
-            epsilon=self._epsilon,
-            tau=self._tau,
-            n_critics=self._n_critics,
-            target_smoothing_sigma=self._target_smoothing_sigma,
-            target_smoothing_clip=self._target_smoothing_clip,
-            alpha=self._alpha,
-            use_gpu=self._use_gpu,
-            scaler=self._scaler,
-            action_scaler=self._action_scaler,
-            reward_scaler=self._reward_scaler,
-            fine_tuned_step = self._fine_tuned_step,
+            **impl_dict
         )
         self._impl.build()
 
+    # 注意欧氏距离最近邻被塞到actions后面了。
     def _update(self, batch: TransitionMiniBatch, online: bool, batch_num: int, total_step: int, coldstart_step: Optional[int] = None, replay_batch: Optional[List[Tensor]]=None) -> Dict[int, float]:
         if coldstart_step is None:
             coldstart_step = self._coldstart_step
         assert self._impl is not None, IMPL_NOT_INITIALIZED_ERROR
         metrics = {}
-
         if not self._merge or total_step < coldstart_step:
-            if total_step > self._critic_update_step:
-                critic_loss, replay_critic_loss = self._impl.update_critic(batch, replay_batch)
-                metrics.update({"critic_loss": critic_loss})
-                metrics.update({"replay_critic_loss": replay_critic_loss})
+            critic_loss, replay_critic_loss = self._impl.update_critic(batch, replay_batch, clone_critic=self._clone_critic, online=online)
+            metrics.update({"critic_loss": critic_loss})
+            metrics.update({"replay_critic_loss": replay_critic_loss})
 
-            if self._grad_step % self._update_actor_interval == 0:
-                actor_loss, replay_actor_loss = self._impl.update_actor(batch, replay_batch)
+            if total_step > self._critic_update_step:
+                actor_loss, replay_actor_loss = self._impl.update_actor(batch, replay_batch, online=online)
+                # actor_loss, replay_actor_loss = self._impl.update_actor(batch, replay_batch, online=online)
                 metrics.update({"actor_loss": actor_loss})
                 metrics.update({"replay_actor_loss": replay_actor_loss})
-                self._impl.update_critic_target()
-                self._impl.update_actor_target()
 
             if self._use_vae and not online:
                 vae_loss, replay_vae_loss = self._impl.update_vae(batch, replay_batch)
                 # actor_loss, replay_actor_loss = self._impl.update_actor(batch, replay_batch, online=online)
                 metrics.update({"vae_loss": vae_loss})
                 metrics.update({"replay_vae_loss": replay_vae_loss})
+
+            self._impl.update_critic_target()
         elif not online:
-            self._merge_update(batch, replay_batch)
+            self._merge_update(batch,replay_batch)
 
         return metrics
 

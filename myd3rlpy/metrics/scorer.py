@@ -192,7 +192,7 @@ def match_on_environment(
     is_image = len(observation_shape) == 3
 
     def scorer(algo: AlgoProtocol, *args: Any) -> float:
-        print(f"test_id: {test_id}")
+        # print(f"test_id: {test_id}")
         try:
             env.reset_task(int(test_id))
         except:
@@ -298,7 +298,7 @@ def evaluate_on_environment(
 
     def scorer(algo: AlgoProtocol, *args: Any) -> float:
         if test_id is not None:
-            print(f"test_id: {test_id}")
+            # print(f"test_id: {test_id}")
             try:
                 env.reset_task(int(test_id))
             except:
@@ -364,8 +364,81 @@ def evaluate_on_environment(
 
     return scorer
 
+def merge_evaluate_on_environment(
+    env: gym.Env, test_id: str=None, clone_actor: bool = False, n_trials: int = 10, epsilon: float = 0.0, render: bool = False, mix: bool = False, add_on: bool = False, task_id_dim: int = 0,
+) -> Callable[..., float]:
+    """Returns scorer function of evaluation on environment.
+    This function returns scorer function, which is suitable to the standard
+    scikit-learn scorer function style.
+    The metrics of the scorer function is ideal metrics to evaluate the
+    resulted policies.
+    .. code-block:: python
+        import gym
+        from d3rlpy.algos import DQN
+        from d3rlpy.metrics.scorer import evaluate_on_environment
+        env = gym.make('CartPole-v0')
+        scorer = evaluate_on_environment(env)
+        cql = CQL()
+        mean_episode_return = scorer(cql)
+    Args:
+        env: gym-styled environment.
+        n_trials: the number of trials.
+        epsilon: noise factor for epsilon-greedy policy.
+        render: flag to render environment.
+    Returns:
+        scoerer function.
+    """
+
+    # for image observation
+    observation_shape = env.observation_space.shape
+    is_image = len(observation_shape) == 3
+
+    def scorer(algo1: AlgoProtocol, algo2: AlgoProtocol, *args: Any) -> float:
+        device = algo1._impl.device
+        episode_rewards = []
+        for _ in range(n_trials):
+            observation = env.reset()
+            observation = torch.from_numpy(observation).to(device).unsqueeze(dim=0).to(torch.float32)
+            episode_reward = 0.0
+
+            i = 0
+            j1 = 0; j2 = 0
+            while True:
+                action1 = algo1._impl._policy(observation)
+                q1 = algo1._impl._q_func(observation, action1)
+                action2 = algo2._impl._policy(observation)
+                q2 = algo2._impl._q_func(observation, action2)
+                if q1 > q2:
+                    j1 += 1
+                    action = action1.squeeze().cpu().detach().numpy()
+                else:
+                    j2 += 1
+                    action = action2.squeeze().cpu().detach().numpy()
+
+                observation, reward, done, pos = env.step(action)
+                episode_reward += reward
+                observation = torch.from_numpy(observation).to(device).unsqueeze(dim=0).to(torch.float32)
+
+                if render:
+                    env.render()
+
+                if done:
+                    break
+                if i > 1000:
+                    break
+
+                i += 1
+            episode_rewards.append(episode_reward)
+            print(f'total q1 max time: {j1}; total q2 max time: {j2}')
+        if add_on:
+            return float(np.mean(episode_rewards))
+        else:
+            return float(np.max(episode_rewards))
+
+    return scorer
+
 def single_evaluate_on_environment(
-    env: gym.Env, n_trials: int = 2, epsilon: float = 0.0, render: bool = False,
+    env: gym.Env, n_trials: int = 5, epsilon: float = 0.0, render: bool = False,
 ) -> Callable[..., float]:
     """Returns scorer function of evaluation on environment.
     This function returns scorer function, which is suitable to the standard
@@ -453,7 +526,7 @@ def dis_on_environment(
     is_image = len(observation_shape) == 3
 
     def scorer(algo: AlgoProtocol, *args: Any) -> float:
-        print(f"test_id: {test_id}")
+        # print(f"test_id: {test_id}")
         replay_observations = replay_dataset.tensors[0]
         replay_observations = replay_observations.to(algo._impl.device)
         try:
@@ -516,17 +589,21 @@ def dis_on_environment(
 
     return scorer
 
-def q_error_scorer(real_action_size: int, test_id: str) -> Callable[..., float]:
+def q_error_scorer(real_action_size: Optional[int] = None, test_id: Optional[str] = None) -> Callable[..., float]:
     def scorer(algo, replay_iterator):
         with torch.no_grad():
             save_id = algo._impl._impl_id
-            algo._impl.change_task(test_id)
+            if test_id is not None:
+                algo._impl.change_task(test_id)
             total_errors = []
             for batch in replay_iterator:
                 batch = dict(zip(replay_name, batch))
                 batch = Struct(**batch)
                 observations = batch.observations.to(algo._impl.device)
-                actions = batch.policy_actions.to(algo._impl.device)[:, :real_action_size]
+                if real_action_size is not None:
+                    actions = batch.policy_actions.to(algo._impl.device)[:, :real_action_size]
+                else:
+                    actions = batch.policy_actions.to(algo._impl.device)
                 qs = batch.qs.to(algo._impl.device)
                 rebuild_qs = algo._impl._q_func.forward(observations, actions)
                 loss = F.mse_loss(rebuild_qs, qs)
@@ -536,18 +613,22 @@ def q_error_scorer(real_action_size: int, test_id: str) -> Callable[..., float]:
         return float(torch.mean(total_errors).detach().cpu().numpy())
     return scorer
 
-def q_mean_scorer(real_action_size: int, test_id: str, batch_size: int = 1024) -> Callable[..., float]:
+def q_mean_scorer(real_action_size: Optional[int] = None, test_id: Optional[str] = None, batch_size: int = 1024) -> Callable[..., float]:
     def scorer(algo, origin_dataset):
         with torch.no_grad():
             save_id = algo._impl._impl_id
-            algo._impl.change_task(test_id)
+            if test_id is not None:
+                algo._impl.change_task(test_id)
             inner_qs = []
             outer_qs = []
             dataloader = DataLoader(TensorDataset(torch.from_numpy(origin_dataset.observations), torch.from_numpy(origin_dataset.actions)), batch_size=batch_size, shuffle=False)
             for batch in dataloader:
                 observations, actions = batch
                 observations = observations.to(algo._impl.device)
-                actions = actions.to(algo._impl.device)[:, :real_action_size]
+                if real_action_size is not None:
+                    actions = actions.to(algo._impl.device)[:, :real_action_size]
+                else:
+                    actions = actions.to(algo._impl.device)
                 q = algo._impl._q_func.forward(observations, actions)
                 inner_qs.append(q)
                 q = algo._impl._q_func.forward(observations, algo._impl._policy(observations))
@@ -558,18 +639,48 @@ def q_mean_scorer(real_action_size: int, test_id: str, batch_size: int = 1024) -
         return float(torch.mean(inner_qs).detach().cpu().numpy()), float(torch.mean(outer_qs).detach().cpu().numpy())
     return scorer
 
-def q_replay_scorer(real_action_size: int, test_id: str, batch_size: int = 1024) -> Callable[..., float]:
+def q_replay_scorer(real_action_size: Optional[int] = None, test_id: Optional[str] = None, batch_size: int = 1024) -> Callable[..., float]:
     def scorer(algo, replay_dataset):
         with torch.no_grad():
             save_id = algo._impl._impl_id
-            algo._impl.change_task(test_id)
+            if test_id is not None:
+                algo._impl.change_task(test_id)
             inner_qs = []
             outer_qs = []
             dataloader = DataLoader(replay_dataset, batch_size=batch_size, shuffle=False)
             for batch in dataloader:
                 observations, actions = batch[:2]
                 observations = observations.to(algo._impl.device)
-                actions = actions.to(algo._impl.device)[:, :real_action_size]
+                if real_action_size is not None:
+                    actions = actions.to(algo._impl.device)[:, :real_action_size]
+                else:
+                    actions = actions.to(algo._impl.device)
+                q = algo._impl._q_func.forward(observations, actions)
+                inner_qs.append(q)
+                q = algo._impl._q_func.forward(observations, algo._impl._policy(observations))
+                outer_qs.append(q)
+            inner_qs = torch.cat(inner_qs, dim=0)
+            outer_qs = torch.cat(outer_qs, dim=0)
+            algo._impl.change_task(save_id)
+        return float(torch.mean(inner_qs).detach().cpu().numpy()), float(torch.mean(outer_qs).detach().cpu().numpy())
+    return scorer
+
+def action_scorer(real_action_size: Optional[int] = None, test_id: Optional[str] = None, batch_size: int = 1024) -> Callable[..., float]:
+    def scorer(algo, replay_dataset):
+        with torch.no_grad():
+            save_id = algo._impl._impl_id
+            if test_id is not None:
+                algo._impl.change_task(test_id)
+            inner_qs = []
+            outer_qs = []
+            dataloader = DataLoader(replay_dataset, batch_size=batch_size, shuffle=False)
+            for batch in dataloader:
+                observations, actions = batch[:2]
+                observations = observations.to(algo._impl.device)
+                if real_action_size is not None:
+                    actions = actions.to(algo._impl.device)[:, :real_action_size]
+                else:
+                    actions = actions.to(algo._impl.device)
                 q = algo._impl._q_func.forward(observations, actions)
                 inner_qs.append(q)
                 q = algo._impl._q_func.forward(observations, algo._impl._policy(observations))
@@ -601,3 +712,166 @@ def dataset_value_scorer(
             values = algo.predict_value(batch.observations, batch.actions)
             total_values += cast(np.ndarray, values).tolist()
     return float(np.mean(total_values))
+
+
+
+
+# For single task
+def q_dataset_scorer(algo, episodes: List[Episode]) -> Callable[..., float]:
+    total_values = []
+    for episode in episodes:
+        for batch in _make_batches(episode, WINDOW_SIZE, algo.n_frames):
+            observations = torch.from_numpy(batch.observations).to(algo._impl.device).to(torch.float32)
+            actions = torch.from_numpy(batch.actions).to(algo._impl.device).to(torch.float32)
+            q_old = algo._impl._clone_q_func(observations, actions)
+            q_new = algo._impl._q_func(observations, actions)
+            total_values.append(F.mse_loss(q_old, q_new).item())
+    return sum(total_values) / len(total_values)
+
+def q_play_scorer(algo, episodes: List[Episode]) -> Callable[..., float]:
+    total_values = []
+    for episode in episodes:
+        for batch in _make_batches(episode, WINDOW_SIZE, algo.n_frames):
+            observations = torch.from_numpy(batch.observations).to(algo._impl.device).to(torch.float32)
+            actions = algo._impl._policy(observations)
+            q_old = algo._impl._clone_q_func(observations, actions)
+            q_new = algo._impl._q_func(observations, actions)
+            total_values.append(F.mse_loss(q_old, q_new).item())
+    return sum(total_values) / len(total_values)
+
+def q_online_diff_scorer(online_network):
+    q_network = online_network['trainer/qf1']
+    policy_network = online_network['trainer/policy']
+    def scorer(algo, episodes: List[Episode]):
+        total_values = []
+        for episode in episodes:
+            for batch in _make_batches(episode, WINDOW_SIZE, algo.n_frames):
+                observations = torch.from_numpy(batch.observations).to(algo._impl.device).to(torch.float32)
+                dist = policy_network(observations)
+                actions = dist.sample()
+                q_old = q_network(observations, actions)
+                observations = observations + torch.randn_like(observations) * 0.1
+                dist = policy_network(observations)
+                actions = dist.sample()
+                q_new = q_network(observations, actions)
+                total_values.append(F.mse_loss(q_old, q_new).item())
+        return sum(total_values) / len(total_values)
+    return scorer
+
+def q_offline_diff_scorer(algo, episodes: List[Episode]):
+    total_values = []
+    for episode in episodes:
+        for batch in _make_batches(episode, WINDOW_SIZE, algo.n_frames):
+            observations = algo._impl._vae.generate(batch.observations.shape[0]).detach()
+            actions = algo._impl._policy(observations)
+            q_old = algo._impl._q_func(observations, actions)
+            observations = observations + torch.randn_like(observations) * 0.1
+            actions = algo._impl._policy(observations)
+            q_new = algo._impl._q_func(observations, actions)
+            total_values.append(F.mse_loss(q_old, q_new).item())
+    return sum(total_values) / len(total_values)
+
+def q_id_diff_scorer(online_network):
+    q_network = online_network['trainer/qf1']
+    def scorer(algo, episodes: List[Episode]):
+        total_values = []
+        for episode in episodes:
+            for batch in _make_batches(episode, WINDOW_SIZE, algo.n_frames):
+                observations = torch.from_numpy(batch.observations).to(algo._impl.device).to(torch.float32)
+                actions = torch.from_numpy(batch.actions).to(algo._impl.device).to(torch.float32)
+                q_old = q_network(observations, actions)
+                q_new = algo._impl._q_func(observations, actions)
+                total_values.append(F.mse_loss(q_old, q_new).item())
+        return sum(total_values) / len(total_values)
+    return scorer
+
+def q_ood_diff_scorer(online_network):
+    q_network = online_network['trainer/qf1']
+    def scorer(algo, episodes: List[Episode]):
+        total_values = []
+        for episode in episodes:
+            for batch in _make_batches(episode, WINDOW_SIZE, algo.n_frames):
+                observations = torch.from_numpy(batch.observations).to(algo._impl.device).to(torch.float32)
+                observations += torch.randn_like(observations) * 0.1
+                actions = algo._impl._policy(observations)
+                q_old = q_network(observations, actions)
+                q_new = algo._impl._q_func(observations, actions)
+                total_values.append(F.mse_loss(q_old, q_new).item())
+        return sum(total_values) / len(total_values)
+    return scorer
+
+def policy_replay_scorer(algo, episodes: List[Episode]) -> Callable[..., float]:
+    total_values = []
+    for episode in episodes:
+        for batch in _make_batches(episode, WINDOW_SIZE, algo.n_frames):
+            observations = torch.from_numpy(batch.observations).to(algo._impl.device).to(torch.float32)
+            actions_new = algo._impl._policy(observations)
+            actions_old = algo._impl._clone_policy(observations)
+            total_values.append(F.mse_loss(actions_old, actions_new).item())
+    return sum(total_values) / len(total_values)
+
+def policy_dataset_scorer(algo, episodes: List[Episode]) -> Callable[..., float]:
+    total_values = []
+    for episode in episodes:
+        for batch in _make_batches(episode, WINDOW_SIZE, algo.n_frames):
+            observations = torch.from_numpy(batch.observations).to(algo._impl.device).to(torch.float32)
+            actions = torch.from_numpy(batch.actions).to(algo._impl.device).to(torch.float32)
+            actions_new = algo._impl._policy(observations)
+            total_values.append(F.mse_loss(actions, actions_new).item())
+    return sum(total_values) / len(total_values)
+
+def policy_online_diff_scorer(online_network):
+    policy_network = online_network['trainer/policy']
+    def scorer(algo, episodes: List[Episode]):
+        total_values = []
+        for episode in episodes:
+            for batch in _make_batches(episode, WINDOW_SIZE, algo.n_frames):
+                observations = torch.from_numpy(batch.observations).to(algo._impl.device).to(torch.float32)
+                dist_old = policy_network(observations)
+                actions_old = dist_old.sample()
+                observations = observations + torch.randn_like(observations) * 0.1
+                dist_new = policy_network(observations)
+                actions_new = dist_old.sample()
+                total_values.append(F.mse_loss(actions_old.to(algo._impl.device), actions_new).item())
+        return sum(total_values) / len(total_values)
+    return scorer
+
+def policy_offline_diff_scorer(algo, episodes: List[Episode]):
+    total_values = []
+    for episode in episodes:
+        for batch in _make_batches(episode, WINDOW_SIZE, algo.n_frames):
+            observations = algo._impl._vae.generate(batch.observations.shape[0]).detach()
+            actions_old = algo._impl._policy(observations)
+            observations = observations + torch.randn_like(observations) * 0.1
+            actions_new = algo._impl._policy(observations)
+            total_values.append(F.mse_loss(actions_old, actions_new).item())
+    return sum(total_values) / len(total_values)
+
+def policy_id_diff_scorer(online_network):
+    policy_network = online_network['trainer/policy']
+    def scorer(algo, episodes: List[Episode]):
+        total_values = []
+        for episode in episodes:
+            for batch in _make_batches(episode, WINDOW_SIZE, algo.n_frames):
+                observations = torch.from_numpy(batch.observations).to(algo._impl.device).to(torch.float32)
+                dist_old = policy_network(observations)
+                actions_old = dist_old.sample()
+                actions_new = algo._impl._policy(observations)
+                total_values.append(F.mse_loss(actions_old.to(algo._impl.device), actions_new).item())
+        return sum(total_values) / len(total_values)
+    return scorer
+
+def policy_ood_diff_scorer(online_network):
+    policy_network = online_network['trainer/policy']
+    def scorer(algo, episodes: List[Episode]):
+        total_values = []
+        for episode in episodes:
+            for batch in _make_batches(episode, WINDOW_SIZE, algo.n_frames):
+                observations = algo._impl._vae.generate(batch.observations.shape[0]).detach()
+                observations = observations + torch.randn_like(observations) * 0.1
+                dist_old = policy_network(observations)
+                actions_old = dist_old.sample()
+                actions_new = algo._impl._policy(observations)
+                total_values.append(F.mse_loss(actions_old, actions_new).item())
+        return sum(total_values) / len(total_values)
+    return scorer

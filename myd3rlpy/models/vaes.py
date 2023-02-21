@@ -3,11 +3,11 @@ from typing import Any, ClassVar, Dict, List, Optional, Sequence, Type, Union
 
 from torch import nn
 
-from d3rlpy.models.encoders import _create_activation
+from d3rlpy.models.encoders import EncoderFactory, _create_activation
 from myd3rlpy.models.torch.vaes import VAE, VectorVAE
 
 
-class VAEFactory:
+class VAEFactory(EncoderFactory):
     TYPE: ClassVar[str] = "none"
 
     def create(self, observation_shape: Sequence[int]) -> VAE:
@@ -137,3 +137,5 @@ def create_vae_factory(name: str, **kwargs: Any) -> VAEFactory:
     factory = VAE_LIST[name](**kwargs)
     assert isinstance(factory, VAEFactory)
     return factory
+
+register_vae_factory(VectorVAEFactory)
