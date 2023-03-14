@@ -24,14 +24,16 @@ from d3rlpy.argument_utility import (
     ScalerArg,
     UseGPUArg,
     check_encoder,
+    check_q_func,
     check_use_gpu,
 )
 from d3rlpy.torch_utility import TorchMiniBatch, _get_attributes
 from d3rlpy.dataset import MDPDataset, Episode, TransitionMiniBatch, Transition
 from d3rlpy.gpu import Device
 from d3rlpy.models.optimizers import AdamFactory, OptimizerFactory
+from d3rlpy.models.q_functions import QFunctionFactory
 from d3rlpy.algos.base import AlgoBase
-from d3rlpy.algos.iql import IQL
+from d3rlpy.algos.sac import SAC
 from d3rlpy.constants import (
     CONTINUOUS_ACTION_SPACE_MISMATCH_ERROR,
     DISCRETE_ACTION_SPACE_MISMATCH_ERROR,
@@ -54,12 +56,11 @@ from online.eval_policy import eval_policy
 from myd3rlpy.algos.st import ST
 from myd3rlpy.algos.torch.state_vae_impl import StateVAEImpl as StateVAEImpl
 from myd3rlpy.models.vaes import VAEFactory, create_vae_factory
-from myd3rlpy.models.encoders import EnsembelDefaultEncoderFactory
 from utils.utils import Struct
 
 
 replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'terminals', 'policy_actions', 'qs', 'phis', 'psis']
-class ST(ST, IQL):
+class ST(ST, SAC):
     r"""Twin Delayed Deep Deterministic Policy Gradients algorithm.
     TD3 is an improved DDPG-based algorithm.
     Major differences from DDPG are as follows.
@@ -92,6 +93,8 @@ class ST(ST, IQL):
             encoder factory for the actor.
         critic_encoder_factory (d3rlpy.models.encoders.EncoderFactory or str):
             encoder factory for the critic.
+        q_func_factory (d3rlpy.models.q_functions.QFunctionFactory or str):
+            Q function factory.
         batch_size (int): mini-batch size.
         n_frames (int): the number of frames to stack for image observation.
         n_steps (int): N-step TD calculation.
@@ -125,8 +128,8 @@ class ST(ST, IQL):
     _vae_optim_factory: OptimizerFactory
     _actor_encoder_factory: EncoderFactory
     _critic_encoder_factory: EncoderFactory
-    _value_encoder_factory: EncoderFactory
     _vae_encoder_factory: EncoderFactory
+    _q_func_factory: QFunctionFactory
     _vae_factory: VAEFactory
     _feature_size: int
     # actor必须被重放，没用选择。
@@ -150,8 +153,6 @@ class ST(ST, IQL):
     _select_time: int
     _model_noise: float
 
-    _task_id: str
-    _single_head: bool
     _merge: bool
 
     def __init__(
@@ -173,18 +174,16 @@ class ST(ST, IQL):
         log_prob_topk = 10,
         experience_type = 'random_transition',
         sample_type = 'retrain',
-        match_prop_quantile = 0.5,
-        match_epsilon = 0.1,
-        random_sample_times = 10,
 
         critic_update_step = 100000,
 
-        clone_critic = False,
-        clone_actor = False,
+        clone_critic = True,
+        clone_actor = True,
         merge = False,
         coldstart_step = 5000,
 
         fine_tuned_step = 1,
+
         n_ensemble = 10,
 
         use_vae = False,
@@ -218,12 +217,6 @@ class ST(ST, IQL):
         self._experience_type = experience_type
         self._sample_type = sample_type
 
-        self._begin_grad_step = 0
-
-        self._match_prop_quantile = match_prop_quantile
-        self._match_epsilon = match_epsilon
-        self._random_sample_times = random_sample_times
-
         self._critic_update_step = critic_update_step
 
         self._clone_critic = clone_critic
@@ -251,15 +244,17 @@ class ST(ST, IQL):
             'actor_learning_rate':self._actor_learning_rate,
             'critic_learning_rate':self._critic_learning_rate,
             'vae_learning_rate':self._vae_learning_rate,
+            'temp_learning_rate':self._temp_learning_rate,
             'actor_optim_factory':self._actor_optim_factory,
             'critic_optim_factory':self._critic_optim_factory,
             'vae_optim_factory':self._vae_optim_factory,
+            'temp_optim_factory':self._temp_optim_factory,
             'actor_encoder_factory':self._actor_encoder_factory,
             'critic_encoder_factory':self._critic_encoder_factory,
-            'value_encoder_factory':self._value_encoder_factory,
             'vae_factory': self._vae_factory,
             'use_vae': self._use_vae,
             'feature_size': self._feature_size,
+            'q_func_factory':self._q_func_factory,
             'critic_replay_type':self._critic_replay_type,
             'critic_replay_lambda':self._critic_replay_lambda,
             'actor_replay_type':self._actor_replay_type,
@@ -274,9 +269,7 @@ class ST(ST, IQL):
             'epsilon':self._epsilon,
             'tau':self._tau,
             'n_critics':self._n_critics,
-            'expectile': self._expectile,
-            'weight_temp': self._weight_temp,
-            'max_weight': self._max_weight,
+            'initial_temperature':self._initial_temperature,
             'use_gpu':self._use_gpu,
             'scaler':self._scaler,
             'action_scaler':self._action_scaler,
@@ -284,10 +277,11 @@ class ST(ST, IQL):
             'fine_tuned_step': self._fine_tuned_step,
             'n_ensemble': self._n_ensemble,
         }
-        if self._impl_name == 'iql':
-            from myd3rlpy.algos.torch.st_iql_impl import STImpl as STImpl
-        elif self._impl_name == 'iqln':
-            from myd3rlpy.algos.torch.st_iqln_impl import STImpl as STImpl
+        if self._impl_name == 'sacn':
+            from myd3rlpy.algos.torch.st_sacn_impl import STImpl as STImpl
+        else:
+            print(self._impl_name)
+            raise NotImplementedError
         self._impl = STImpl(
             **impl_dict
         )
@@ -300,12 +294,16 @@ class ST(ST, IQL):
         assert self._impl is not None, IMPL_NOT_INITIALIZED_ERROR
         metrics = {}
         if not self._merge or total_step < coldstart_step:
+            if self._temp_learning_rate > 0:
+                temp_loss, temp = self._impl.update_temp(batch)
+                metrics.update({"temp_loss": temp_loss, "temp": temp})
+
             critic_loss, replay_critic_loss = self._impl.update_critic(batch, replay_batch, clone_critic=self._clone_critic, online=online)
             metrics.update({"critic_loss": critic_loss})
             metrics.update({"replay_critic_loss": replay_critic_loss})
 
-            if (total_step > self._critic_update_step and total_step < coldstart_step) or self._impl._impl_id == 0:
-                actor_loss, replay_actor_loss = self._impl.update_actor(batch, replay_batch, online=online)
+            if (total_step > self._critic_update_step) or self._impl._impl_id == 0:
+                actor_loss, replay_actor_loss = self._impl.update_actor(batch, replay_batch, clone_actor=self._clone_actor, online=online)
                 # actor_loss, replay_actor_loss = self._impl.update_actor(batch, replay_batch, online=online)
                 metrics.update({"actor_loss": actor_loss})
                 metrics.update({"replay_actor_loss": replay_actor_loss})
@@ -316,12 +314,10 @@ class ST(ST, IQL):
                 metrics.update({"vae_loss": vae_loss})
                 metrics.update({"replay_vae_loss": replay_vae_loss})
 
-                critic_loss = self._impl.update_vae_critic(batch)
-                metrics.update({"critic_loss": critic_loss})
-
             self._impl.update_critic_target()
+            self._impl.update_actor_target()
         elif not online:
-            self._merge_update(batch,replay_batch)
+            self._merge_update(batch, replay_batch)
 
         return metrics
 
@@ -329,44 +325,3 @@ class ST(ST, IQL):
         self, transitions: List[Transition], real_observation_size, real_action_size, batch_size = 64,
     ) -> Optional[List[Transition]]:
         return None
-
-    def select_replay(self, new_replay_dataset, old_replay_dataset, dataset_id, max_save_num, mix_type='vq_diff'):
-        if mix_type == 'vq_diff':
-            new_replay_dataloader = DataLoader(new_replay_dataset, batch_size = self._batch_size, shuffle=False)
-            new_replay_diff_qs = []
-            for replay_observations, replay_actions, _, _, replay_terminals, *_ in new_replay_dataloader:
-                replay_observations = replay_observations.to(self._impl.device)
-                replay_actions = replay_actions.to(self._impl.device)
-                replay_qs = self._impl._q_func(replay_observations, replay_actions)
-                if self._impl_name == 'iql':
-                    replay_vs = self._impl._value_func(replay_observations)
-                elif self._impl_name == 'iqln':
-                    replay_vs = []
-                    for v_func in self._impl._value_funcs:
-                        replay_vs.append(v_func(replay_observations))
-                    replay_vs = torch.mean(torch.stack(replay_vs, dim=0), dim=0)
-                new_replay_diff_qs.append(replay_qs - replay_vs)
-            new_replay_diff_qs = torch.cat(new_replay_diff_qs, dim=0)
-
-            old_replay_dataloader = DataLoader(old_replay_dataset, batch_size = self._batch_size, shuffle=False)
-            old_replay_diff_qs = []
-            for replay_observations, replay_actions, _, _, replay_terminals, *_ in old_replay_dataloader:
-                replay_observations = replay_observations.to(self._impl.device)
-                replay_actions = replay_actions.to(self._impl.device)
-                replay_qs = self._impl._q_func(replay_observations, replay_actions)
-                replay_vs = self._impl._value_func(replay_observations)
-                old_replay_diff_qs.append(replay_qs - replay_vs)
-            old_replay_diff_qs = torch.cat(old_replay_diff_qs, dim=0)
-
-            replay_diff_qs = torch.cat([new_replay_diff_qs, old_replay_diff_qs]).detach().to(torch.float32).to('cpu')
-            _, indices = torch.sort(replay_diff_qs, descending=True)
-            indices = indices[:max_save_num]
-            str_ = f"len(new): {len(indices < len(new_replay_dataset))}"
-            str_ = f"len(new): {len(indices >= len(new_replay_dataset))}"
-            print(str_)
-            indices_new = indices[indices < len(new_replay_dataset)]
-            indices_old = indices[indices >= len(new_replay_dataset)]
-            replay_dataset = torch.utils.data.ConcatDataset([torch.utils.data.Subset(new_replay_dataset, indices_new), torch.utils.data.Subset(old_replay_dataset, indices_old)])
-        elif mix_type == 'random':
-            return super(new_replay_dataset, old_replay_dataset, dataset_id, max_save_num, mix_type)
-        return replay_dataset

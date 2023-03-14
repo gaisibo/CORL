@@ -42,8 +42,10 @@ class STTD3PlusBCImpl(STImpl, TD3PlusBCImpl):
         if online:
             return -q_t.mean()
         if clone_actor:
-            clone_q_t = self._clone_q_func(batch.observations, action, "none")[0]
-            max_q_t = q_t > clone_q_t
+            clone_actions = self._clone_policy(batch.observations)
+            clone_q_t = self._clone_q_func(batch.observations, clone_actions, "none")[0]
+            new_q_t = self._q_func(batch.observations, batch.actions, "none")[0]
+            max_q_t = new_q_t > clone_q_t
             select_q_t = q_t[max_q_t]
             select_action = action[max_q_t]
             select_batch_action = batch.actions[max_q_t]

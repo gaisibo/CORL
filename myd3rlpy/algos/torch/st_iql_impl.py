@@ -24,8 +24,6 @@ from d3rlpy.dataset import TransitionMiniBatch
 from d3rlpy.algos.torch.iql_impl import IQLImpl
 
 from myd3rlpy.algos.torch.st_impl import STImpl
-from myd3rlpy.algos.torch.gem import overwrite_grad, store_grad, project2cone2
-from myd3rlpy.algos.torch.agem import project
 from utils.utils import Struct
 
 
@@ -44,9 +42,7 @@ class STImpl(STImpl, IQLImpl):
 
     def _build_critic(self) -> None:
         super()._build_critic()
-        self._value_func = create_value_function(
-            self._observation_shape, self._value_encoder_factory
-        )
+        self._value_func = create_value_function(self._observation_shape, self._value_encoder_factory)
 
     def _build_critic_optim(self) -> None:
         assert self._q_func is not None
@@ -57,7 +53,7 @@ class STImpl(STImpl, IQLImpl):
             q_func_params + v_func_params, lr=self._critic_learning_rate
         )
 
-    def _compute_actor_loss(self, batch: TorchMiniBatch, clone_actor: bool=False, online: bool=False) -> torch.Tensor:
+    def _compute_actor_loss(self, batch: TorchMiniBatch, clone_actor: bool=False, online: bool=False, replay: bool = False) -> torch.Tensor:
         assert self._policy
 
         # compute log probability
@@ -68,6 +64,12 @@ class STImpl(STImpl, IQLImpl):
         with torch.no_grad():
             weight = self._compute_weight(batch.observations, batch.actions, clone_actor=clone_actor, online=online)
         ret = -(weight * log_probs).mean()
+        if not replay:
+            self._weight = weight.mean()
+            self._log_probs = log_probs.mean()
+        else:
+            self._replay_weight = weight.mean()
+            self._replay_log_probs = log_probs.mean()
         # if clone_actor:
         #     # compute log probability
         #     dist = self._clone_policy.dist(batch.observations)
@@ -85,21 +87,20 @@ class STImpl(STImpl, IQLImpl):
         assert self._value_func
         q_t = self._targ_q_func(observations, actions, "min")
         v_t = self._value_func(observations)
-        clone_q_t = self._clone_q_func(observations, self._clone_policy(observations), "min")
-        v_t = torch.where(v_t > clone_q_t, v_t, clone_q_t)
-        clone_v_t = self._clone_value_func(observations)
-        v_t = torch.where(v_t > clone_v_t, v_t, clone_v_t)
+        # if clone_actor and not online and '_clone_value_func' in self.__dict__.keys():
+        #     # clone_q_t = self._clone_q_func(observations, self._clone_policy(observations), "min")
+        #     # v_t = torch.where(v_t > clone_q_t, v_t, clone_q_t)
+        #     clone_v_t = self._clone_value_func(observations)
+        #     v_t = torch.where(v_t > clone_v_t, v_t, clone_v_t)
         adv = q_t - v_t
-        weight = (self._weight_temp * adv).exp().clamp(max=self._max_weight)
-        if clone_actor and not online:
-            return torch.where(adv > 0, weight, torch.zeros_like(weight))
-        else:
-            return weight
+        # print(f"q_t: {q_t.mean()}, v_t: {v_t.mean()}")
+        return (self._weight_temp * adv).exp().clamp(max=self._max_weight)
 
     def compute_target(self, batch: TorchMiniBatch) -> torch.Tensor:
         assert self._value_func
         with torch.no_grad():
-            return self._value_func(batch.next_observations)
+            v_t = self._value_func(batch.next_observations)
+            return v_t
 
     def _compute_critic_loss(
         self, batch: TorchMiniBatch, q_tpn: torch.Tensor
@@ -117,26 +118,41 @@ class STImpl(STImpl, IQLImpl):
     def _compute_value_loss(self, batch: TorchMiniBatch, clone_critic=False) -> torch.Tensor:
         assert self._targ_q_func
         assert self._value_func
-        assert self._clone_value_func
         q_t = self._targ_q_func(batch.observations, batch.actions, "min")
         v_t = self._value_func(batch.observations)
         diff = q_t.detach() - v_t
+        # if clone_critic and '_clone_value_func' in self.__dict__.keys() and '_clone_q_func' in self.__dict__.keys():
+        #     clone_q_t = self._clone_q_func(batch.observations, batch.actions)
+        #     clone_v_t = self._clone_value_func(batch.observations)
+        #     diff_clone = (clone_q_t - clone_v_t).abs().detach()
+        #     diff_max_clone, _ = diff.max(dim=0)
+        #     diff_average_clone = (diff_max_clone - diff_clone) / diff_max_clone * (1 - self._expectile)
+        #     weight = ((self._expectile + diff_average_clone) - (diff < 0.0).float()).abs().detach()
+        # else:
         weight = (self._expectile - (diff < 0.0).float()).abs().detach()
         ret = (weight * (diff ** 2)).mean()
-        if clone_critic:
-            clone_v_t = self._clone_value_func(batch.observations)
-            diff = clone_v_t.detach() - v_t
-            weight = (self._expectile - (diff < 0.0).float()).abs().detach()
-            ret_1 = (weight * (diff ** 2)).mean()
-            ret += ret_1
         return ret
 
-    def compute_critic_loss(self, batch, q_tpn, clone_critic: bool=True, online: bool = False):
+    def compute_critic_loss(self, batch, q_tpn, clone_critic: bool=True, online: bool = False, replay=False, first_time=False):
         assert self._q_func is not None
         if not online:
             return self._compute_critic_loss(batch, q_tpn) + self._compute_value_loss(batch, clone_critic=clone_critic)
         else:
             return self._compute_critic_loss(batch, q_tpn)
 
-    def compute_actor_loss(self, batch, clone_actor: bool = False, online: bool = False):
-        return self._compute_actor_loss(batch, clone_actor=clone_actor, online=online)
+    def compute_vae_critic_loss(
+        self, batch: TorchMiniBatch
+    ) -> torch.Tensor:
+        assert self._q_func is not None
+        assert self._value_func is not None
+        q_t = self._q_func(batch.observations, batch.actions)
+        v_t = self._value_func(batch.observations)
+        loss = F.mse_loss(q_t, v_t)
+        return loss
+
+    def compute_generate_critic_loss(self, batch, clone_critic: bool=True):
+        assert self._q_func is not None
+        return self._compute_value_loss(batch, clone_critic=clone_critic)
+
+    def compute_actor_loss(self, batch, clone_actor: bool = False, online: bool = False, replay: bool = False):
+        return self._compute_actor_loss(batch, clone_actor=clone_actor, online=online, replay=replay)

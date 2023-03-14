@@ -7,6 +7,7 @@ from d3rlpy.models.encoders import EncoderFactory
 from d3rlpy.models.q_functions import QFunctionFactory
 from d3rlpy.models.torch import EnsembleContinuousQFunction 
 from myd3rlpy.models.torch.q_functions.ensemble_q_function import ParallelEnsembleContinuousQFunction 
+from myd3rlpy.models.torch.v_functions import EnsembleValueFunction
 from myd3rlpy.models.torch.siamese import Phi, Psi
 
 def create_phi(
@@ -56,3 +57,9 @@ def create_parallel_continuous_q_function(
     n_ensembles: int = 1,
 ) -> ParallelEnsembleContinuousQFunction:
     return ParallelEnsembleContinuousQFunction(ensemble_size=n_ensembles, hidden_sizes=[256, 256], input_size=observation_shape[0] + action_size, output_size=1, reduction=reduction)
+
+def create_value_function(
+    observation_shape: Sequence[int], encoder_factory: EncoderFactory
+) -> EnsembleValueFunction:
+    encoder = encoder_factory.create(observation_shape)
+    return EnsembleValueFunction(encoder)

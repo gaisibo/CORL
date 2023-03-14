@@ -14,7 +14,7 @@ import numpy as np
 from functools import partial
 import torch
 from torch import Tensor
-from torch.utils.data import TensorDataset, DataLoader
+from torch.utils.data import Dataset, TensorDataset, DataLoader
 from torch.distributions.normal import Normal
 from d3rlpy.online.buffers import Buffer
 from d3rlpy.metrics.scorer import evaluate_on_environment
@@ -127,7 +127,7 @@ class ST():
     """
     _sample_type: str
 
-    def update(self, batch: TransitionMiniBatch, online: bool = False, batch_num: int=0, total_step: int=0, coldstart_step: Optional[int] = None, replay_batch: Optional[List[Tensor]]=None) -> Dict[int, float]:
+    def update(self, batch: TransitionMiniBatch, online: bool = False, batch_num: int=0, total_step: int=0, coldstart_steps: Optional[int] = None, replay_batch: Optional[List[Tensor]]=None) -> Dict[int, float]:
     # def update(self, batch: TransitionMiniBatch, online: bool = False, batch_num: int=0, total_step: int=0, replay_batch: Optional[List[Tensor]]=None) -> Dict[int, float]:
         """Update parameters with mini-batch of data.
         Args:
@@ -135,7 +135,7 @@ class ST():
         Returns:
             dictionary of metrics.
         """
-        loss = self._update(batch, online, batch_num, total_step, coldstart_step, replay_batch)
+        loss = self._update(batch, online, batch_num, total_step, coldstart_steps, replay_batch)
         self._grad_step += 1
         return loss
 
@@ -174,40 +174,11 @@ class ST():
         if replay_dataset is not None:
             replay_dataloader: Optional[DataLoader]
             replay_iterator: Optional[Iterator]
-            if isinstance(replay_dataset, TensorDataset):
-                replay_dataloader = DataLoader(replay_dataset, batch_size=self._batch_size, shuffle=True)
-                replay_iterator = iter(replay_dataloader)
-                replay_batch = replay_iterator.next()
-            else:
-                if n_steps is not None:
-                    assert n_steps >= n_steps_per_epoch
-                    n_epochs = n_steps // n_steps_per_epoch
-                    iterator = RandomIterator(
-                        replay_dataset,
-                        n_steps_per_epoch,
-                        batch_size=self._batch_size,
-                        n_steps=self._n_steps,
-                        gamma=self._gamma,
-                        n_frames=self._n_frames,
-                        real_ratio=self._real_ratio,
-                        generated_maxlen=self._generated_maxlen,
-                    )
-                    LOG.debug("RandomIterator is selected.")
-                elif n_epochs is not None and n_steps is None:
-                    iterator = RoundIterator(
-                        replay_dataset,
-                        batch_size=self._batch_size,
-                        n_steps=self._n_steps,
-                        gamma=self._gamma,
-                        n_frames=self._n_frames,
-                        real_ratio=self._real_ratio,
-                        generated_maxlen=self._generated_maxlen,
-                        shuffle=shuffle,
-                    )
-                    LOG.debug("RoundIterator is selected.")
-                else:
-                    raise ValueError("Either of n_epochs or n_steps must be given.")
-                replay_iterator = iterator
+            if not isinstance(replay_dataset, Dataset):
+                raise NotImplementedError(f"replay_dataset is not Dataset, {replay_dataset}")
+            replay_dataloader = DataLoader(replay_dataset, batch_size=self._batch_size, shuffle=True)
+            replay_iterator = iter(replay_dataloader)
+            replay_batch = replay_iterator.next()
         else:
             replay_dataloader = None
             replay_iterator = None
@@ -286,7 +257,7 @@ class ST():
         replay_iterator: Optional[Iterator] = None,
         replay_dataloader: Optional[DataLoader] = None,
         n_epochs: Optional[int] = None,
-        coldstart_step: Optional[int] = None,
+        coldstart_steps: Optional[int] = None,
         save_metrics: bool = True,
         experiment_name: Optional[str] = None,
         with_timestamp: bool = True,
@@ -349,7 +320,7 @@ class ST():
                 replay_iterator,
                 replay_dataloader,
                 n_epochs,
-                coldstart_step,
+                coldstart_steps,
                 save_metrics,
                 experiment_name,
                 with_timestamp,
@@ -382,7 +353,7 @@ class ST():
         replay_iterator: Optional[TransitionIterator] = None,
         replay_dataloader: Optional[DataLoader] = None,
         n_epochs: Optional[int] = None,
-        coldstart_step: Optional[int] = None,
+        coldstart_steps: Optional[int] = None,
         save_metrics: bool = True,
         experiment_name: Optional[str] = None,
         with_timestamp: bool = True,
@@ -521,13 +492,21 @@ class ST():
 
                     # update parameters
                     with logger.measure_time("algorithm_update"):
-                        loss = self.update(batch, batch_num=batch_num, total_step=total_step, coldstart_step=coldstart_step, replay_batch=replay_batch)
+                        loss = self.update(batch, batch_num=batch_num, total_step=total_step, coldstart_steps=coldstart_steps, replay_batch=replay_batch)
                         # self._impl.increase_siamese_alpha(epoch - n_epochs, itr / len(iterator))
 
                     # record metrics
                     for name, val in loss.items():
                         logger.add_metric(name, val)
                         epoch_loss[name].append(val)
+
+                    try:
+                        logger.add_metric("debug_weight", self._impl._weight)
+                        logger.add_metric("debug_log_probs", self._impl._log_probs)
+                        logger.add_metric("replay_debug_replay_weight", self._impl._replay_weight)
+                        logger.add_metric("replay_debug_replay_log_probs", self._impl._replay_log_probs)
+                    except AttributeError:
+                        pass
 
                     # update progress postfix with losses
                     if itr % 10 == 0:
@@ -896,7 +875,7 @@ class ST():
             replay_next_observations = torch.stack([torch.from_numpy(transition.next_observation) for transition in transitions], dim=0).detach().to(torch.float32).to('cpu')
             replay_terminals = torch.stack([torch.from_numpy(np.array([transition.terminal])) for transition in transitions], dim=0).detach().to(torch.float32).to('cpu')
             replay_policy_actions = self._impl._policy(replay_observations.to(self._impl.device)).detach().to(torch.float32).to('cpu')
-            replay_qs = self._impl._q_func(replay_observations.to(self._impl.device), replay_actions.to(self._impl.device)).detach().to(torch.float32).to('cpu')
+            transition_qs = self._impl._q_func(replay_observations.to(self._impl.device), replay_actions.to(self._impl.device))
             replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals, replay_policy_actions, replay_qs)
             return replay_dataset, replay_dataset
 
@@ -1127,6 +1106,42 @@ class ST():
             print(f'experience_type: {experience_type}')
             raise NotImplementedError
         print(f'Select Replay Buffer Time: {time.perf_counter() - start_time}')
+        return replay_dataset
+
+    def select_replay(self, new_replay_dataset, old_replay_dataset, dataset_id, max_save_num, mix_type='random'):
+        if mix_type == 'q':
+            new_replay_dataloader = DataLoader(new_replay_dataset, batch_size = self._batch_size, shuffle=False)
+            new_replay_diff_qs = []
+            for replay_observations, replay_actions, _, _, replay_terminals, *_ in new_replay_dataloader:
+                replay_observations = replay_observations.to(self._impl.device)
+                replay_actions = replay_actions.to(self._impl.device)
+                replay_qs = self._impl._q_func(replay_observations, replay_actions).detach().to(torch.float32).to('cpu')
+                replay_learned_qs = self._impl._q_func(replay_observations, self._impl._policy(replay_observations)).detach().to(torch.float32).to('cpu')
+                new_replay_diff_qs.append(replay_qs - replay_learned_qs)
+            new_replay_diff_qs = torch.cat(new_replay_diff_qs, dim=0)
+
+            old_replay_dataloader = DataLoader(old_replay_dataset, batch_size = self._batch_size, shuffle=False)
+            old_replay_diff_qs = []
+            for replay_observations, replay_actions, _, _, replay_terminals, *_ in old_replay_dataloader:
+                replay_observations = replay_observations.to(self._impl.device)
+                replay_actions = replay_actions.to(self._impl.device)
+                replay_qs = self._impl._q_func(replay_observations, replay_actions).detach().to(torch.float32).to('cpu')
+                replay_learned_qs = self._impl._q_func(replay_observations, self._impl._policy(replay_observations)).detach().to(torch.float32).to('cpu')
+                old_replay_diff_qs.append(replay_qs - replay_learned_qs)
+            old_replay_diff_qs = torch.cat(old_replay_diff_qs, dim=0)
+
+            replay_diff_qs = torch.cat([new_replay_diff_qs, old_replay_diff_qs])
+            _, indices = torch.sort(replay_diff_qs, descending=True)
+            indices = indices[:max_save_num]
+            indices_new = indices[indices < len(new_replay_dataset)]
+            indices_old = indices[indices >= len(new_replay_dataset)]
+            replay_dataset = torch.utils.data.ConcatDataset([torch.utils.data.Subset(new_replay_dataset, indices_new), torch.utils.data.Subset(old_replay_dataset, indices_old)])
+        elif mix_type == 'random':
+            replay_dataset_length = len(old_replay_dataset)
+            slide_dataset_length = max_save_num // (dataset_id)
+            indices = torch.cat([torch.arange(slide_dataset_length * i, slide_dataset_length *(i + 1), device=self._impl.device)[torch.randperm(slide_dataset_length)[: slide_dataset_length // 2]] for i in range(dataset_id)])
+            replay_dataset = torch.utils.data.Subset(old_replay_dataset, indices)
+            replay_dataset = torch.utils.data.ConcatDataset([replay_dataset, new_replay_dataset])
         return replay_dataset
 
     def copy_load_model(

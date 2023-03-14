@@ -51,6 +51,7 @@ class STImpl():
         damping: float,
         epsilon: float,
         fine_tuned_step: int,
+        n_ensemble: int,
         **kwargs,
     ):
         super().__init__(
@@ -75,6 +76,7 @@ class STImpl():
         self._damping = damping
         self._epsilon = epsilon
         self._fine_tuned_step = fine_tuned_step
+        self._n_ensemble = n_ensemble
 
     def build(self):
         self._dynamic = None
@@ -226,11 +228,12 @@ class STImpl():
                 replay_batch = dict(zip(replay_name[:-2], replay_batch))
                 replay_batch = Struct(**replay_batch)
             if self._critic_replay_type == "orl":
+                assert replay_batch is not None
                 replay_batch.n_steps = 1
                 replay_batch.masks = None
                 replay_batch = cast(TorchMiniBatch, replay_batch)
                 q_tpn = self.compute_target(replay_batch)
-                replay_cql_loss = self.compute_critic_loss(replay_batch, q_tpn, clone_critic=clone_critic)
+                replay_cql_loss = self.compute_critic_loss(replay_batch, q_tpn, clone_critic=clone_critic, replay=True)
                 replay_loss = replay_loss + replay_cql_loss
             elif self._critic_replay_type == "bc":
                 with torch.no_grad():
@@ -254,6 +257,17 @@ class STImpl():
                 generate_qs = self._clone_q_func(generate_observations, generate_actions).detach()
                 qs = self._q_func(generate_observations, generate_actions)
                 replay_generate_loss = F.mse_loss(generate_qs, qs)
+                replay_loss = replay_loss + replay_generate_loss
+            elif self._critic_replay_type == 'generate_orl':
+                assert self._clone_policy is not None
+                assert self._clone_q_func is not None
+                generate_observations = self._clone_vae.generate(batch.observations.shape[0]).detach()
+                generate_actions = self._clone_policy(generate_observations).detach()
+                generate_qs = self._clone_q_func(generate_observations, generate_actions).detach()
+                try:
+                    replay_generate_loss = self.compute_generate_critic_loss(batch, clone_critic=clone_critic)
+                except:
+                    raise NotImplementedError("Only for IQL.")
                 replay_loss = replay_loss + replay_generate_loss
             elif self._critic_replay_type == "ewc":
                 replay_loss_ = 0
@@ -302,7 +316,7 @@ class STImpl():
 
         self._critic_optim.zero_grad()
         q_tpn = self.compute_target(batch)
-        loss = self.compute_critic_loss(batch, q_tpn, clone_critic=clone_critic, online=online)
+        loss = self.compute_critic_loss(batch, q_tpn, clone_critic=clone_critic, online=online, first_time=replay_batch==None)
         if self._critic_replay_type in ['orl', 'ewc', 'rwalk', 'si', 'bc', 'generate', 'lwf']:
             loss = loss + self._critic_replay_lambda * replay_loss
         loss.backward()
@@ -344,6 +358,35 @@ class STImpl():
             replay_loss = replay_loss.cpu().detach().numpy()
 
         return loss, replay_loss
+
+    @train_api
+    def update_vae_critic(self, batch_tran: TransitionMiniBatch):
+        batch = TorchMiniBatch(
+            batch_tran,
+            self.device,
+            scaler=self.scaler,
+            action_scaler=self.action_scaler,
+            reward_scaler=self.reward_scaler,
+        )
+        assert self._critic_optim is not None
+        assert self._q_func is not None
+        assert self._policy is not None
+
+        unreg_grads = None
+        curr_feat_ext = None
+
+        loss = 0
+        replay_loss = 0
+
+        self._critic_optim.zero_grad()
+        q_tpn = self.compute_target(batch)
+        loss = self.compute_vae_critic_loss(batch)
+        loss.backward()
+        self._critic_optim.step()
+
+        loss = loss.cpu().detach().numpy()
+
+        return loss
 
     def merge_update_critic(self, batch_tran, replay_batch):
         batch = TorchMiniBatch(
@@ -468,7 +511,7 @@ class STImpl():
                 replay_batch = Struct(**replay_batch)
             if self._actor_replay_type == "orl":
                 replay_batch = cast(TorchMiniBatch, replay_batch)
-                replay_loss_ = self.compute_actor_loss(replay_batch, clone_actor=clone_actor)
+                replay_loss_ = self.compute_actor_loss(replay_batch, clone_actor=clone_actor, replay=True)
                 replay_loss = replay_loss + replay_loss_
             elif self._actor_replay_type == "bc":
                 with torch.no_grad():
@@ -506,6 +549,7 @@ class STImpl():
                 generate_actions = self._clone_policy(generate_observations)
                 replay_batch = {'observations': generate_observations, 'actions': generate_actions}
                 replay_batch = Struct(**replay_batch)
+                print("replay_loss_")
                 replay_loss_ = self.compute_actor_loss(replay_batch, clone_actor=clone_actor)
                 replay_loss = replay_loss + replay_loss_
             elif self._actor_replay_type == "ewc":
@@ -551,8 +595,8 @@ class STImpl():
 
         self._actor_optim.zero_grad()
         loss += self.compute_actor_loss(batch, clone_actor=clone_actor, online=online)
-        if self._actor_replay_type in ['orl', 'ewc', 'rwalk', 'si', 'bc', 'generate', 'generate_orl', 'lwf', 'lwf_orl']:
-            loss = loss + self._actor_replay_lambda * replay_loss
+        # if self._actor_replay_type in ['orl', 'ewc', 'rwalk', 'si', 'bc', 'generate', 'generate_orl', 'lwf', 'lwf_orl']:
+        #     loss = loss + self._actor_replay_lambda * replay_loss
         if not isinstance(loss, int):
             loss.backward()
 
@@ -729,6 +773,24 @@ class STImpl():
             self._clone_vae = copy.deepcopy(self._vae)
         if "_value_func" in self.__dict__.keys():
             self._clone_value_func = copy.deepcopy(self._value_func)
+
+    def load_model(self, fname: str) -> None:
+        chkpt = torch.load(fname, map_location=self._device)
+        BLACK_LIST = [
+            "policy",
+            "clone_policy",
+            "q_function",
+            "clone_q_function",
+            "policy_optim",
+            "q_function_optim",
+        ]  # special properties
+
+
+        keys = [key for key in dir(self) if key not in BLACK_LIST]
+        for key in keys:
+            obj = getattr(self, key)
+            if isinstance(obj, (torch.nn.Module, torch.optim.Optimizer)):
+                obj.load_state_dict(chkpt[key])
 
     #def rebuild(self):
     #    self._build_alpha()

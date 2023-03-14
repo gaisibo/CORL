@@ -276,10 +276,10 @@ class ST(ST, CQL):
             'epsilon':self._epsilon,
             'tau':self._tau,
             'n_critics':self._n_critics,
+            'conservative_weight': self._conservative_weight,
             'initial_temperature':self._initial_temperature,
             'initial_alpha':self._initial_alpha,
             'alpha_threshold':self._alpha_threshold,
-            'conservative_weight':self._conservative_weight,
             'n_action_samples':self._n_action_samples,
             'soft_q_backup':self._soft_q_backup,
             'use_gpu':self._use_gpu,
@@ -322,15 +322,15 @@ class ST(ST, CQL):
                 alpha_loss, alpha = self._impl.update_alpha(batch)
                 metrics.update({"alpha_loss": alpha_loss, "alpha": alpha})
 
-            if total_step > self._critic_update_step:
-                critic_loss, replay_critic_loss = self._impl.update_critic(batch, replay_batch, clone_critic=self._clone_critic, online=online)
-                metrics.update({"critic_loss": critic_loss})
-                metrics.update({"replay_critic_loss": replay_critic_loss})
+            critic_loss, replay_critic_loss = self._impl.update_critic(batch, replay_batch, clone_critic=self._clone_critic, online=online)
+            metrics.update({"critic_loss": critic_loss})
+            metrics.update({"replay_critic_loss": replay_critic_loss})
 
-            actor_loss, replay_actor_loss = self._impl.update_actor(batch, replay_batch, clone_actor=self._clone_actor, online=online)
-            # actor_loss, replay_actor_loss = self._impl.update_actor(batch, replay_batch, online=online)
-            metrics.update({"actor_loss": actor_loss})
-            metrics.update({"replay_actor_loss": replay_actor_loss})
+            if total_step > self._critic_update_step:
+                actor_loss, replay_actor_loss = self._impl.update_actor(batch, replay_batch, clone_actor=self._clone_actor, online=online)
+                # actor_loss, replay_actor_loss = self._impl.update_actor(batch, replay_batch, online=online)
+                metrics.update({"actor_loss": actor_loss})
+                metrics.update({"replay_actor_loss": replay_actor_loss})
 
             if self._use_vae and not online:
                 vae_loss, replay_vae_loss = self._impl.update_vae(batch, replay_batch)
