@@ -61,6 +61,8 @@ def main(args, device):
     else:
         raise NotImplementedError
     st_dict, online_st_dict = get_st_dict(args, args.dataset_kind, args.algo_kind)
+    if args.algo in ['iql', 'iqln']:
+        st_dict['expectile'] = args.expectile
     st = ST(**st_dict)
 
     experiment_name = "ST" + '_'
@@ -266,6 +268,7 @@ if __name__ == '__main__':
     parser.add_argument('--max_save_num', default=1000, type=int)
     parser.add_argument('--task_split_type', default='undirected', type=str)
     parser.add_argument('--algo', default='iql', type=str, choices=['combo', 'td3_plus_bc', 'cql', 'mgcql', 'mrcql', 'iql', 'iqln', 'sacn'])
+    parser.add_argument('--expectile', default=0.7, type=float)
     parser.add_argument('--eval', action='store_true')
     parser.add_argument('--test', action='store_true')
 
@@ -333,7 +336,7 @@ if __name__ == '__main__':
     ptu.set_gpu_mode(True)
     if args.clone == 'none':
         args.clone_actor = False
-        args.clone_critic = True
+        args.clone_critic = False
     elif args.clone == 'clone':
         args.clone_actor = True
         args.clone_critic = True

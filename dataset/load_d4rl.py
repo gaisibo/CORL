@@ -12,18 +12,18 @@ import pickle
 from d4rl.offline_env import get_keys
 from d3rlpy.datasets import get_d4rl
 from d3rlpy.dataset import MDPDataset
-from myd3rlpy.siamese_similar import similar_euclid
 import gym
-from mygym.envs.hopper_back import HopperBackEnv
-from mygym.envs.walker2d_back import Walker2dBackEnv
-from mygym.envs.halfcheetah_back import HalfCheetahBackEnv
-from mygym.envs.hopper_light import HopperLightEnv
-from mygym.envs.walker2d_light import Walker2dLightEnv
-from mygym.envs.halfcheetah_light import HalfCheetahLightEnv
-from mygym.envs.hopper_wind import HopperWindEnv
-from mygym.envs.walker2d_wind import Walker2dWindEnv
-from mygym.envs.halfcheetah_wind import HalfCheetahWindEnv
-from mygym.envs.envs import HalfCheetahDirEnv, HalfCheetahVelEnv, AntDirEnv, AntGoalEnv, HumanoidDirEnv, WalkerRandParamsWrappedEnv, ML45Env
+# from myd3rlpy.siamese_similar import similar_euclid
+# from mygym.envs.hopper_back import HopperBackEnv
+# from mygym.envs.walker2d_back import Walker2dBackEnv
+# from mygym.envs.halfcheetah_back import HalfCheetahBackEnv
+# from mygym.envs.hopper_light import HopperLightEnv
+# from mygym.envs.walker2d_light import Walker2dLightEnv
+# from mygym.envs.halfcheetah_light import HalfCheetahLightEnv
+# from mygym.envs.hopper_wind import HopperWindEnv
+# from mygym.envs.walker2d_wind import Walker2dWindEnv
+# from mygym.envs.halfcheetah_wind import HalfCheetahWindEnv
+# from mygym.envs.envs import HalfCheetahDirEnv, HalfCheetahVelEnv, AntDirEnv, AntGoalEnv, HumanoidDirEnv, WalkerRandParamsWrappedEnv, ML45Env
 
 
 def get_dataset(h5path, expert=False, env=None):

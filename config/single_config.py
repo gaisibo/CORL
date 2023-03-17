@@ -25,7 +25,7 @@ def get_st_dict(args, dataset, algo):
     online_st_dict['buffer_size'] = 1000000
     if args.dataset_kind == 'd4rl':
         st_dict['n_steps'] = 500000
-        st_dict['critic_update_step'] = 100000
+        st_dict['critic_update_step'] = 0
         st_dict['coldstart_steps'] = 500000
         st_dict['merge_n_steps'] = 200000
         st_dict['n_steps_per_epoch'] = 1000

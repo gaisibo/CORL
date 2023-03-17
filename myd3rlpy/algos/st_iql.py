@@ -354,19 +354,30 @@ class ST(ST, IQL):
                 replay_observations = replay_observations.to(self._impl.device)
                 replay_actions = replay_actions.to(self._impl.device)
                 replay_qs = self._impl._q_func(replay_observations, replay_actions)
-                replay_vs = self._impl._value_func(replay_observations)
+                if self._impl_name == 'iql':
+                    replay_vs = self._impl._value_func(replay_observations)
+                elif self._impl_name == 'iqln':
+                    replay_vs = []
+                    for v_func in self._impl._value_funcs:
+                        replay_vs.append(v_func(replay_observations))
+                    replay_vs = torch.mean(torch.stack(replay_vs, dim=0), dim=0)
                 old_replay_diff_qs.append(replay_qs - replay_vs)
             old_replay_diff_qs = torch.cat(old_replay_diff_qs, dim=0)
 
-            replay_diff_qs = torch.cat([new_replay_diff_qs, old_replay_diff_qs]).detach().to(torch.float32).to('cpu')
+            replay_diff_qs = torch.cat([new_replay_diff_qs, old_replay_diff_qs]).detach().to(torch.float32).to('cpu').squeeze()
             _, indices = torch.sort(replay_diff_qs, descending=True)
             indices = indices[:max_save_num]
-            str_ = f"len(new): {len(indices < len(new_replay_dataset))}"
-            str_ = f"len(new): {len(indices >= len(new_replay_dataset))}"
-            print(str_)
             indices_new = indices[indices < len(new_replay_dataset)]
-            indices_old = indices[indices >= len(new_replay_dataset)]
-            replay_dataset = torch.utils.data.ConcatDataset([torch.utils.data.Subset(new_replay_dataset, indices_new), torch.utils.data.Subset(old_replay_dataset, indices_old)])
+            indices_old = indices[indices >= len(new_replay_dataset)] - len(new_replay_dataset)
+            print(str_)
+            replay_observations = torch.cat([new_replay_dataset.tensors[0][indices_new], old_replay_dataset.tensors[0][indices_old]], dim=0)
+            replay_actions = torch.cat([new_replay_dataset.tensors[1][indices_new], old_replay_dataset.tensors[1][indices_old]], dim=0)
+            replay_rewards = torch.cat([new_replay_dataset.tensors[2][indices_new], old_replay_dataset.tensors[2][indices_old]], dim=0)
+            replay_next_observations = torch.cat([new_replay_dataset.tensors[3][indices_new], old_replay_dataset.tensors[3][indices_old]], dim=0)
+            replay_terminals = torch.cat([new_replay_dataset.tensors[4][indices_new], old_replay_dataset.tensors[4][indices_old]], dim=0)
+            replay_policy_actions = torch.cat([new_replay_dataset.tensors[5][indices_new], old_replay_dataset.tensors[5][indices_old]], dim=0)
+            replay_qs = torch.cat([new_replay_dataset.tensors[6][indices_new], old_replay_dataset.tensors[6][indices_old]], dim=0)
+            replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals, replay_policy_actions, replay_qs)
         elif mix_type == 'random':
             return super(new_replay_dataset, old_replay_dataset, dataset_id, max_save_num, mix_type)
         return replay_dataset

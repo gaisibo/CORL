@@ -62,13 +62,11 @@ class STImpl(STImpl, IQLImpl):
 
         # compute weight
         with torch.no_grad():
-            weight = self._compute_weight(batch.observations, batch.actions, clone_actor=clone_actor, online=online)
+            weight = self._compute_weight(batch.observations, batch.actions, clone_actor=clone_actor, online=online, replay=replay)
         ret = -(weight * log_probs).mean()
         if not replay:
-            self._weight = weight.mean()
             self._log_probs = log_probs.mean()
         else:
-            self._replay_weight = weight.mean()
             self._replay_log_probs = log_probs.mean()
         # if clone_actor:
         #     # compute log probability
@@ -82,19 +80,27 @@ class STImpl(STImpl, IQLImpl):
 
         return ret
 
-    def _compute_weight(self, observations, actions, clone_actor: bool=False, online: bool=False) -> torch.Tensor:
+    def _compute_weight(self, observations, actions, clone_actor: bool=False, online: bool=False, replay=False) -> torch.Tensor:
         assert self._targ_q_func
         assert self._value_func
         q_t = self._targ_q_func(observations, actions, "min")
         v_t = self._value_func(observations)
-        # if clone_actor and not online and '_clone_value_func' in self.__dict__.keys():
-        #     # clone_q_t = self._clone_q_func(observations, self._clone_policy(observations), "min")
-        #     # v_t = torch.where(v_t > clone_q_t, v_t, clone_q_t)
-        #     clone_v_t = self._clone_value_func(observations)
-        #     v_t = torch.where(v_t > clone_v_t, v_t, clone_v_t)
+        if clone_actor and not online and '_clone_value_func' in self.__dict__.keys():
+            # clone_q_t = self._clone_q_func(observations, self._clone_policy(observations), "min")
+            # v_t = torch.where(v_t > clone_q_t, v_t, clone_q_t)
+            clone_v_t = self._clone_value_func(observations)
+            v_t = torch.where(v_t > clone_v_t, v_t, clone_v_t)
         adv = q_t - v_t
-        # print(f"q_t: {q_t.mean()}, v_t: {v_t.mean()}")
-        return (self._weight_temp * adv).exp().clamp(max=self._max_weight)
+        weight = (self._weight_temp * adv).exp().clamp(max=self._max_weight)
+        if not replay:
+            self._q_t = q_t.mean()
+            self._v_t = v_t.mean()
+            self._weight = weight.mean()
+        else:
+            self._replay_q_t = q_t.mean()
+            self._replay_v_t = v_t.mean()
+            self._replay_weight = weight.mean()
+        return weight
 
     def compute_target(self, batch: TorchMiniBatch) -> torch.Tensor:
         assert self._value_func
@@ -115,19 +121,16 @@ class STImpl(STImpl, IQLImpl):
             gamma=self._gamma**batch.n_steps,
         )
 
-    def _compute_value_loss(self, batch: TorchMiniBatch, clone_critic=False) -> torch.Tensor:
+    def _compute_value_loss(self, batch: TorchMiniBatch, clone_critic=False, replay: bool = False) -> torch.Tensor:
         assert self._targ_q_func
         assert self._value_func
         q_t = self._targ_q_func(batch.observations, batch.actions, "min")
         v_t = self._value_func(batch.observations)
         diff = q_t.detach() - v_t
-        # if clone_critic and '_clone_value_func' in self.__dict__.keys() and '_clone_q_func' in self.__dict__.keys():
-        #     clone_q_t = self._clone_q_func(batch.observations, batch.actions)
-        #     clone_v_t = self._clone_value_func(batch.observations)
-        #     diff_clone = (clone_q_t - clone_v_t).abs().detach()
-        #     diff_max_clone, _ = diff.max(dim=0)
-        #     diff_average_clone = (diff_max_clone - diff_clone) / diff_max_clone * (1 - self._expectile)
-        #     weight = ((self._expectile + diff_average_clone) - (diff < 0.0).float()).abs().detach()
+        if clone_critic and '_clone_value_func' in self.__dict__.keys() and '_clone_q_func' in self.__dict__.keys():
+            clone_v_t = self._clone_value_func(batch.observations).detach()
+            diff_clone = (clone_v_t - v_t)
+            diff = torch.max(diff, diff_clone)
         # else:
         weight = (self._expectile - (diff < 0.0).float()).abs().detach()
         ret = (weight * (diff ** 2)).mean()
@@ -136,19 +139,17 @@ class STImpl(STImpl, IQLImpl):
     def compute_critic_loss(self, batch, q_tpn, clone_critic: bool=True, online: bool = False, replay=False, first_time=False):
         assert self._q_func is not None
         if not online:
-            return self._compute_critic_loss(batch, q_tpn) + self._compute_value_loss(batch, clone_critic=clone_critic)
+            critic_loss = self._compute_critic_loss(batch, q_tpn)
+            value_loss = self._compute_value_loss(batch, clone_critic=clone_critic, replay=replay)
+            if not replay:
+                self._q_loss = critic_loss.mean()
+                self._v_loss = value_loss.mean()
+            else:
+                self._replay_q_loss = critic_loss.mean()
+                self._replay_v_loss = value_loss.mean()
+            return critic_loss + value_loss
         else:
             return self._compute_critic_loss(batch, q_tpn)
-
-    def compute_vae_critic_loss(
-        self, batch: TorchMiniBatch
-    ) -> torch.Tensor:
-        assert self._q_func is not None
-        assert self._value_func is not None
-        q_t = self._q_func(batch.observations, batch.actions)
-        v_t = self._value_func(batch.observations)
-        loss = F.mse_loss(q_t, v_t)
-        return loss
 
     def compute_generate_critic_loss(self, batch, clone_critic: bool=True):
         assert self._q_func is not None

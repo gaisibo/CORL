@@ -178,6 +178,7 @@ class ST():
                 raise NotImplementedError(f"replay_dataset is not Dataset, {replay_dataset}")
             replay_dataloader = DataLoader(replay_dataset, batch_size=self._batch_size, shuffle=True)
             replay_iterator = iter(replay_dataloader)
+            print(len(replay_iterator))
             replay_batch = replay_iterator.next()
         else:
             replay_dataloader = None
@@ -501,10 +502,18 @@ class ST():
                         epoch_loss[name].append(val)
 
                     try:
-                        logger.add_metric("debug_weight", self._impl._weight)
-                        logger.add_metric("debug_log_probs", self._impl._log_probs)
-                        logger.add_metric("replay_debug_replay_weight", self._impl._replay_weight)
-                        logger.add_metric("replay_debug_replay_log_probs", self._impl._replay_log_probs)
+                        logger.add_metric("weight", self._impl._weight)
+                        logger.add_metric("log_probs", self._impl._log_probs)
+                        logger.add_metric("q_t", self._impl._q_t)
+                        logger.add_metric("v_t", self._impl._v_t)
+                        logger.add_metric("q_loss", self._impl._q_loss)
+                        logger.add_metric("v_loss", self._impl._v_loss)
+                        logger.add_metric("replay_weight", self._impl._replay_weight)
+                        logger.add_metric("replay_log_probs", self._impl._replay_log_probs)
+                        logger.add_metric("replay_q_t", self._impl._replay_q_t)
+                        logger.add_metric("replay_v_t", self._impl._replay_v_t)
+                        logger.add_metric("replay_q_loss", self._impl._replay_q_loss)
+                        logger.add_metric("replay_v_loss", self._impl._replay_v_loss)
                     except AttributeError:
                         pass
 
@@ -1134,14 +1143,22 @@ class ST():
             _, indices = torch.sort(replay_diff_qs, descending=True)
             indices = indices[:max_save_num]
             indices_new = indices[indices < len(new_replay_dataset)]
-            indices_old = indices[indices >= len(new_replay_dataset)]
-            replay_dataset = torch.utils.data.ConcatDataset([torch.utils.data.Subset(new_replay_dataset, indices_new), torch.utils.data.Subset(old_replay_dataset, indices_old)])
+            indices_old = indices[indices >= len(new_replay_dataset)] - len(new_replay_dataset)
         elif mix_type == 'random':
             replay_dataset_length = len(old_replay_dataset)
             slide_dataset_length = max_save_num // (dataset_id)
-            indices = torch.cat([torch.arange(slide_dataset_length * i, slide_dataset_length *(i + 1), device=self._impl.device)[torch.randperm(slide_dataset_length)[: slide_dataset_length // 2]] for i in range(dataset_id)])
-            replay_dataset = torch.utils.data.Subset(old_replay_dataset, indices)
-            replay_dataset = torch.utils.data.ConcatDataset([replay_dataset, new_replay_dataset])
+            indices_new = torch.arange(new_replay_dataset.shape[0])
+            indices_old = torch.cat([torch.arange(slide_dataset_length * i, slide_dataset_length *(i + 1), device=self._impl.device)[torch.randperm(slide_dataset_length)[: slide_dataset_length // 2]] for i in range(dataset_id)])
+        else:
+            raise NotImplementedError
+        replay_observations = torch.cat([new_replay_dataset.tensors[0][indices_new], old_replay_dataset.tensors[0][indices_old]], dim=0)
+        replay_actions = torch.cat([new_replay_dataset.tensors[1][indices_new], old_replay_dataset.tensors[1][indices_old]], dim=0)
+        replay_rewards = torch.cat([new_replay_dataset.tensors[2][indices_new], old_replay_dataset.tensors[2][indices_old]], dim=0)
+        replay_next_observations = torch.cat([new_replay_dataset.tensors[3][indices_new], old_replay_dataset.tensors[3][indices_old]], dim=0)
+        replay_terminals = torch.cat([new_replay_dataset.tensors[4][indices_new], old_replay_dataset.tensors[4][indices_old]], dim=0)
+        replay_policy_actions = torch.cat([new_replay_dataset.tensors[5][indices_new], old_replay_dataset.tensors[5][indices_old]], dim=0)
+        replay_qs = torch.cat([new_replay_dataset.tensors[6][indices_new], old_replay_dataset.tensors[6][indices_old]], dim=0)
+        replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals, replay_policy_actions, replay_qs)
         return replay_dataset
 
     def copy_load_model(

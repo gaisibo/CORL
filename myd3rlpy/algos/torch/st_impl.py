@@ -114,6 +114,33 @@ class STImpl():
             self._critic_grad_xy = torch.Tensor(np.sum(self._critic_grad_dims)).to(self.device)
             self._critic_grad_er = torch.Tensor(np.sum(self._critic_grad_dims)).to(self.device)
 
+        if hasattr(self._value_func):
+            if self._critic_replay_type in ['ewc', 'rwalk', 'si']:
+                self._value_older_params = {n: p.clone().detach() for n, p in self._value_func.named_parameters() if p.requires_grad}
+                if self._value_replay_type in ['ewc', 'rwalk']:
+                    # Store fisher information weight importance
+                    self._value_fisher = {n: torch.zeros(p.shape).to(self.device) for n, p in self._value_func.named_parameters() if p.requires_grad}
+                if self._critic_replay_type == 'rwalk':
+                    # Page 7: "task-specific parameter importance over the entire training trajectory."
+                    self._value_W = {n: torch.zeros(p.shape).to(self.device) for n, p in self._value_func.named_parameters() if p.requires_grad}
+                    self._value_scores = {n: torch.zeros(p.shape).to(self.device) for n, p in self._value_func.named_parameters() if p.requires_grad}
+                elif self._critic_replay_type == 'si':
+                    self._value_W = {n: p.clone().detach().zero_() for n, p in self._value_func.named_parameters() if p.requires_grad}
+                    self._value_omega = {n: p.clone().detach().zero_() for n, p in self._value_func.named_parameters() if p.requires_grad}
+                elif self._critic_replay_type == 'gem':
+                    # Allocate temporary synaptic memory
+                    self._value_grad_dims = []
+                    for pp in self._value_func.parameters():
+                        self._value_grad_dims.append(pp.data.numel())
+                    self._value_grads_cs = {}
+                    self._value_grads_da = torch.zeros(np.sum(self._value_grad_dims)).to(self.device)
+                elif self._critic_replay_type == 'agem':
+                    self._value_grad_dims = []
+                    for param in self._value_func.parameters():
+                        self._value_grad_dims.append(param.data.numel())
+                    self._value_grad_xy = torch.Tensor(np.sum(self._value_grad_dims)).to(self.device)
+                    self._value_grad_er = torch.Tensor(np.sum(self._value_grad_dims)).to(self.device)
+
         assert self._policy is not None
         if self._actor_replay_type in ['ewc', 'rwalk', 'si']:
             # Store current parameters for the next task
@@ -219,7 +246,6 @@ class STImpl():
         unreg_grads = None
         curr_feat_ext = None
 
-        loss = 0
         replay_loss = 0
         if self._impl_id != 0 and not online:
             replay_loss = 0
@@ -248,6 +274,10 @@ class STImpl():
                 clone_q = self._clone_q_func(batch.observations, batch.actions)
                 q = self._q_func(batch.observations, batch.actions)
                 replay_bc_loss = F.mse_loss(clone_q, q)
+                if hasattr(self._value_func):
+                    clone_value = self._clone_value_func(batch.observations, batch.actions)
+                    value = self._value_func(batch.observations, batch.actions)
+                    replay_bc_loss += F.mse_loss(clone_value, value)
                 replay_loss = replay_loss + replay_bc_loss
             elif self._critic_replay_type == 'generate':
                 assert self._clone_policy is not None
@@ -257,62 +287,85 @@ class STImpl():
                 generate_qs = self._clone_q_func(generate_observations, generate_actions).detach()
                 qs = self._q_func(generate_observations, generate_actions)
                 replay_generate_loss = F.mse_loss(generate_qs, qs)
-                replay_loss = replay_loss + replay_generate_loss
-            elif self._critic_replay_type == 'generate_orl':
-                assert self._clone_policy is not None
-                assert self._clone_q_func is not None
-                generate_observations = self._clone_vae.generate(batch.observations.shape[0]).detach()
-                generate_actions = self._clone_policy(generate_observations).detach()
-                generate_qs = self._clone_q_func(generate_observations, generate_actions).detach()
-                try:
-                    replay_generate_loss = self.compute_generate_critic_loss(batch, clone_critic=clone_critic)
-                except:
-                    raise NotImplementedError("Only for IQL.")
+                replay_generate_loss = F.mse_loss(generate_qs, qs)
+                if hasattr(self._value_func):
+                    generate_observations = self._clone_vae.generate(batch.observations.shape[0]).detach()
+                    generate_values = self._clone_value_func(generate_observations).detach()
+                    values = self._vaue_func(generate_observations)
+                    replay_generate_loss += F.mse_loss(generate_values, values)
                 replay_loss = replay_loss + replay_generate_loss
             elif self._critic_replay_type == "ewc":
-                replay_loss_ = 0
+                replay_ewc_loss = 0
                 for n, p in self._q_func.named_parameters():
                     if n in self._critic_fisher.keys():
-                        replay_loss = replay_loss + torch.mean(self._critic_fisher[n] * (p - self._critic_older_params[n]).pow(2)) / 2
-                replay_loss = replay_loss + replay_loss_
+                        replay_ewc_loss += torch.mean(self._critic_fisher[n] * (p - self._critic_older_params[n]).pow(2)) / 2
+                if hasattr(self._value_func):
+                    for n, p in self._value_func.named_parameters():
+                        if n in self._value_fisher.keys():
+                            replay_ewc_loss += torch.mean(self._value_fisher[n] * (p - self._value_older_params[n]).pow(2)) / 2
+                replay_loss = replay_loss + replay_ewc_loss
             elif self._critic_replay_type == 'rwalk':
-                curr_feat_ext = {n: p.clone().detach() for n, p in self._q_func.named_parameters() if p.requires_grad}
+                replay_rwalk_loss = 0
+                curr_critic_feat_ext = {n: p.clone().detach() for n, p in self._q_func.named_parameters() if p.requires_grad}
+                if hasattr(self._value_func):
+                    curr_value_feat_ext = {n: p.clone().detach() for n, p in self._value_func.named_parameters() if p.requires_grad}
                 # store gradients without regularization term
-                unreg_grads = {n: p.grad.clone().detach() for n, p in self._q_func.named_parameters()
-                               if p.grad is not None}
-
                 self._critic_optim.zero_grad()
+                q_tpn = self.compute_target(batch)
+                loss = self.compute_critic_loss(batch, q_tpn, clone_critic=clone_critic, online=online, first_time=replay_batch==None)
+                loss.backward(retain_graph=True)
+                unreg_critic_grads = {n: p.grad.clone().detach() for n, p in self._q_func.named_parameters() if p.grad is not None}
+                if hasattr(self._value_func):
+                    unreg_value_grads = {n: p.grad.clone().detach() for n, p in self._value_func.named_parameters() if p.grad is not None}
+
                 # Eq. 3: elastic weight consolidation quadratic penalty
-                replay_loss_ = 0
                 for n, p in self._q_func.named_parameters():
                     if n in self._critic_fisher.keys():
-                        replay_loss_ = replay_loss_ + torch.mean((self._critic_fisher[n] + self._critic_scores[n]) * (p - self._critic_older_params[n]).pow(2)) / 2
-                replay_loss = replay_loss + replay_loss_
+                        replay_rwalk_loss_ += torch.mean((self._critic_fisher[n] + self._critic_scores[n]) * (p - self._critic_older_params[n]).pow(2)) / 2
+                if hasattr(self._value_func):
+                    for n, p in self._q_func.named_parameters():
+                        if n in self._critic_fisher.keys():
+                            replay_rwalk_loss_ += torch.mean((self._critic_fisher[n] + self._critic_scores[n]) * (p - self._critic_older_params[n]).pow(2)) / 2
+
+                replay_loss = replay_loss + replay_rwalk_loss
             elif self._critic_replay_type == 'si':
                 for n, p in self._q_func.named_parameters():
                     if p.grad is not None and n in self._critic_fisher.keys():
                         self._critic_W[n].add_(-p.grad * (p.detach() - self._critic_older_params[n]))
                     self._critic_older_params[n] = p.detach().clone()
-                replay_loss_ = 0
+                if hasattr(self._value_func):
+                    for n, p in self._value_func.named_parameters():
+                        if p.grad is not None and n in self._value_fisher.keys():
+                            self._value_W[n].add_(-p.grad * (p.detach() - self._value_older_params[n]))
+                        self._value_older_params[n] = p.detach().clone()
+                replay_si_loss = 0
                 for n, p in self.q_func.named_parameters():
                     if p.requires_grad:
-                        replay_loss_ = replay_loss_ + torch.mean(self._critic_omega[n] * (p - self._critic_older_params[n]) ** 2)
-                replay_loss = replay_loss + replay_loss_
+                        replay_si_loss += torch.mean(self._critic_omega[n] * (p - self._critic_older_params[n]) ** 2)
+                if hasattr(self._value_func):
+                    for n, p in self.value_func.named_parameters():
+                        if p.requires_grad:
+                            replay_si_loss += torch.mean(self._value_omega[n] * (p - self._value_older_params[n]) ** 2)
+                replay_loss = replay_loss + replay_si_loss
             elif self._critic_replay_type == 'gem':
                 replay_batch = cast(TorchMiniBatch, replay_batch)
                 q_tpn = self.compute_target(replay_batch)
-                replay_loss_ = self.compute_critic_loss(replay_batch, q_tpn, clone_critic=clone_critic)
-                replay_loss = replay_loss_
+                replay_loss = self.compute_critic_loss(replay_batch, q_tpn, clone_critic=clone_critic)
                 replay_loss.backward()
                 store_grad(self._q_func.parameters, self._critic_grads_cs[i], self._critic_grad_dims)
+                if hasattr(self._value_func):
+                    value_tpn = self.compute_target(replay_batch)
+                    replay_loss = self.compute_value_loss(replay_batch, value_tpn, clone_critic=clone_critic)
+                    replay_loss.backward()
+                    store_grad(self._value_func.parameters, self._value_grads_cs[i], self._value_grad_dims)
             elif self._critic_replay_type == "agem":
                 store_grad(self._q_func.parameters, self._critic_grad_xy, self._critic_grad_dims)
                 replay_batch.n_steps = 1
                 replay_batch.masks = None
                 replay_batch = cast(TorchMiniBatch, replay_batch)
                 q_tpn = self.compute_target(replay_batch)
-                replay_loss_ = self.compute_critic_loss(replay_batch, q_tpn, clone_critic=clone_critic)
-                replay_loss = replay_loss + replay_loss_
+                replay_agem_loss = self.compute_critic_loss(replay_batch, q_tpn, clone_critic=clone_critic)
+                replay_loss = replay_loss + replay_agem_loss
 
         self._critic_optim.zero_grad()
         q_tpn = self.compute_target(batch)
@@ -331,27 +384,46 @@ class STImpl():
                     overwrite_grad(self._q_func.parameters, g_tilde, self._critic_grad_dims)
                 else:
                     overwrite_grad(self._q_func.parameters, self._critic_grad_xy, self._critic_grad_dims)
+                if hasattr(self._value_func):
+                    store_grad(self._value_func.parameters, self._value_grad_er, self._value_grad_dims)
+                    dot_prod = torch.dot(self._value_grad_xy, self._value_grad_er)
+                    if dot_prod.item() < 0:
+                        g_tilde = project(gxy=self._value_grad_xy, ger=self._value_grad_er)
+                        overwrite_grad(self._value_func.parameters, g_tilde, self._value_grad_dims)
+                    else:
+                        overwrite_grad(self._value_func.parameters, self._value_grad_xy, self._value_grad_dims)
             elif self._critic_replay_type == 'gem':
                 # copy gradient
                 store_grad(self._q_func.parameters, self._critic_grads_da, self._critic_grad_dims)
-                dot_prod = torch.mm(self._critic_grads_da.unsqueeze(0),
-                                torch.stack(list(self._critic_grads_cs).values()).T)
+                dot_prod = torch.mm(self._critic_grads_da.unsqueeze(0), torch.stack(list(self._critic_grads_cs).values()).T)
                 if (dot_prod < 0).sum() != 0:
-                    project2cone2(self._critic_grads_da.unsqueeze(1),
-                                  torch.stack(list(self._critic_grads_cs).values()).T, margin=self._gem_alpha)
+                    project2cone2(self._critic_grads_da.unsqueeze(1), torch.stack(list(self._critic_grads_cs).values()).T, margin=self._gem_alpha)
                     # copy gradients back
-                    overwrite_grad(self._q_func.parameters, self._critic_grads_da,
-                                   self._critic_grad_dims)
+                    overwrite_grad(self._q_func.parameters, self._critic_grads_da, self._critic_grad_dims)
+                if hasattr(self._value_func):
+                    # copy gradient
+                    store_grad(self._value_func.parameters, self._value_grads_da, self._value_grad_dims)
+                    dot_prod = torch.mm(self._value_grads_da.unsqueeze(0), torch.stack(list(self._value_grads_cs).values()).T)
+                    if (dot_prod < 0).sum() != 0:
+                        project2cone2(self._value_grads_da.unsqueeze(1), torch.stack(list(self._value_grads_cs).values()).T, margin=self._gem_alpha)
+                        # copy gradients back
+                        overwrite_grad(self._value_func.parameters, self._value_grads_da, self._value_grad_dims)
         self._critic_optim.step()
 
         if replay_batch is not None and not online:
             if self._critic_replay_type == 'rwalk':
-                assert unreg_grads is not None
-                assert curr_feat_ext is not None
+                assert unreg_critic_grads is not None
+                assert curr_critic_feat_ext is not None
                 with torch.no_grad():
                     for n, p in self._q_func.named_parameters():
-                        if n in unreg_grads.keys():
-                            self._critic_W[n] -= unreg_grads[n] * (p.detach() - curr_feat_ext[n])
+                        if n in unreg_critic_grads.keys():
+                            self._critic_W[n] -= unreg_critic_grads[n] * (p.detach() - curr_critic_feat_ext[n])
+                    if hasattr(self._value_func):
+                        assert unreg_value_grads is not None
+                        assert curr_value_feat_ext is not None
+                        for n, p in self._value_func.named_parameters():
+                            if n in unreg_value_grads.keys():
+                                self._value_W[n] -= unreg_value_grads[n] * (p.detach() - curr_value_feat_ext[n])
 
         loss = loss.cpu().detach().numpy()
         if not isinstance(replay_loss, int):
@@ -501,7 +573,7 @@ class STImpl():
         unreg_grads = None
         curr_feat_ext = None
 
-        loss = 0
+        loss = self.compute_actor_loss(batch, clone_actor=clone_actor, online=online)
         replay_loss = 0
         if self._impl_id != 0 and not online:
             replay_loss = 0
@@ -594,9 +666,8 @@ class STImpl():
                 replay_loss = replay_loss + replay_loss_
 
         self._actor_optim.zero_grad()
-        loss += self.compute_actor_loss(batch, clone_actor=clone_actor, online=online)
-        # if self._actor_replay_type in ['orl', 'ewc', 'rwalk', 'si', 'bc', 'generate', 'generate_orl', 'lwf', 'lwf_orl']:
-        #     loss = loss + self._actor_replay_lambda * replay_loss
+        if self._actor_replay_type in ['orl', 'ewc', 'rwalk', 'si', 'bc', 'generate', 'generate_orl', 'lwf', 'lwf_orl']:
+            loss = loss + self._actor_replay_lambda * replay_loss
         if not isinstance(loss, int):
             loss.backward()
 
@@ -672,28 +743,69 @@ class STImpl():
             )
             q_tpn = self.compute_target(batch)
             loss = self.compute_critic_loss(batch, q_tpn)
-            loss.backward
+            loss.backward()
         curr_fisher = self.compute_fisher_matrix_diag(iterator, self._q_func, self._critic_optim, update)
         # merge fisher information, we do not want to keep fisher information for each task in memory
         for n in self._critic_fisher.keys():
             # Added option to accumulate fisher over time with a pre-fixed growing self._ewc_rwalk_alpha
-            self._critic_fisher[n] = (self._ewc_rwalk_alpha * self._critic_fisher[n] + (1 - self._ewc_rwalk_alpha) * curr_fisher[n])
+            self._critic_fisher[n] = (self._ewc_rwalk_alpha * self._critic_fisher[n] + (1 - self._ewc_rwalk_alpha) * curr_critic_fisher[n])
 
         if self._critic_replay_type == 'rwalk':
             # Page 7: Optimization Path-based Parameter Importance: importance scores computation
-            curr_score = {n: torch.zeros(p.shape).to(self.device) for n, p in self._q_func.named_parameters()
-                          if p.requires_grad}
+            curr_critic_score = {n: torch.zeros(p.shape).to(self.device) for n, p in self._q_func.named_parameters() if p.requires_grad}
             with torch.no_grad():
-                curr_params = {n: p for n, p in self._q_func.named_parameters() if p.requires_grad}
+                curr_critic_params = {n: p for n, p in self._critic_func.named_parameters() if p.requires_grad}
                 for n, p in self._critic_scores.items():
-                    curr_score[n] = self._critic_W[n] / (
-                            self._critic_fisher[n] * ((curr_params[n] - self._critic_older_params[n]) ** 2) + self._damping)
+                    curr_critic_score[n] = self._critic_W[n] / (
+                            self._critic_fisher[n] * ((curr_critic_params[n] - self._critic_older_params[n]) ** 2) + self._damping)
                     self._critic_W[n].zero_()
                     # Page 7: "Since we care about positive influence of the parameters, negative scores are set to zero."
-                    curr_score[n] = torch.nn.functional.relu(curr_score[n])
+                    curr_critic_score[n] = torch.nn.functional.relu(curr_critic_score[n])
             # Page 8: alleviating regularization getting increasingly rigid by averaging scores
             for n, p in self._critic_scores.items():
-                self._critic_scores[n] = (self._critic_scores[n] + curr_score[n]) / 2
+                self._critic_scores[n] = (self._critic_scores[n] + curr_critic_score[n]) / 2
+
+        if hasattr(self._value_func):
+            if self._ewc_type == 'normal':
+                def update(batch):
+                    batch = TorchMiniBatch(
+                        batch,
+                        self.device,
+                        scaler=self.scaler,
+                        action_scaler=self.action_scaler,
+                        reward_scaler=self.reward_scaler,
+                    )
+                    q_tpn = self.compute_target(batch)
+                    loss = self.compute_critic_loss(batch, q_tpn)
+                    loss.backward()
+            elif self._ewc_type == 'raise':
+                def update(batch):
+                    batch = TorchMiniBatch(
+                        batch,
+                        self.device,
+                        scaler=self.scaler,
+                        action_scaler=self.action_scaler,
+                        reward_scaler=self.reward_scaler,
+                    )
+                    q_tpn = self.compute_target(batch)
+                    loss = self.compute_critic_loss(batch, q_tpn)
+                    loss.backward()
+            for n in self._value_fisher.keys():
+                # Added option to accumulate fisher over time with a pre-fixed growing self._ewc_rwalk_alpha
+                self._value_fisher[n] = (self._ewc_rwalk_alpha * self._value_fisher[n] + (1 - self._ewc_rwalk_alpha) * curr_value_fisher[n])
+            if self._critic_replay_type == 'rwalk':
+                curr_value_score = {n: torch.zeros(p.shape).to(self.device) for n, p in self._value_func.named_parameters() if p.requires_grad}
+                with torch.no_grad():
+                    curr_value_params = {n: p for n, p in self._value_func.named_parameters() if p.requires_grad}
+                    for n, p in self._value_scores.items():
+                        curr_value_score[n] = self._value_W[n] / (
+                                self._value_fisher[n] * ((curr_value_params[n] - self._value_older_params[n]) ** 2) + self._damping)
+                        self._value_W[n].zero_()
+                        # Page 7: "Since we care about positive influence of the parameters, negative scores are set to zero."
+                        curr_value_score[n] = torch.nn.functional.relu(curr_value_score[n])
+                # Page 8: alleviating regularization getting increasingly rigid by averaging scores
+                for n, p in self._value_scores.items():
+                    self._value_scores[n] = (self._value_scores[n] + curr_value_score[n]) / 2
     def actor_ewc_rwalk_post_train_process(self, iterator):
         def update(batch):
             batch = TorchMiniBatch(
@@ -771,16 +883,14 @@ class STImpl():
         self._clone_policy = copy.deepcopy(self._policy)
         if self._use_vae:
             self._clone_vae = copy.deepcopy(self._vae)
-        if "_value_func" in self.__dict__.keys():
-            self._clone_value_func = copy.deepcopy(self._value_func)
+        if "_value_funcs" in self.__dict__.keys():
+            self._clone_value_funcs = copy.deepcopy(self._value_funcs)
 
     def load_model(self, fname: str) -> None:
         chkpt = torch.load(fname, map_location=self._device)
         BLACK_LIST = [
             "policy",
-            "clone_policy",
             "q_function",
-            "clone_q_function",
             "policy_optim",
             "q_function_optim",
         ]  # special properties
@@ -788,9 +898,10 @@ class STImpl():
 
         keys = [key for key in dir(self) if key not in BLACK_LIST]
         for key in keys:
-            obj = getattr(self, key)
-            if isinstance(obj, (torch.nn.Module, torch.optim.Optimizer)):
-                obj.load_state_dict(chkpt[key])
+            if 'clone' not in key:
+                obj = getattr(self, key)
+                if isinstance(obj, (torch.nn.Module, torch.optim.Optimizer)):
+                    obj.load_state_dict(chkpt[key])
 
     #def rebuild(self):
     #    self._build_alpha()
