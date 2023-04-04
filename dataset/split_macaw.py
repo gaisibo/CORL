@@ -147,13 +147,12 @@ def split_gym(top_euclid, dataset_name, task_datasets, env, compare_dim=3, ask_i
         if ask_indexes:
             indexes_name = 'near_indexes/' + dataset_name + '/' + str(dataset_num) + '.pt'
             distances_name = 'near_distances/' + dataset_name + '/' + str(dataset_num) + '.pt'
+            found = False
             if os.path.exists(indexes_name) and os.path.exists(distances_name):
                 indexes_euclid = torch.load(indexes_name)
                 distances_euclid = torch.load(distances_name)
-            else:
-                transitions = [transition for episode in dataset.episodes for transition in episode]
-                observations = np.stack([transition.observation for transition in transitions], axis=0)
-                indexes_euclid, distances_euclid = similar_euclid(dataset.observations, observations, dataset_name, indexes_name, distances_name, compare_dim=compare_dim, device=device)
+            if not found:
+                indexes_euclid, distances_euclid = similar_euclid(dataset.observations, dataset.observations, dataset_name, indexes_name, distances_name, compare_dim=compare_dim, device=device)
             indexes_euclids[dataset_num] = indexes_euclid
             distances_euclids[dataset_num] = distances_euclid
         else:

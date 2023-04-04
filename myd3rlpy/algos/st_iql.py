@@ -186,6 +186,10 @@ class ST(ST, IQL):
 
         fine_tuned_step = 1,
         n_ensemble = 10,
+        expectile_max = 0.7,
+        expectile_min = 0.7,
+        std_lambda = 0.01,
+        std_bias = 0,
 
         use_vae = False,
         vae_learning_rate = 1e-3,
@@ -232,6 +236,10 @@ class ST(ST, IQL):
         self._merge = merge
         self._fine_tuned_step = fine_tuned_step
         self._n_ensemble = n_ensemble
+        self._expectile_min = expectile_min
+        self._expectile_max = expectile_max
+        self._std_lambda = std_lambda
+        self._std_bias = std_bias
 
         self._use_vae = use_vae
         self._vae_learning_rate = vae_learning_rate
@@ -288,6 +296,10 @@ class ST(ST, IQL):
             from myd3rlpy.algos.torch.st_iql_impl import STImpl as STImpl
         elif self._impl_name == 'iqln':
             from myd3rlpy.algos.torch.st_iqln_impl import STImpl as STImpl
+            impl_dict["expectile_max"] = self._expectile_max
+            impl_dict["expectile_min"] = self._expectile_min
+            impl_dict["std_lambda"] = self._std_lambda
+            impl_dict["std_bias"] = self._std_bias
         self._impl = STImpl(
             **impl_dict
         )

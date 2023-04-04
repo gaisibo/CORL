@@ -5,6 +5,7 @@ import sys
 import time
 import math
 import random
+import re
 from typing import Any, Dict, Optional, Sequence, List, Union, Callable, Tuple, Generator, Iterator, cast
 import types
 from collections import defaultdict
@@ -54,7 +55,7 @@ import gym
 from online.utils import ReplayBuffer
 from online.eval_policy import eval_policy
 
-from myd3rlpy.siamese_similar import similar_mb, similar_mb_euclid, similar_phi, similar_psi
+from myd3rlpy.siamese_similar import similar_mb, similar_mb_l2, similar_mb_feature, similar_phi, similar_psi
 # from myd3rlpy.dynamics.probabilistic_ensemble_dynamics import ProbabilisticEnsembleDynamics
 from myd3rlpy.algos.torch.co_impl import COImpl
 from myd3rlpy.metrics.scorer import q_mean_scorer, q_replay_scorer
@@ -121,7 +122,7 @@ class CO():
             ``['clip', 'min_max', 'standard']``.
         impl (d3rlpy.algos.torch.td3_impl.TD3Impl): algorithm implementation.
     """
-    _sample_type: str
+    # _sample_type: str
 
     # 这里重新写是因为parralle版本的q_funcs不再包括很多q_func，而是并行处理的，所以不进行类型检查。
     def copy_q_function_from(self, impl: AlgoImplBase) -> None:
@@ -412,6 +413,8 @@ class CO():
             tensorboard_dir,
         )
 
+        self._active_logger = logger
+
         # save hyperparameters
         self.save_params(logger)
 
@@ -482,6 +485,27 @@ class CO():
                 transitions = list(cast(List[Transition], dataset))
             else:
                 raise ValueError(f"invalid dataset type: {type(dataset)}")
+
+            # initialize scaler
+            if self._scaler:
+                LOG.debug("Fitting scaler...", scaler=self._scaler.get_type())
+                self._scaler.fit(transitions)
+
+            # initialize action scaler
+            if self._action_scaler:
+                LOG.debug(
+                    "Fitting action scaler...",
+                    action_scaler=self._action_scaler.get_type(),
+                )
+                self._action_scaler.fit(transitions)
+
+            # initialize reward scaler
+            if self._reward_scaler:
+                LOG.debug(
+                    "Fitting reward scaler...",
+                    reward_scaler=self._reward_scaler.get_type(),
+                )
+                self._reward_scaler.fit(transitions)
 
             if self._use_model:
                 if n_dynamic_steps is not None:
@@ -719,11 +743,13 @@ class CO():
             if self._replay_type in ['rwalk', 'ewc']:
                 self._impl.ewc_rwalk_post_train_process(iterator)
             elif self._replay_type == 'si':
-                self._impl.si_post_train_process
+                self._impl.si_post_train_process()
             elif self._replay_type == 'gem':
-                self._impl.gem_post_train_process
+                self._impl.gem_post_train_process()
             elif self._clone_actor and self._replay_type == 'bc':
-                self._impl.bc_post_train_process
+                self._impl.bc_post_train_process()
+            elif self._replay_type == 'fix':
+                self._impl.fix_post_train_process()
 
             if self._clone_finish:
                 total_step = 0
@@ -1208,74 +1234,69 @@ class CO():
                     replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals, replay_policy_actions, replay_qs)
                 return replay_dataset, replay_dataset
 
-    def generate_replay_data_trajectory(self, dataset, episodes, start_index, max_save_num=1000, random_save_num=1000, max_export_time=10, max_export_step=1000, real_action_size=1, real_observation_size=1, n_epochs=None, n_steps=500000,n_steps_per_epoch=5000, shuffle=True, with_generate='generate_model', test=False, indexes_euclid=None):
+    def generate_replay_data_trajectory(self, dataset, episodes, start_index, max_save_num=1000, max_export_time=10, max_export_step=1000, real_action_size=1, real_observation_size=1, n_epochs=None, n_steps=500000,n_steps_per_epoch=5000, shuffle=True, test=False, indexes_euclid=None):
         assert self._impl is not None
         assert self._impl._policy is not None
         assert self._impl._q_func is not None
         assert self._impl._dynamic is not None
-        if 'retrain' in self._sample_type:
-            policy_state_dict = deepcopy(self._impl._policy.state_dict())
-            assert dataset is not None
-            transitions = []
-            if isinstance(dataset, MDPDataset):
-                for episode in cast(MDPDataset, dataset).episodes:
-                    transitions += episode.transitions
-            elif not dataset:
-                raise ValueError("empty dataset is not supported.")
-            elif isinstance(dataset[0], Episode):
-                for episode in cast(List[Episode], dataset):
-                    transitions += episode.transitions
-            elif isinstance(dataset[0], Transition):
-                transitions = list(cast(List[Transition], dataset))
-            else:
-                raise ValueError(f"invalid dataset type: {type(dataset)}")
+        # if 'retrain' in self._sample_type:
+        #     policy_state_dict = deepcopy(self._impl._policy.state_dict())
+        #     assert dataset is not None
+        #     transitions = []
+        #     if isinstance(dataset, MDPDataset):
+        #         for episode in cast(MDPDataset, dataset).episodes:
+        #             transitions += episode.transitions
+        #     elif not dataset:
+        #         raise ValueError("empty dataset is not supported.")
+        #     elif isinstance(dataset[0], Episode):
+        #         for episode in cast(List[Episode], dataset):
+        #             transitions += episode.transitions
+        #     elif isinstance(dataset[0], Transition):
+        #         transitions = list(cast(List[Transition], dataset))
+        #     else:
+        #         raise ValueError(f"invalid dataset type: {type(dataset)}")
 
-            if n_epochs is None and n_steps is not None:
-                assert n_steps >= n_steps_per_epoch
-                n_epochs = n_steps // n_steps_per_epoch
-                iterator = RandomIterator(
-                    transitions,
-                    n_steps_per_epoch,
-                    batch_size=self._batch_size,
-                    n_steps=self._n_steps,
-                    gamma=self._gamma,
-                    n_frames=self._n_frames,
-                    real_ratio=self._real_ratio,
-                    generated_maxlen=self._generated_maxlen,
-                )
-            elif n_epochs is not None and n_steps is None:
-                iterator = RoundIterator(
-                    transitions,
-                    batch_size=self._batch_size,
-                    n_steps=self._n_steps,
-                    gamma=self._gamma,
-                    n_frames=self._n_frames,
-                    real_ratio=self._real_ratio,
-                    generated_maxlen=self._generated_maxlen,
-                    shuffle=shuffle,
-                )
-            else:
-                raise ValueError("Either of n_epochs or n_steps must be given.")
-            iterator.reset()
+        #     if n_epochs is None and n_steps is not None:
+        #         assert n_steps >= n_steps_per_epoch
+        #         n_epochs = n_steps // n_steps_per_epoch
+        #         iterator = RandomIterator(
+        #             transitions,
+        #             n_steps_per_epoch,
+        #             batch_size=self._batch_size,
+        #             n_steps=self._n_steps,
+        #             gamma=self._gamma,
+        #             n_frames=self._n_frames,
+        #             real_ratio=self._real_ratio,
+        #             generated_maxlen=self._generated_maxlen,
+        #         )
+        #     elif n_epochs is not None and n_steps is None:
+        #         iterator = RoundIterator(
+        #             transitions,
+        #             batch_size=self._batch_size,
+        #             n_steps=self._n_steps,
+        #             gamma=self._gamma,
+        #             n_frames=self._n_frames,
+        #             real_ratio=self._real_ratio,
+        #             generated_maxlen=self._generated_maxlen,
+        #             shuffle=shuffle,
+        #         )
+        #     else:
+        #         raise ValueError("Either of n_epochs or n_steps must be given.")
+        #     iterator.reset()
 
-        observations = torch.from_numpy(np.stack([transition.observation for episode in episodes for transition in episode], axis=0))
-        actions = torch.from_numpy(np.stack([transition.action for episode in episodes for transition in episode], axis=0))
-        terminals = torch.from_numpy(np.stack([transition.terminal for episode in episodes for transition in episode], axis=0))
-        terminals_stop = [len(episode.transitions) for episode in episodes]
-        terminals_stop = [sum(terminals_stop[:i + 1]) - 1 for i in range(len(terminals_stop))]
+        observations = torch.from_numpy(dataset.observations)
+        actions = torch.from_numpy(dataset.actions)
+        terminals = torch.from_numpy(np.logical_or(dataset.terminals == 1, dataset.episode_terminals == 1))
+        terminals_stop = torch.where(((terminals == 1) == 0).nonzero())
         # 关键算法
 
-        orl_lens = [0] + [len(episode) for episode in episodes[:start_index]]
-        orl_indexes_all = []
-        start = 0
-        for orl_len in orl_lens:
-            orl_indexes_all.append(start + orl_len)
-            start += orl_len
+        orl_indexes_all = torch.cat([torch.LongTensor(1), terminals_stop[:-1] + 1])
+        orl_indexes_all[0] = 0
         random.shuffle(orl_indexes_all)
-        orl_ns_all = [0 for _ in orl_indexes_all]
+        # orl_ns_all = [0 for _ in orl_indexes_all]
         orl_batch_size = 100
         orl_indexes_list = [orl_indexes_all[i:i+orl_batch_size] for i in range(0,len(orl_indexes_all) - 1,orl_batch_size)]
-        orl_ns_list = [orl_ns_all[i:i+orl_batch_size] for i in range(0,len(orl_ns_all) - 1,orl_batch_size)]
+        # orl_ns_list = [orl_ns_all[i:i+orl_batch_size] for i in range(0,len(orl_ns_all) - 1,orl_batch_size)]
 
         if indexes_euclid is None:
             # 直接算的话会超内存，必须一个一个batch来。
@@ -1302,9 +1323,9 @@ class CO():
         old_orl_indexes_all = 0
         while len(orl_indexes_all) < max_save_num:
             for orl_indexes, orl_ns in zip(orl_indexes_list, orl_ns_list):
-                if 'none' in self._sample_type:
-                    if len(orl_indexes_all) > old_orl_indexes_all:
-                        break
+                # if 'none' in self._sample_type:
+                #     if len(orl_indexes_all) > old_orl_indexes_all:
+                #         break
                 if len(orl_indexes_all) >= max_save_num:
                     break
                 # if test and stop:
@@ -1315,12 +1336,12 @@ class CO():
                 print(f'start_indexes: {len(start_indexes)}')
                 export_step = 0
                 epoch_loss = defaultdict(list)
-                if 'retrain' in self._sample_type:
-                    result_observations = []
-                    result_actions = []
-                    result_rewards = []
-                    result_next_observations = []
-                    result_terminals = []
+                # if 'retrain' in self._sample_type:
+                #     result_observations = []
+                #     result_actions = []
+                #     result_rewards = []
+                #     result_next_observations = []
+                #     result_terminals = []
                 while export_step < max_export_step:
                     # if test and export_step >= 3:
                     #     stop = True
@@ -1329,9 +1350,9 @@ class CO():
                         break
                     print(f'next_step: {export_step}')
                     start_actions = self._impl._policy(start_observations)
-                    if 'noise' in self._sample_type:
-                        noise = self._model_noise * max(1, (export_time / max_export_time)) * torch.randn(start_actions.shape, device=self._impl.device)
-                        start_actions += noise
+                    # if 'noise' in self._sample_type:
+                    noise = self._model_noise * max(1, (export_time / max_export_time)) * torch.randn(start_actions.shape, device=self._impl.device)
+                    start_actions += noise
 
                     if indexes_euclid is not None:
                         if 'next' in self._experience_type:
@@ -1353,7 +1374,7 @@ class CO():
                             start_indexes = np.array(start_indexes)
                             near_next_observations = next_observations[indexes_euclid[start_indexes]].to(self._impl.device)
 
-                    if 'model' in with_generate or 'model' in self._experience_type:
+                    if 'model' in self._experience_type:
                         if 'prob' in self._experience_type:
                             mus, logstds = [], []
                             for model in self._impl._dynamic._models:
@@ -1372,24 +1393,24 @@ class CO():
                         # mean_start_next_observations = torch.mean(start_next_observations, dim=1).unsqueeze(dim=1).expand(-1, start_next_observations.shape[1], -1)
                         # _, diff_mean_start_next_observations_indices = torch.max(torch.mean(start_next_observations - mean_start_next_observations, dim=2), dim=1)
                         start_next_observations = torch.stack([start_next_observations[i][random.randint(0, len(start_next_observations[i]) - 1)] for i in range(start_next_observations.shape[0])])
-                        if 'retrain' in self._sample_type:
-                            start_next_actions = self._impl._policy(start_next_observations)
+                        # if 'retrain' in self._sample_type:
+                        #     start_next_actions = self._impl._policy(start_next_observations)
 
-                            with torch.no_grad():
-                                # original_reward
-                                start_rewards = self._impl._q_func(start_observations, start_actions)
-                                start_rewards -= self.gamma * self._impl._q_func(start_next_observations, start_next_actions)
-                                orl_ns_tensor = torch.from_numpy(np.array(orl_ns))[:start_rewards.shape[0]].to(self._impl.device)
-                                start_rewards -= self._orl_alpha * orl_ns_tensor.unsqueeze(dim=1)
-                                start_rewards = start_rewards.detach()
-                                # exploration reward
+                        #     with torch.no_grad():
+                        #         # original_reward
+                        #         start_rewards = self._impl._q_func(start_observations, start_actions)
+                        #         start_rewards -= self.gamma * self._impl._q_func(start_next_observations, start_next_actions)
+                        #         orl_ns_tensor = torch.from_numpy(np.array(orl_ns))[:start_rewards.shape[0]].to(self._impl.device)
+                        #         start_rewards -= self._orl_alpha * orl_ns_tensor.unsqueeze(dim=1)
+                        #         start_rewards = start_rewards.detach()
+                        #         # exploration reward
 
-                            start_terminals = torch.zeros(start_observations.shape[0], 1).to(self._impl.device)
-                            result_observations.append(start_observations)
-                            result_actions.append(start_actions)
-                            result_rewards.append(start_rewards)
-                            result_next_observations.append(start_next_observations)
-                            result_terminals.append(start_terminals)
+                        #     start_terminals = torch.zeros(start_observations.shape[0], 1).to(self._impl.device)
+                        #     result_observations.append(start_observations)
+                        #     result_actions.append(start_actions)
+                        #     result_rewards.append(start_rewards)
+                        #     result_next_observations.append(start_next_observations)
+                        #     result_terminals.append(start_terminals)
                         if 'prob' in self._experience_type:
                             mus = mus[torch.arange(start_observations.shape[0]), torch.randint(len(self._impl._dynamic._models), size=(start_observations.shape[0],))]
                             logstds = logstds[torch.arange(start_observations.shape[0]), torch.randint(len(self._impl._dynamic._models), size=(start_observations.shape[0],))]
@@ -1397,7 +1418,12 @@ class CO():
                         else:
                             # 用dynamic的输出和dynamic的输出比较，减少一定的误差。其实就是数据集中的sa生成的s'和policy跑出来的sa生成的s'比较
                             if indexes_euclid is not None:
-                                near_indexes, _ = similar_mb_euclid(start_next_observations, near_next_observations, topk=1)
+                                if self._distance_type == 'l2':
+                                    near_indexes, _ = similar_mb_l2(start_next_observations, near_next_observations, topk=1)
+                                elif self._distance_type == 'feature':
+                                    near_indexes, _ = similar_mb_feature(start_next_observations, near_next_observations, topk=1)
+                                else:
+                                    raise NotImplementedError
                                 near_indexes.squeeze_()
                                 if len(start_indexes) != 1:
                                     near_indexes = torch.LongTensor([indexes_euclid[start_indexes[i], near_indexes[i]] for i in range(start_indexes.shape[0])]).to(self._impl.device)
@@ -1410,7 +1436,10 @@ class CO():
                                 near_indexes = []
                                 near_distances = []
                                 while batch_idx + eval_batch_size < observations.shape[0]:
-                                    near_indexes_, near_distances_ = similar_mb_euclid(start_next_observations, near_next_observations_list[idx].to(self._impl.device), topk=1)
+                                    if self._distance_type == 'l2':
+                                        near_indexes_, near_distances_ = similar_mb_l2(start_next_observations, near_next_observations_list[idx].to(self._impl.device), topk=1)
+                                    elif self._distance_type == 'feature':
+                                        near_indexes_, near_distances_ = similar_mb_feature(start_next_observations, near_next_observations_list[idx].to(self._impl.device), self._impl, topk=1)
                                     near_indexes.append(near_indexes_)
                                     near_distances.append(near_distances_)
                                     batch_idx += eval_batch_size
@@ -1440,13 +1469,14 @@ class CO():
                     for start_index in start_indexes_:
                         if start_index in orl_indexes_all:
                             new_index = orl_indexes_all.index(start_index)
-                            orl_ns_all[new_index] += 1
+                            # orl_ns_all[new_index] += 1
                             print(f'start_indexes {start_index} finish')
-                            if self._sample_type != 'none' and export_time > 0:
+                            # if self._sample_type != 'none' and export_time > 0:
+                            if export_time > 0:
                                 start_indexes.append(start_index)
                         else:
                             orl_indexes_all.append(start_index)
-                            orl_ns_all.append(1)
+                            # orl_ns_all.append(1)
                             start_indexes.append(start_index)
                     print(f'start_indexes: {len(start_indexes)}')
                     print(f'len(orl_indexes_all): {len(orl_indexes_all)}')
@@ -1457,81 +1487,80 @@ class CO():
                         start_observations.unsqueeze(dim=0)
                     export_step += 1
                 export_time += 1
-            if 'retrain' in self._sample_type:
-                try:
-                    batch = next(iterator)
-                except StopIteration:
-                    iterator.reset()
-                    batch = next(iterator)
-                batch_new = dict()
-                if self._sample_type == 'retrain_actor':
-                    batch_new['observations'] = torch.cat([torch.from_numpy(batch.observations).to(self._impl.device)] + result_observations, dim=0).detach()
-                    batch_new['actions'] = torch.cat([torch.from_numpy(batch.actions[:, :real_action_size]).to(self._impl.device)] + result_actions, dim=0).detach()
-                    batch_new['rewards'] = torch.cat([torch.from_numpy(batch.rewards).to(self._impl.device)] + result_rewards, dim=0).detach()
-                    batch_new['next_observations'] = torch.cat([torch.from_numpy(batch.next_observations).to(self._impl.device)] + result_next_observations, dim=0).detach()
-                    batch_new['terminals'] = torch.cat([torch.from_numpy(batch.terminals).to(self._impl.device)] + result_terminals, dim=0).detach()
-                elif self._sample_type == 'retrain_model':
-                    batch_new['observations'] = torch.from_numpy(batch.observations).to(self._impl.device).detach()
-                    batch_new['actions'] = torch.from_numpy(batch.actions[:, :real_action_size]).to(self._impl.device)
-                    batch_new['rewards'] = torch.from_numpy(batch.rewards).to(self._impl.device)
-                    batch_new['next_observations'] = torch.from_numpy(batch.next_observations).to(self._impl.device)
-                    batch_new['terminals'] = torch.from_numpy(batch.terminals).to(self._impl.device)
-                batch_new = Struct(**batch_new)
-                batch_new.n_steps = 1
-                batch_new.masks = None
-                batch_new.device = self._impl.device
-                batch_new = cast(TorchMiniBatch, batch_new)
-                if self._sample_type == 'retrain_actor':
-                    loss = self._retrain_actor_update(batch_new)
-                elif self._sample_type == 'retrain_model':
-                    batch_retrain['observations'] = torch.cat(result_observations, dim=0).detach()
-                    batch_retrain['actions'] = torch.cat(result_actions, dim=0).detach()
-                    batch_retrain['rewards'] = torch.cat(result_rewards, dim=0).detach()
-                    batch_retrain['next_observations'] = torch.cat(result_next_observations, dim=0).detach()
-                    batch_retrain['terminals'] = torch.cat(result_terminals, dim=0).detach()
-                    batch_retrain = Struct(**batch_retrain)
-                    batch_retrain.n_steps = 1
-                    batch_retrain.masks = None
-                    batch_retrain.device = self._impl.device
-                    batch_retrain = cast(TorchMiniBatch, batch_retrain)
-                    loss = self._retrain_model_update(batch_new, batch_retrain)
+            # if 'retrain' in self._sample_type:
+            #     try:
+            #         batch = next(iterator)
+            #     except StopIteration:
+            #         iterator.reset()
+            #         batch = next(iterator)
+            #     batch_new = dict()
+            #     if self._sample_type == 'retrain_actor':
+            #         batch_new['observations'] = torch.cat([torch.from_numpy(batch.observations).to(self._impl.device)] + result_observations, dim=0).detach()
+            #         batch_new['actions'] = torch.cat([torch.from_numpy(batch.actions[:, :real_action_size]).to(self._impl.device)] + result_actions, dim=0).detach()
+            #         batch_new['rewards'] = torch.cat([torch.from_numpy(batch.rewards).to(self._impl.device)] + result_rewards, dim=0).detach()
+            #         batch_new['next_observations'] = torch.cat([torch.from_numpy(batch.next_observations).to(self._impl.device)] + result_next_observations, dim=0).detach()
+            #         batch_new['terminals'] = torch.cat([torch.from_numpy(batch.terminals).to(self._impl.device)] + result_terminals, dim=0).detach()
+            #     elif self._sample_type == 'retrain_model':
+            #         batch_new['observations'] = torch.from_numpy(batch.observations).to(self._impl.device).detach()
+            #         batch_new['actions'] = torch.from_numpy(batch.actions[:, :real_action_size]).to(self._impl.device)
+            #         batch_new['rewards'] = torch.from_numpy(batch.rewards).to(self._impl.device)
+            #         batch_new['next_observations'] = torch.from_numpy(batch.next_observations).to(self._impl.device)
+            #         batch_new['terminals'] = torch.from_numpy(batch.terminals).to(self._impl.device)
+            #     batch_new = Struct(**batch_new)
+            #     batch_new.n_steps = 1
+            #     batch_new.masks = None
+            #     batch_new.device = self._impl.device
+            #     batch_new = cast(TorchMiniBatch, batch_new)
+            #     if self._sample_type == 'retrain_actor':
+            #         loss = self._retrain_actor_update(batch_new)
+            #     elif self._sample_type == 'retrain_model':
+            #         batch_retrain['observations'] = torch.cat(result_observations, dim=0).detach()
+            #         batch_retrain['actions'] = torch.cat(result_actions, dim=0).detach()
+            #         batch_retrain['rewards'] = torch.cat(result_rewards, dim=0).detach()
+            #         batch_retrain['next_observations'] = torch.cat(result_next_observations, dim=0).detach()
+            #         batch_retrain['terminals'] = torch.cat(result_terminals, dim=0).detach()
+            #         batch_retrain = Struct(**batch_retrain)
+            #         batch_retrain.n_steps = 1
+            #         batch_retrain.masks = None
+            #         batch_retrain.device = self._impl.device
+            #         batch_retrain = cast(TorchMiniBatch, batch_retrain)
+            #         loss = self._retrain_model_update(batch_new, batch_retrain)
             old_orl_indexes_all = len(orl_indexes_all)
-        if self._sample_type == 'retrain_actor':
-            self._impl._policy.load_state_dict(policy_state_dict)
+        # if self._sample_type == 'retrain_actor':
+        #     self._impl._policy.load_state_dict(policy_state_dict)
 
-        all_transitions = np.array([transition for episode in episodes for transition in episode])
         random.shuffle(orl_indexes_all)
         if len(orl_indexes_all) >= max_save_num:
             orl_indexes_all = orl_indexes_all[:max_save_num]
-        orl_indexes_random = list(set(range(len(all_transitions))) - set(orl_indexes_all))
-        random.shuffle(orl_indexes_random)
-        orl_indexes_random = orl_indexes_random[: max_save_num - len(orl_indexes_all)]
-        orl_indexes_all += orl_indexes_random
-        transitions = [all_transitions[orl_index] for orl_index in orl_indexes_all]
-        if with_generate == 'generate_model':
-            return self.generate_new_data_replay(transitions, max_save_num=max_save_num, real_observation_size=real_observation_size, real_action_size=real_action_size)
+        transitions = []
+        for index in orl_indexes_all:
+            assert dataset.terminals[index] == 0
+            assert dataset.episode_terminals[index] == 0
+            transitions.append(Transition([dataset.observations.shape[1]], dataset.actions.shape[1], dataset.observations[index], dataset.actions[index], dataset.rewards[index], dataset.next_observations[index], 0))
+        # if with_generate == 'generate_model':
+        #     return self.generate_new_data_replay(transitions, max_save_num=max_save_num, real_observation_size=real_observation_size, real_action_size=real_action_size)
+        # else:
+        replay_observations = torch.stack([torch.from_numpy(transition.observation) for transition in transitions], dim=0).to('cpu')
+        replay_actions = torch.stack([torch.from_numpy(transition.action) for transition in transitions], dim=0).to('cpu')
+        replay_rewards = torch.stack([torch.from_numpy(np.array([transition.reward])) for transition in transitions], dim=0).to('cpu')
+        replay_next_observations = torch.stack([torch.from_numpy(transition.next_observation) for transition in transitions], dim=0).to('cpu')
+        replay_terminals = torch.stack([torch.from_numpy(np.array([transition.terminal])) for transition in transitions], dim=0).to('cpu')
+        if self._replay_type != 'bc':
+            replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals)
+            return transitions, replay_dataset
         else:
-            replay_observations = torch.stack([torch.from_numpy(transition.observation) for transition in transitions], dim=0).to('cpu')
-            replay_actions = torch.stack([torch.from_numpy(transition.action) for transition in transitions], dim=0).to('cpu')
-            replay_rewards = torch.stack([torch.from_numpy(np.array([transition.reward])) for transition in transitions], dim=0).to('cpu')
-            replay_next_observations = torch.stack([torch.from_numpy(transition.next_observation) for transition in transitions], dim=0).to('cpu')
-            replay_terminals = torch.stack([torch.from_numpy(np.array([transition.terminal])) for transition in transitions], dim=0).to('cpu')
-            if self._replay_type != 'bc':
-                replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals)
-                return transitions, replay_dataset
+            replay_policy_actions = self._impl._policy(replay_observations.to(self._impl.device)).detach().to('cpu')
+            # replay_qs = self._impl._q_func(replay_observations.to(self._impl.device), replay_actions[:, :real_action_size].to(self._impl.device)).detach().to('cpu')
+            replay_qs = torch.zeros(replay_observations.shape[0])
+            if self._use_phi:
+                replay_phis = self._impl._phi(replay_observations.to(self._impl.device), replay_actions[:, :real_action_size].to(self._impl.device)).detach().to('cpu')
+                replay_psis = self._impl._psi(replay_observations.to(self._impl.device)).detach().to('cpu')
+                replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals, replay_policy_actions, replay_qs, replay_phis, replay_psis)
             else:
-                replay_policy_actions = self._impl._policy(replay_observations.to(self._impl.device)).detach().to('cpu')
-                # replay_qs = self._impl._q_func(replay_observations.to(self._impl.device), replay_actions[:, :real_action_size].to(self._impl.device)).detach().to('cpu')
-                replay_qs = torch.zeros(replay_observations.shape[0])
-                if self._use_phi:
-                    replay_phis = self._impl._phi(replay_observations.to(self._impl.device), replay_actions[:, :real_action_size].to(self._impl.device)).detach().to('cpu')
-                    replay_psis = self._impl._psi(replay_observations.to(self._impl.device)).detach().to('cpu')
-                    replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals, replay_policy_actions, replay_qs, replay_phis, replay_psis)
-                else:
-                    replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals, replay_policy_actions, replay_qs)
-                return replay_dataset, replay_dataset
+                replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals, replay_policy_actions, replay_qs)
+            return replay_dataset, replay_dataset
 
-    def generate_replay_data_transition(self, dataset, max_save_num=1000, start_num=50, real_observation_size=1, real_action_size=1, batch_size=16, with_generate='none', indexes_euclid=None, distances_euclid=None, d_threshold=None):
+    def generate_replay_data_transition(self, dataset, max_save_num=1000, start_num=50, real_observation_size=1, real_action_size=1, batch_size=16, indexes_euclid=None, distances_euclid=None, d_threshold=None):
         with torch.no_grad():
             if isinstance(dataset, MDPDataset):
                 episodes = dataset.episodes
@@ -1629,9 +1658,6 @@ class CO():
                 transitions = [i for i, _ in sorted(zip(transitions, near_n), key=lambda x: x[1])]
             else:
                 raise NotImplementedError
-            if with_generate == 'generate':
-                transitions = transitions[:max_save_num // self._generate_step]
-                return self.generate_new_data_replay(transitions, max_save_num=max_save_num, real_observation_size=real_observation_size, real_action_size=real_action_size)
 
             transitions = transitions[:max_save_num]
             replay_observations = torch.stack([torch.from_numpy(transition.observation) for transition in transitions], dim=0).to('cpu')
@@ -1681,11 +1707,8 @@ class CO():
                 replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals, replay_policy_actions, replay_qs)
             return replay_dataset, replay_dataset
 
-    def generate_replay_data_episode(self, dataset, all_max_save_num=1000, max_export_step=1000, start_num=1, real_observation_size=1, real_action_size=1, batch_size=16, with_generate='none', test=False, indexes_euclid=None):
-        # max_save_num = all_max_save_num // 2
-        # random_save_num = all_max_save_num - max_save_num
+    def generate_replay_data_episode(self, dataset, all_max_save_num=1000, max_export_step=1000, start_num=1, real_observation_size=1, real_action_size=1, batch_size=16, test=False, indexes_euclid=None):
         max_save_num = all_max_save_num
-        random_save_num = 0
         with torch.no_grad():
             if isinstance(dataset, MDPDataset):
                 episodes = dataset.episodes
@@ -1799,38 +1822,37 @@ class CO():
                     episodes = [i for i, _ in sorted(zip(episodes, episode_log_probs), key=lambda x: x[1])]
             else:
                 raise NotImplementedError
-            if with_generate == 'generate':
-                transitions = [transition for episode in episodes for transition in episode.transitions]
-                transitions = transitions[:max_save_num // self._generate_step]
-                return self.generate_new_data_replay(transitions, max_save_num=max_save_num, real_observation_size=real_observation_size, real_action_size=real_action_size)
-            if with_generate in ['generate_model', 'model']:
-                assert indexes_euclid is None
-                select_num = 0
-                if with_generate == 'generate_model':
-                    given_length = max_save_num // self._generate_step * self._select_time
-                else:
-                    given_length = max_save_num * self._select_time
-                saved = False
-                episode_num = 0
-                start_index = 0
-                for episode_num, episode in enumerate(episodes):
-                    select_num += len(episode.transitions)
-                    if select_num >= max_save_num:
-                        if not saved:
-                            start_index = episode_num
-                            saved = True
-                    if select_num >= given_length:
-                        break
-                if not saved:
-                    start_index = episode_num
-                episodes = episodes[:episode_num]
-                return self.generate_replay_data_trajectory(dataset, episodes, start_index, max_save_num=max_save_num, random_save_num=random_save_num, max_export_step=max_export_step, real_observation_size=real_observation_size, real_action_size=real_action_size, with_generate=with_generate, test=test, indexes_euclid=indexes_euclid)
+            # if with_generate == 'generate':
+            #     transitions = [transition for episode in episodes for transition in episode.transitions]
+            #     transitions = transitions[:max_save_num // self._generate_step]
+            #     return self.generate_new_data_replay(transitions, max_save_num=max_save_num, real_observation_size=real_observation_size, real_action_size=real_action_size)
+            # if with_generate in ['generate_model', 'model']:
+            #     assert indexes_euclid is None
+            #     select_num = 0
+            #     if with_generate == 'generate_model':
+            #         given_length = max_save_num // self._generate_step * self._select_time
+            #     else:
+            #         given_length = max_save_num * self._select_time
+            #     saved = False
+            #     episode_num = 0
+            #     start_index = 0
+            #     for episode_num, episode in enumerate(episodes):
+            #         select_num += len(episode.transitions)
+            #         if select_num >= max_save_num:
+            #             if not saved:
+            #                 start_index = episode_num
+            #                 saved = True
+            #         if select_num >= given_length:
+            #             break
+            #     if not saved:
+            #         start_index = episode_num
+            #     episodes = episodes[:episode_num]
+            #     return self.generate_replay_data_trajectory(dataset, episodes, start_index, max_save_num=max_save_num, max_export_step=max_export_step, real_observation_size=real_observation_size, real_action_size=real_action_size, with_generate=with_generate, test=test, indexes_euclid=indexes_euclid)
 
             all_transitions = [transition for episode in episodes for transition in episode.transitions]
             transitions = all_transitions[:max_save_num]
             random_transitions = all_transitions[max_save_num:]
             random.shuffle(random_transitions)
-            transitions += random_transitions[:random_save_num]
             replay_observations = torch.stack([torch.from_numpy(transition.observation) for transition in transitions], dim=0).to('cpu')
             replay_actions = torch.stack([torch.from_numpy(transition.action) for transition in transitions], dim=0).to('cpu')
             replay_rewards = torch.stack([torch.from_numpy(np.array([transition.reward])) for transition in transitions], dim=0).to('cpu')
@@ -1921,45 +1943,44 @@ class CO():
                 replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals, replay_policy_actions, replay_qs)
             return replay_dataset, replay_dataset
 
-    def generate_replay(self, task_id, origin_datasets, env, replay_type, experience_type, replay_datasets, save_datasets, max_save_num, max_export_step, real_action_size, real_observation_size, generate_type, indexes_euclid, distances_euclid, d_threshold, with_generate, test, model_path, algos_name, learned_tasks):
+    def generate_replay(self, task_id, origin_datasets, env, replay_type, experience_type, replay_datasets, save_datasets, max_save_num, max_export_step, real_action_size, real_observation_size, indexes_euclid, distances_euclid, d_threshold, test, model_path, algos_name, learned_tasks):
 
-        if int(task_id) != len(origin_datasets.keys()) - 1:
-            start_time = time.perf_counter()
-            if replay_type in ['ewc', 'si', 'rwalk', 'none'] or experience_type in ['none', 'all']:
-                replay_datasets[task_id], save_datasets[task_id] = None, None
-            elif experience_type in ['random_transition', 'max_reward', 'max_match', 'max_supervise', 'max_model', 'min_reward', 'min_match', 'min_supervise', 'min_model', 'coverage']:
-                replay_datasets[task_id], save_datasets[task_id] = self.generate_replay_data_transition(origin_datasets[task_id], max_save_num=max_save_num, real_action_size=real_action_size, real_observation_size=real_observation_size, with_generate=generate_type, indexes_euclid=indexes_euclid, distances_euclid=distances_euclid, d_threshold=d_threshold)
-                print(f"len(replay_datasets[task_id]): {len(replay_datasets[task_id])}")
-            elif experience_type in ['random_episode', 'max_reward_end', 'max_reward_mean', 'max_match_end', 'max_match_mean', 'max_supervise_end', 'max_supervise_mean', 'max_model_end', 'max_model_mean', 'min_reward_end', 'min_reward_mean', 'min_match_end', 'min_match_mean', 'min_model_end', 'min_model_mean']:
-                replay_datasets[task_id], save_datasets[task_id] = self.generate_replay_data_episode(origin_datasets[task_id], all_max_save_num=max_save_num, max_export_step=max_export_step, real_action_size=real_action_size, real_observation_size=real_observation_size, with_generate=generate_type, test=test, indexes_euclid=indexes_euclid)
-                print(f"len(replay_datasets[task_id]): {len(replay_datasets[task_id])}")
-            elif experience_type == 'generate':
-                replay_datasets[task_id], save_datasets[task_id] = self.generate_new_data_replay(origin_datasets[task_id], max_save_num=max_save_num, real_observation_size=real_observation_size, real_action_size=real_action_size)
-                print(f"len(replay_datasets[task_id]): {len(replay_datasets[task_id])}")
-            elif experience_type in ['model', 'model_next', 'model_this', 'model_prob']:
-                episodes = origin_datasets[task_id].episodes
-                episode_num = 0
-                saved = False
-                select_num = 0
-                start_index = 0
-                for episode_num, episode in enumerate(episodes):
-                    select_num += len(episode.transitions)
-                    if select_num >= max_save_num:
-                        if not saved:
-                            start_index = episode_num
-                            saved = True
-                if not saved:
-                    start_index = episode_num
-                replay_datasets[task_id], save_datasets[task_id] = self.generate_replay_data_trajectory(origin_datasets[task_id], episodes, start_index, max_save_num=max_save_num, random_save_num=0, max_export_step=max_export_step, real_observation_size=real_observation_size, real_action_size=real_action_size, with_generate=generate_type, test=test, indexes_euclid=indexes_euclid)
-            elif experience_type == 'online':
-                assert env is not None
-                replay_datasets[task_id], save_datasets[task_id] = self.generate_replay_data_online(env, task_id, test=test, max_save_num=max_save_num, real_observation_size=real_observation_size, real_action_size=real_action_size)
-            else:
-                print(f'experience_type: {experience_type}')
-                raise NotImplementedError
-            print(f'Select Replay Buffer Time: {time.perf_counter() - start_time}')
-            if save_datasets[task_id] is not None:
-                torch.save(save_datasets[task_id], f=model_path + algos_name + '_' + str(task_id) + '_datasets.pt')
+        start_time = time.perf_counter()
+        if replay_type in ['ewc', 'si', 'rwalk', 'fix', 'none'] or experience_type in ['none', 'all']:
+            replay_datasets[task_id], save_datasets[task_id] = None, None
+        elif experience_type in ['random_transition', 'max_reward', 'max_match', 'max_supervise', 'max_model', 'min_reward', 'min_match', 'min_supervise', 'min_model', 'coverage']:
+            replay_datasets[task_id], save_datasets[task_id] = self.generate_replay_data_transition(origin_datasets[task_id], max_save_num=max_save_num, real_action_size=real_action_size, real_observation_size=real_observation_size, indexes_euclid=indexes_euclid, distances_euclid=distances_euclid, d_threshold=d_threshold)
+            print(f"len(replay_datasets[task_id]): {len(replay_datasets[task_id])}")
+        elif experience_type in ['random_episode', 'max_reward_end', 'max_reward_mean', 'max_match_end', 'max_match_mean', 'max_supervise_end', 'max_supervise_mean', 'max_model_end', 'max_model_mean', 'min_reward_end', 'min_reward_mean', 'min_match_end', 'min_match_mean', 'min_model_end', 'min_model_mean']:
+            replay_datasets[task_id], save_datasets[task_id] = self.generate_replay_data_episode(origin_datasets[task_id], all_max_save_num=max_save_num, max_export_step=max_export_step, real_action_size=real_action_size, real_observation_size=real_observation_size, test=test, indexes_euclid=indexes_euclid)
+            print(f"len(replay_datasets[task_id]): {len(replay_datasets[task_id])}")
+        elif experience_type == 'generate':
+            replay_datasets[task_id], save_datasets[task_id] = self.generate_new_data_replay(origin_datasets[task_id], max_save_num=max_save_num, real_observation_size=real_observation_size, real_action_size=real_action_size)
+            print(f"len(replay_datasets[task_id]): {len(replay_datasets[task_id])}")
+        elif experience_type in ['model', 'model_next', 'model_this', 'model_prob']:
+            episodes = origin_datasets[task_id].episodes
+            episode_num = 0
+            saved = False
+            select_num = 0
+            start_index = 0
+            for episode_num, episode in enumerate(episodes):
+                select_num += len(episode.transitions)
+                if select_num >= max_save_num:
+                    if not saved:
+                        start_index = episode_num
+                        saved = True
+            if not saved:
+                start_index = episode_num
+            replay_datasets[task_id], save_datasets[task_id] = self.generate_replay_data_trajectory(origin_datasets[task_id], episodes, start_index, max_save_num=max_save_num, max_export_step=max_export_step, real_observation_size=real_observation_size, real_action_size=real_action_size, test=test, indexes_euclid=indexes_euclid)
+        elif experience_type == 'online':
+            assert env is not None
+            replay_datasets[task_id], save_datasets[task_id] = self.generate_replay_data_online(env, task_id, test=test, max_save_num=max_save_num, real_observation_size=real_observation_size, real_action_size=real_action_size)
+        else:
+            print(f'experience_type: {experience_type}')
+            raise NotImplementedError
+        print(f'Select Replay Buffer Time: {time.perf_counter() - start_time}')
+        if save_datasets[task_id] is not None:
+            torch.save(save_datasets[task_id], f=model_path + algos_name + '_' + str(task_id) + '_datasets.pt')
         mean_scorers = [q_mean_scorer(real_action_size=real_action_size, test_id=str(n)) for n in learned_tasks]
         mean_eval_episodes = [origin_datasets[task_id] for task_id in learned_tasks]
         mean_inner_qs = []
@@ -1984,3 +2005,32 @@ class CO():
         for i, (mean_q, replay_q, no_replay_q) in enumerate(zip(mean_outer_qs, replay_outer_qs, no_replay_outer_qs)):
             print(f'final test {i} outer mean_q: {mean_q}; outer replay_q: {replay_q}; outer no_replay_q : {no_replay_q}. ', end='')
         print()
+
+    def calc_layer_mean_grad(self, actor_grad_save, clone_actor_grad_save):
+        mean_actor_grad = []
+        i = 0
+        index = 0
+        old_index = 0
+        for name, param in self._impl._policy.named_parameters():
+            if str(i) in name:
+                index += param.numel()
+            else:
+                mean_actor_grad.append(torch.mean(actor_grad_save[old_index: index]).detach().cpu().numpy())
+                old_index = index
+                i += 1
+
+        if hasattr(self._impl, "_clone_policy") and clone_actor_grad_save is not None:
+            mean_clone_actor_grad = []
+            i = 0
+            index = 0
+            old_index = 0
+            for name, param in self._impl._clone_policy.named_parameters():
+                if str(i) in name:
+                    index += param.numel()
+                else:
+                    mean_clone_actor_grad.append(torch.mean(clone_actor_grad_save[old_index: index]).detach().cpu().numpy())
+                    old_index = index
+                    i += 1
+        else:
+            mean_clone_actor_grad = None
+        return mean_actor_grad, mean_clone_actor_grad

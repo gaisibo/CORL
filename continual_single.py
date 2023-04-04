@@ -9,6 +9,8 @@ import time
 from functools import partial
 from envs import HalfCheetahDirEnv
 import numpy as np
+import gym
+from mygym.envs.halfcheetah_block import HalfCheetahBlockEnv
 
 import torch
 from torch.optim.lr_scheduler import CosineAnnealingLR
@@ -42,10 +44,13 @@ replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'termi
 def main(args, device):
     np.set_printoptions(precision=1, suppress=True)
     ask_indexes = False
+    task_datasets = []
     if args.dataset_kind in ['d4rl', 'antmaze']:
-        task_datasets = []
         _, env = d3rlpy.datasets.get_dataset(args.dataset)
         _, eval_env = d3rlpy.datasets.get_dataset(args.dataset)
+    elif args.dataset_kind == 'block':
+        env = gym.make(args.dataset)
+        eval_env = gym.make(args.dataset)
     else:
         raise NotImplementedError
 
@@ -63,6 +68,8 @@ def main(args, device):
     st_dict, online_st_dict = get_st_dict(args, args.dataset_kind, args.algo_kind)
     if args.algo in ['iql', 'iqln']:
         st_dict['expectile'] = args.expectile
+        st_dict['expectile_min'] = args.expectile_min
+        st_dict['expectile_max'] = args.expectile_max
     st = ST(**st_dict)
 
     experiment_name = "ST" + '_'
@@ -269,6 +276,8 @@ if __name__ == '__main__':
     parser.add_argument('--task_split_type', default='undirected', type=str)
     parser.add_argument('--algo', default='iql', type=str, choices=['combo', 'td3_plus_bc', 'cql', 'mgcql', 'mrcql', 'iql', 'iqln', 'sacn'])
     parser.add_argument('--expectile', default=0.7, type=float)
+    parser.add_argument('--expectile_min', default=0.7, type=float)
+    parser.add_argument('--expectile_max', default=0.7, type=float)
     parser.add_argument('--eval', action='store_true')
     parser.add_argument('--test', action='store_true')
 
@@ -309,6 +318,9 @@ if __name__ == '__main__':
         args.algo_kind = 'cql'
     if args.dataset in ['halfcheetah-random-v0', 'hopper-random-v0', 'walker2d-random-v0']:
         args.dataset_kind = 'd4rl'
+        args.dataset_nums = ['itr_' + dataset_num for dataset_num in args.dataset_nums]
+    elif args.dataset in ['HalfCheetahBlock-v2', 'Walker2dBlock-v4', 'HopperBlock-v4']:
+        args.dataset_kind = 'block'
         args.dataset_nums = ['itr_' + dataset_num for dataset_num in args.dataset_nums]
     elif 'antmaze' in args.dataset:
         args.dataset_kind = 'antmaze'

@@ -34,6 +34,10 @@ class STImpl(STImpl, IQLImpl):
     def __init__(
         self,
         n_ensembles = 10,
+        std_lambda = 0.01,
+        std_bias = 0,
+        expectile_max = 0.7,
+        expectile_min = 0.7,
         **kwargs
     ):
         super().__init__(
@@ -42,8 +46,10 @@ class STImpl(STImpl, IQLImpl):
         self._n_ensembles = n_ensembles
         self._test_i = 0
         self._str = ''
-        self._v_t_cv_max = nn.Parameter(torch.tensor(- torch.inf))
-        self._v_t_cv_min = nn.Parameter(torch.tensor(torch.inf))
+        self._std_lambda = std_lambda
+        self._std_bias = std_bias
+        self._expectile_max = expectile_max
+        self._expectile_min = expectile_min
 
     def _build_actor(self) -> None:
         self._policy = create_non_squashed_normal_policy(
@@ -166,18 +172,15 @@ class STImpl(STImpl, IQLImpl):
             clone_v_ts = torch.stack(clone_v_ts, dim=0)
             diff_clone = (clone_v_ts - v_ts)
             diff = torch.max(diff, diff_clone)
-        v_t_cv = torch.std(v_ts, dim=0) / torch.mean(v_ts.abs(), dim=0)
+        v_t_cv = torch.std(v_ts, dim=0)
         # self._str += str(v_t_cv.mean()) + ' ' + str(v_t_cv.max()) + ' ' + str(v_t_cv.min())
         # if not replay:
         #     assert False, self._str
         # raise NotImplementedError(str(q_t.detach().mean()) + '  ' + str(v_t.mean()))
-        v_t_cv_max = torch.max(v_t_cv)
-        if not replay:
-            v_t_cv_max = torch.max(v_t_cv_max, self._v_t_cv_max)
-        else:
-            self._v_t_cv_max = v_t_cv_max
         if not first_time:
-            expectile = self._expectile + ((v_t_cv_max - v_t_cv) / v_t_cv_max) * (1 - self._expectile)
+            print(f"v_t_cv: {v_t_cv}")
+            print(f"v_t_cv mean: {v_t_cv.mean()}")
+            expectile = self._expectile + ((v_t_cv - self._std_bias) / self._std_lambda)
         else:
             expectile = self._expectile
         weight = (expectile - (diff < 0.0).float()).abs().detach()

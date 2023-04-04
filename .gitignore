@@ -14,7 +14,6 @@ test_*.txt
 output_*.txt
 *.hdf5
 *.log
-docker*
 *.tar.gz
 d3rlpy_*
 dataset/antmaze
@@ -31,3 +30,4 @@ run_files_temp
 single_run_files
 toy.*
 rlkit
+*gpu_mem_track.txt

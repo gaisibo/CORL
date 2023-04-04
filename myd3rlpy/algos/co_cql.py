@@ -53,7 +53,7 @@ import gym
 from online.utils import ReplayBuffer
 from online.eval_policy import eval_policy
 
-from myd3rlpy.siamese_similar import similar_mb, similar_mb_euclid, similar_phi, similar_psi
+from myd3rlpy.siamese_similar import similar_mb, similar_phi, similar_psi
 # from myd3rlpy.dynamics.probabilistic_ensemble_dynamics import ProbabilisticEnsembleDynamics
 from myd3rlpy.algos.torch.co_cql_impl import COCQLImpl as COImpl
 from myd3rlpy.algos.co import CO
@@ -395,10 +395,11 @@ class CO(CO, CQL):
             critic_loss, _, _ = self._impl.update_critic(batch)
             metrics.update({"critic_loss": critic_loss})
 
-        actor_loss, replay_actor_loss, replay_clone_loss, _ = self._impl.update_actor(batch, replay_batches)
+        actor_loss, replay_actor_loss, replay_clone_loss, _, actor_grad_metric = self._impl.update_actor(batch, replay_batches)
         metrics.update({"actor_loss": actor_loss})
         metrics.update({"replay_actor_loss": replay_actor_loss})
         metrics.update({"replay_clone_loss": replay_clone_loss})
+        metrics.update({'actor_grad_metric': actor_grad_metric})
 
         self._impl.update_critic_target()
         self._impl.update_actor_target()

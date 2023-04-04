@@ -87,13 +87,14 @@ def main(args, device):
         use_phi = True
     else:
         use_phi = False
-    co = CO(impl_name=args.algo, use_gpu=not args.use_cpu, batch_size=args.batch_size, id_size=args.task_nums, replay_type=args.replay_type, experience_type=args.experience_type, sample_type=args.sample_type, reduce_replay=args.reduce_replay, use_phi=use_phi, use_model=args.use_model, replay_critic=args.replay_critic, replay_model=args.replay_model, replay_alpha=args.replay_alpha, generate_step=args.generate_step, model_noise=args.model_noise, retrain_time=args.retrain_time, orl_alpha=args.orl_alpha, single_head=args.single_head, clone_actor=args.clone_actor, clone_finish=args.clone_finish)
+    # co = CO(impl_name=args.algo, use_gpu=not args.use_cpu, batch_size=args.batch_size, id_size=args.task_nums, replay_type=args.replay_type, experience_type=args.experience_type, sample_type=args.sample_type, reduce_replay=args.reduce_replay, use_phi=use_phi, use_model=args.use_model, replay_critic=args.replay_critic, replay_model=args.replay_model, replay_alpha=args.replay_alpha, generate_step=args.generate_step, model_noise=args.model_noise, retrain_time=args.retrain_time, orl_alpha=args.orl_alpha, single_head=args.single_head, clone_actor=args.clone_actor, clone_finish=args.clone_finish)
+    co = CO(impl_name=args.algo, use_gpu=not args.use_cpu, batch_size=args.batch_size, id_size=args.task_nums, replay_type=args.replay_type, experience_type=args.experience_type, reduce_replay=args.reduce_replay, use_phi=use_phi, use_model=args.use_model, replay_critic=args.replay_critic, replay_model=args.replay_model, replay_alpha=args.replay_alpha, model_noise=args.model_noise, retrain_time=args.retrain_time, orl_alpha=args.orl_alpha, single_head=args.single_head, clone_actor=args.clone_actor, clone_finish=args.clone_finish)
 
     experiment_name = "CO" + '_'
     algos_name = args.replay_type
     algos_name += "_" + args.algo
     algos_name += "_" + args.experience_type
-    algos_name += '_' + args.sample_type
+    # algos_name += '_' + args.sample_type
     algos_name += '_' + args.dataset
     algos_name += '_' + str(args.max_save_num)
     algos_name += '_' + str(args.replay_alpha)
@@ -243,7 +244,7 @@ def main(args, device):
                     except BaseException as e:
                         print(f'Don\'t have pretrain_state_dict[{task_id}]')
                         raise e
-                    if args.replay_type not in ['ewc', 'si', 'rwalk']:
+                    if args.replay_type not in ['fix', 'ewc', 'si', 'rwalk']:
                         for past_task_id in range(int(task_id)):
                             try:
                                 replay_datasets[str(past_task_id)] = torch.load(f=args.model_path + algos_name + '_' + str(past_task_id) + '_datasets.pt')
@@ -286,16 +287,31 @@ def main(args, device):
                 co.save_model(args.model_path + algos_name + '_' + str(task_id) + '.pt')
                 max_transition_len = 1000
                 if env is not None:
-                    co.generate_replay(task_id, datasets, env, args.replay_type, args.experience_type, replay_datasets, save_datasets, args.max_save_num, max_transition_len, real_action_size, real_observation_size, args.generate_type, indexes_euclids[task_id], distances_euclids[task_id], args.d_threshold, args.generate_type, args.test, args.model_path, algos_name, learned_tasks)
+                    co.generate_replay(task_id, datasets, env, args.replay_type, args.experience_type, replay_datasets, save_datasets, args.max_save_num, max_transition_len, real_action_size, real_observation_size, indexes_euclids[task_id], distances_euclids[task_id], args.d_threshold, args.test, args.model_path, algos_name, learned_tasks)
                 else:
-                    co.generate_replay(task_id, datasets, envs[task_id], args.replay_type, args.experience_type, replay_datasets, save_datasets, args.max_save_num, max_transition_len, real_action_size, real_observation_size, args.generate_type, indexes_euclids[task_id], distances_euclids[task_id], args.d_threshold, args.generate_type, args.test, args.model_path, algos_name, learned_tasks)
+                    co.generate_replay(task_id, datasets, envs[task_id], args.replay_type, args.experience_type, replay_datasets, save_datasets, args.max_save_num, max_transition_len, real_action_size, real_observation_size, indexes_euclids[task_id], distances_euclids[task_id], args.d_threshold, args.test, args.model_path, algos_name, learned_tasks)
+                # eval
+                if args.replay_type not in ['fix', 'ewc', 'si', 'rwalk']:
+                    if env is not None:
+                        scorers = dict(zip(['dis_env' + str(n) for n in datasets.keys()], [dis_on_environment(env, replay_dataset = replay_datasets[n], test_id=str(n), mix='mix' in args.dataset and n == '0', clone_actor=args.clone_actor, task_id_dim=0 if not args.single_head else len(datasets.keys())) for n in learned_tasks]))
+                    elif envs is not None:
+                        scorers = dict(zip(['dis_env' + str(n) for n in datasets.keys()], [dis_on_environment(envs[str(n)], replay_dataset = replay_datasets[n], test_id=str(n), mix='mix' in args.dataset and n == '0', clone_actor=args.clone_actor) for n in learned_tasks]))
+                    else:
+                        raise NotImplementedError
+                # setup logger
+                logger = co._prepare_logger(True, experiment_name, True, "d3rply_logs", True, None,)
+                eval_episodes = datasets
+                if scorers and eval_episodes:
+                    co._evaluate(eval_episodes, scorers, logger)
+
+                logger.commit(int(task_id), 0)
                 if args.test and int(task_id) >= 2:
                     break
                 print(f"replay_datasets: {replay_datasets}")
     else:
         replay_datasets = dict()
         learned_tasks = []
-        if args.replay_type not in ['ewc', 'si', 'rwalk']:
+        if args.replay_type not in ['fix', 'ewc', 'si', 'rwalk']:
             for past_task_id in datasets.keys():
                 try:
                     replay_datasets[str(past_task_id)] = torch.load(f=args.model_path + algos_name + '_' + str(past_task_id) + '_datasets.pt')
@@ -315,7 +331,7 @@ def main(args, device):
             except BaseException as e:
                 print(f'Don\'t have pretrain_state_dict[{task_id}]')
                 raise e
-            if args.replay_type not in ['ewc', 'si', 'rwalk']:
+            if args.replay_type not in ['fix', 'ewc', 'si', 'rwalk']:
                 for past_task_id in range(int(task_id)):
                     try:
                         replay_datasets[str(past_task_id)] = torch.load(f=args.model_path + algos_name + '_' + str(past_task_id) + '_datasets.pt')
@@ -365,8 +381,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Experimental evaluation of lifelong PG learning')
     parser.add_argument('--add_name', default='', type=str)
     parser.add_argument("--dataset", default='ant_dir', type=str)
-    parser.add_argument('--inner_path', default='', type=str)
-    parser.add_argument('--env_path', default=None, type=str)
+    parser.add_argument("--quality", default='medium', type=str)
     parser.add_argument('--inner_buffer_size', default=-1, type=int)
     parser.add_argument('--task_config', default='task_config/cheetah_dir.json', type=str)
     parser.add_argument('--siamese_hidden_size', default=100, type=int)
@@ -377,10 +392,10 @@ if __name__ == '__main__':
     parser.add_argument('--topk', default=4, type=int)
     parser.add_argument('--max_save_num', default=1000, type=int)
     parser.add_argument('--task_split_type', default='undirected', type=str)
-    parser.add_argument('--algo', default='combo', type=str, choices=['combo', 'td3_plus_bc', 'cql'])
+    parser.add_argument('--algo', default='td3_plus_bc', type=str, choices=['combo', 'td3_plus_bc', 'cql'])
     parser.add_argument('--eval', action='store_true')
     parser.add_argument('--test', action='store_true')
-    parser.add_argument("--n_steps", default=150000, type=int)
+    parser.add_argument("--n_steps", default=500000, type=int)
     parser.add_argument("--n_steps_per_epoch", default=5000, type=int)
     parser.add_argument("--n_dynamic_steps", default=500000, type=int)
     parser.add_argument("--n_dynamic_steps_per_epoch", default=5000, type=int)
@@ -388,19 +403,20 @@ if __name__ == '__main__':
     parser.add_argument("--n_begin_steps_per_epoch", default=5000, type=int)
     parser.add_argument("--n_action_samples", default=4, type=int)
     parser.add_argument('--top_euclid', default=64, type=int)
-    parser.add_argument('--replay_type', default='orl', type=str, choices=['none', 'orl', 'bc', 'ewc', 'gem', 'agem', 'rwalk', 'si'])
-    parser.add_argument('--experience_type', default='siamese', type=str, choices=['all', 'none', 'single', 'online', 'generate', 'model_prob', 'model_next', 'model', 'model_this', 'coverage', 'random_transition', 'random_episode', 'max_reward', 'max_match', 'max_supervise', 'max_model', 'max_reward_end', 'max_reward_mean', 'max_match_end', 'max_match_mean', 'max_supervise_end', 'max_supervise_mean', 'max_model_end', 'max_model_mean', 'min_reward', 'min_match', 'min_supervise', 'min_model', 'min_reward_end', 'min_reward_mean', 'min_match_end', 'min_match_mean', 'min_supervise_end', 'min_supervise_mean', 'min_model_end', 'min_model_mean'])
-    parser.add_argument('--generate_type', default='none', type=str)
+    parser.add_argument('--replay_type', default='orl', type=str, choices=['none', 'fix', 'orl', 'bc', 'ewc', 'gem', 'agem', 'rwalk', 'si'])
+    parser.add_argument('--experience_type', default='siamese', type=str, choices=['all', 'none', 'single', 'online', 'model_prob', 'model_next', 'model', 'model_this', 'coverage', 'random_transition', 'random_episode', 'max_reward', 'max_match', 'max_supervise', 'max_model', 'max_reward_end', 'max_reward_mean', 'max_match_end', 'max_match_mean', 'max_supervise_end', 'max_supervise_mean', 'max_model_end', 'max_model_mean', 'min_reward', 'min_match', 'min_supervise', 'min_model', 'min_reward_end', 'min_reward_mean', 'min_match_end', 'min_match_mean', 'min_supervise_end', 'min_supervise_mean', 'min_model_end', 'min_model_mean'])
+    parser.add_argument("--distance_type", default='l2', type=str, choices=['l2', 'feature'])
+    # parser.add_argument('--generate_type', default='none', type=str)
     parser.add_argument('--clone_actor', action='store_true')
     parser.add_argument('--clone_finish', action='store_true')
-    parser.add_argument('--sample_type', default='none', type=str, choices=['retrain_model', 'retrain_actor', 'noise', 'none'])
+    # parser.add_argument('--sample_type', default='none', type=str, choices=['retrain_model', 'retrain_actor', 'noise', 'none'])
     parser.add_argument('--use_model', action='store_true')
     parser.add_argument('--reduce_replay', default='retrain', type=str, choices=['retrain', 'no_retrain'])
     parser.add_argument('--dense', default='dense', type=str)
     parser.add_argument('--sum', default='no_sum', type=str)
     parser.add_argument('--replay_critic', action='store_true')
     parser.add_argument('--replay_model', action='store_true')
-    parser.add_argument('--generate_step', default=10, type=int)
+    # parser.add_argument('--generate_step', default=10, type=int)
     parser.add_argument('--model_noise', default=0, type=float)
     parser.add_argument('--retrain_time', type=int, default=1)
     parser.add_argument('--orl_alpha', type=float, default=1)
@@ -413,13 +429,16 @@ if __name__ == '__main__':
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--read_policies', type=int, default=0)
     args = parser.parse_args()
+    args.env_path = f"{args.dataset}/env_{args.dataset}_train_tasknum.pkl"
+    args.inner_path = f"sac_{args.dataset}_num/{args.quality}.hdf5"
+    args.dataset = f"{args.dataset}_{args.quality}"
     args.model_path = 'd3rlpy' + '_' + args.dataset
     if not os.path.exists(args.model_path):
         os.makedirs(args.model_path)
     args.model_path += '/model_'
     # if args.experience_type == 'model':
     #     args.experience_type = 'model_next'
-    if 'model' in args.experience_type or args.experience_type == 'generate' or args.generate_type in ['generate', 'model', 'model_generate']:
+    if 'model' in args.experience_type:#  or args.experience_type == 'generate' or args.generate_type in ['generate', 'model', 'model_generate']:
         args.use_model = True
     args.use_model = True
     if args.replay_type == 'orl':
@@ -431,6 +450,9 @@ if __name__ == '__main__':
     if args.single_head:
         args.clone_actor = False
         args.clone_finish = False
+
+    if args.replay_type == 'fix':
+        assert not args.clone_actor
 
     global DATASET_PATH
     DATASET_PATH = './.d4rl/datasets/'
@@ -444,4 +466,7 @@ if __name__ == '__main__':
     np.random.seed(seeds[args.seed])
     torch.manual_seed(seeds[args.seed])
     torch.cuda.manual_seed(seeds[args.seed])
+
+    # args.test = True
+
     main(args, device)

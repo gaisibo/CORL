@@ -114,7 +114,7 @@ class STImpl():
             self._critic_grad_xy = torch.Tensor(np.sum(self._critic_grad_dims)).to(self.device)
             self._critic_grad_er = torch.Tensor(np.sum(self._critic_grad_dims)).to(self.device)
 
-        if hasattr(self._value_func):
+        if hasattr(self, "_value_func"):
             if self._critic_replay_type in ['ewc', 'rwalk', 'si']:
                 self._value_older_params = {n: p.clone().detach() for n, p in self._value_func.named_parameters() if p.requires_grad}
                 if self._value_replay_type in ['ewc', 'rwalk']:
@@ -274,7 +274,7 @@ class STImpl():
                 clone_q = self._clone_q_func(batch.observations, batch.actions)
                 q = self._q_func(batch.observations, batch.actions)
                 replay_bc_loss = F.mse_loss(clone_q, q)
-                if hasattr(self._value_func):
+                if hasattr(self, "_value_func"):
                     clone_value = self._clone_value_func(batch.observations, batch.actions)
                     value = self._value_func(batch.observations, batch.actions)
                     replay_bc_loss += F.mse_loss(clone_value, value)
@@ -288,7 +288,7 @@ class STImpl():
                 qs = self._q_func(generate_observations, generate_actions)
                 replay_generate_loss = F.mse_loss(generate_qs, qs)
                 replay_generate_loss = F.mse_loss(generate_qs, qs)
-                if hasattr(self._value_func):
+                if hasattr(self, "_value_func"):
                     generate_observations = self._clone_vae.generate(batch.observations.shape[0]).detach()
                     generate_values = self._clone_value_func(generate_observations).detach()
                     values = self._vaue_func(generate_observations)
@@ -299,7 +299,7 @@ class STImpl():
                 for n, p in self._q_func.named_parameters():
                     if n in self._critic_fisher.keys():
                         replay_ewc_loss += torch.mean(self._critic_fisher[n] * (p - self._critic_older_params[n]).pow(2)) / 2
-                if hasattr(self._value_func):
+                if hasattr(self, "_value_func"):
                     for n, p in self._value_func.named_parameters():
                         if n in self._value_fisher.keys():
                             replay_ewc_loss += torch.mean(self._value_fisher[n] * (p - self._value_older_params[n]).pow(2)) / 2
@@ -307,7 +307,7 @@ class STImpl():
             elif self._critic_replay_type == 'rwalk':
                 replay_rwalk_loss = 0
                 curr_critic_feat_ext = {n: p.clone().detach() for n, p in self._q_func.named_parameters() if p.requires_grad}
-                if hasattr(self._value_func):
+                if hasattr(self, "_value_func"):
                     curr_value_feat_ext = {n: p.clone().detach() for n, p in self._value_func.named_parameters() if p.requires_grad}
                 # store gradients without regularization term
                 self._critic_optim.zero_grad()
@@ -315,14 +315,14 @@ class STImpl():
                 loss = self.compute_critic_loss(batch, q_tpn, clone_critic=clone_critic, online=online, first_time=replay_batch==None)
                 loss.backward(retain_graph=True)
                 unreg_critic_grads = {n: p.grad.clone().detach() for n, p in self._q_func.named_parameters() if p.grad is not None}
-                if hasattr(self._value_func):
+                if hasattr(self, "_value_func"):
                     unreg_value_grads = {n: p.grad.clone().detach() for n, p in self._value_func.named_parameters() if p.grad is not None}
 
                 # Eq. 3: elastic weight consolidation quadratic penalty
                 for n, p in self._q_func.named_parameters():
                     if n in self._critic_fisher.keys():
                         replay_rwalk_loss_ += torch.mean((self._critic_fisher[n] + self._critic_scores[n]) * (p - self._critic_older_params[n]).pow(2)) / 2
-                if hasattr(self._value_func):
+                if hasattr(self, "_value_func"):
                     for n, p in self._q_func.named_parameters():
                         if n in self._critic_fisher.keys():
                             replay_rwalk_loss_ += torch.mean((self._critic_fisher[n] + self._critic_scores[n]) * (p - self._critic_older_params[n]).pow(2)) / 2
@@ -333,7 +333,7 @@ class STImpl():
                     if p.grad is not None and n in self._critic_fisher.keys():
                         self._critic_W[n].add_(-p.grad * (p.detach() - self._critic_older_params[n]))
                     self._critic_older_params[n] = p.detach().clone()
-                if hasattr(self._value_func):
+                if hasattr(self, "_value_func"):
                     for n, p in self._value_func.named_parameters():
                         if p.grad is not None and n in self._value_fisher.keys():
                             self._value_W[n].add_(-p.grad * (p.detach() - self._value_older_params[n]))
@@ -342,7 +342,7 @@ class STImpl():
                 for n, p in self.q_func.named_parameters():
                     if p.requires_grad:
                         replay_si_loss += torch.mean(self._critic_omega[n] * (p - self._critic_older_params[n]) ** 2)
-                if hasattr(self._value_func):
+                if hasattr(self, "_value_func"):
                     for n, p in self.value_func.named_parameters():
                         if p.requires_grad:
                             replay_si_loss += torch.mean(self._value_omega[n] * (p - self._value_older_params[n]) ** 2)
@@ -352,14 +352,14 @@ class STImpl():
                 q_tpn = self.compute_target(replay_batch)
                 replay_loss = self.compute_critic_loss(replay_batch, q_tpn, clone_critic=clone_critic)
                 replay_loss.backward()
-                store_grad(self._q_func.parameters, self._critic_grads_cs[i], self._critic_grad_dims)
-                if hasattr(self._value_func):
+                store_grad(self._q_func.parameters(), self._critic_grads_cs[i], self._critic_grad_dims)
+                if hasattr(self, "_value_func"):
                     value_tpn = self.compute_target(replay_batch)
                     replay_loss = self.compute_value_loss(replay_batch, value_tpn, clone_critic=clone_critic)
                     replay_loss.backward()
-                    store_grad(self._value_func.parameters, self._value_grads_cs[i], self._value_grad_dims)
+                    store_grad(self._value_func.parameters(), self._value_grads_cs[i], self._value_grad_dims)
             elif self._critic_replay_type == "agem":
-                store_grad(self._q_func.parameters, self._critic_grad_xy, self._critic_grad_dims)
+                store_grad(self._q_func.parameters(), self._critic_grad_xy, self._critic_grad_dims)
                 replay_batch.n_steps = 1
                 replay_batch.masks = None
                 replay_batch = cast(TorchMiniBatch, replay_batch)
@@ -377,15 +377,15 @@ class STImpl():
             if self._critic_replay_type == 'agem':
                 assert self._single_head
                 replay_loss.backward()
-                store_grad(self._q_func.parameters, self._critic_grad_er, self._critic_grad_dims)
+                store_grad(self._q_func.parameters(), self._critic_grad_er, self._critic_grad_dims)
                 dot_prod = torch.dot(self._critic_grad_xy, self._critic_grad_er)
                 if dot_prod.item() < 0:
                     g_tilde = project(gxy=self._critic_grad_xy, ger=self._critic_grad_er)
                     overwrite_grad(self._q_func.parameters, g_tilde, self._critic_grad_dims)
                 else:
                     overwrite_grad(self._q_func.parameters, self._critic_grad_xy, self._critic_grad_dims)
-                if hasattr(self._value_func):
-                    store_grad(self._value_func.parameters, self._value_grad_er, self._value_grad_dims)
+                if hasattr(self, "_value_func"):
+                    store_grad(self._value_func.parameters(), self._value_grad_er, self._value_grad_dims)
                     dot_prod = torch.dot(self._value_grad_xy, self._value_grad_er)
                     if dot_prod.item() < 0:
                         g_tilde = project(gxy=self._value_grad_xy, ger=self._value_grad_er)
@@ -394,15 +394,15 @@ class STImpl():
                         overwrite_grad(self._value_func.parameters, self._value_grad_xy, self._value_grad_dims)
             elif self._critic_replay_type == 'gem':
                 # copy gradient
-                store_grad(self._q_func.parameters, self._critic_grads_da, self._critic_grad_dims)
+                store_grad(self._q_func.parameters(), self._critic_grads_da, self._critic_grad_dims)
                 dot_prod = torch.mm(self._critic_grads_da.unsqueeze(0), torch.stack(list(self._critic_grads_cs).values()).T)
                 if (dot_prod < 0).sum() != 0:
                     project2cone2(self._critic_grads_da.unsqueeze(1), torch.stack(list(self._critic_grads_cs).values()).T, margin=self._gem_alpha)
                     # copy gradients back
                     overwrite_grad(self._q_func.parameters, self._critic_grads_da, self._critic_grad_dims)
-                if hasattr(self._value_func):
+                if hasattr(self, "_value_func"):
                     # copy gradient
-                    store_grad(self._value_func.parameters, self._value_grads_da, self._value_grad_dims)
+                    store_grad(self._value_func.parameters(), self._value_grads_da, self._value_grad_dims)
                     dot_prod = torch.mm(self._value_grads_da.unsqueeze(0), torch.stack(list(self._value_grads_cs).values()).T)
                     if (dot_prod < 0).sum() != 0:
                         project2cone2(self._value_grads_da.unsqueeze(1), torch.stack(list(self._value_grads_cs).values()).T, margin=self._gem_alpha)
@@ -418,7 +418,7 @@ class STImpl():
                     for n, p in self._q_func.named_parameters():
                         if n in unreg_critic_grads.keys():
                             self._critic_W[n] -= unreg_critic_grads[n] * (p.detach() - curr_critic_feat_ext[n])
-                    if hasattr(self._value_func):
+                    if hasattr(self, "_value_func"):
                         assert unreg_value_grads is not None
                         assert curr_value_feat_ext is not None
                         for n, p in self._value_func.named_parameters():
@@ -658,9 +658,9 @@ class STImpl():
                 replay_loss_ = self.compute_actor_loss(replay_batch, clone_actor=clone_actor)
                 replay_loss = replay_loss_
                 replay_loss.backward()
-                store_grad(self._policy.parameters, self._actor_grads_cs[i], self._actor_grad_dims)
+                store_grad(self._policy.parameters(), self._actor_grads_cs[i], self._actor_grad_dims)
             elif self._actor_replay_type == "agem":
-                store_grad(self._policy.parameters, self._actor_grad_xy, self._actor_grad_dims)
+                store_grad(self._policy.parameters(), self._actor_grad_xy, self._actor_grad_dims)
                 replay_batch = cast(TorchMiniBatch, replay_batch)
                 replay_loss_ = self.compute_actor_loss(replay_batch, clone_actor=clone_actor)
                 replay_loss = replay_loss + replay_loss_
@@ -675,7 +675,7 @@ class STImpl():
             if self._actor_replay_type == 'agem':
                 assert self._single_head
                 replay_loss.backward()
-                store_grad(self._policy.parameters, self._actor_grad_er, self._actor_grad_dims)
+                store_grad(self._policy.parameters(), self._actor_grad_er, self._actor_grad_dims)
                 dot_prod = torch.dot(self._actor_grad_xy, self._actor_grad_er)
                 if dot_prod.item() < 0:
                     g_tilde = project(gxy=self._actor_grad_xy, ger=self._actor_grad_er)
@@ -684,7 +684,7 @@ class STImpl():
                     overwrite_grad(self._policy.parameters, self._actor_grad_xy, self._actor_grad_dims)
             elif self._actor_replay_type == 'gem':
                 # copy gradient
-                store_grad(self._policy.parameters, self._actor_grads_da, self._actor_grad_dims)
+                store_grad(self._policy.parameters(), self._actor_grads_da, self._actor_grad_dims)
                 dot_prod = torch.mm(self._actor_grads_da.unsqueeze(0),
                                 torch.stack(list(self._actor_grads_cs).values()).T)
                 if (dot_prod < 0).sum() != 0:
@@ -765,7 +765,7 @@ class STImpl():
             for n, p in self._critic_scores.items():
                 self._critic_scores[n] = (self._critic_scores[n] + curr_critic_score[n]) / 2
 
-        if hasattr(self._value_func):
+        if hasattr(self, "_value_func"):
             if self._ewc_type == 'normal':
                 def update(batch):
                     batch = TorchMiniBatch(

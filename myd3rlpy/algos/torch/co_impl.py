@@ -87,6 +87,21 @@ class COImpl():
             )
         assert self._q_func is not None
         assert self._policy is not None
+        self._actor_grad_save_dims = []
+        for name, pp in self._policy.named_parameters():
+            print(f"name: {name}; param: {pp.shape}")
+            if not name.startswith("_fc"):
+                self._actor_grad_save_dims.append(pp.data.numel())
+        self._actor_grad_save = torch.zeros(np.sum(self._actor_grad_save_dims)).to(self.device)
+        if self._clone_actor and self._replay_type == 'bc':
+            self._clone_actor_grad_save_dims = []
+            for name, pp in self._clone_policy.named_parameters():
+                if not name.startswith("_fc"):
+                    self._clone_actor_grad_save_dims.append(pp.data.numel())
+            self._clone_actor_grad_save = torch.zeros(np.sum(self._clone_actor_grad_save_dims)).to(self.device)
+        else:
+            self._clone_actor_grad_save = None
+        # To save the actor grad for DBC and BC
         if self._replay_type in ['ewc', 'rwalk', 'si']:
             if self._replay_critic:
                 # Store current parameters for the next task
@@ -132,21 +147,21 @@ class COImpl():
                 self._critic_grad_dims = []
                 for pp in self._q_func.parameters():
                     self._critic_grad_dims.append(pp.data.numel())
-                self._critic_grads_cs = {}
-                self._critic_grads_da = torch.zeros(np.sum(self._critic_grad_dims)).to(self.device)
+                self._critic_grad_cs = {}
+                self._critic_grad_da = torch.zeros(np.sum(self._critic_grad_dims)).to(self.device)
 
             self._actor_grad_dims = []
             for pp in self._policy.parameters():
                 self._actor_grad_dims.append(pp.data.numel())
-            self._actor_grads_cs = {}
-            self._actor_grads_da = torch.zeros(np.sum(self._actor_grad_dims)).to(self.device)
+            self._actor_grad_cs = {}
+            self._actor_grad_da = torch.zeros(np.sum(self._actor_grad_dims)).to(self.device)
 
             if self._use_model and self._replay_model:
                 self._model_grad_dims = []
                 for pp in self._dynamic.parameters():
                     self._model_grad_dims.append(pp.data.numel())
-                self._model_grads_cs = {}
-                self._model_grads_da = torch.zeros(np.sum(self._model_grad_dims)).to(self.device)
+                self._model_grad_cs = {}
+                self._model_grad_da = torch.zeros(np.sum(self._model_grad_dims)).to(self.device)
         elif self._replay_type == 'agem':
             if self._replay_critic:
                 self._critic_grad_dims = []
@@ -227,7 +242,7 @@ class COImpl():
         if self._use_model:
             self._dynamic.eval()
 
-        unreg_grads = None
+        unreg_grad = None
         curr_feat_ext = None
 
         loss = 0
@@ -270,7 +285,7 @@ class COImpl():
                 elif self._replay_type == 'rwalk':
                     curr_feat_ext = {n: p.clone().detach() for n, p in self._q_func.named_parameters() if p.requires_grad}
                     # store gradients without regularization term
-                    unreg_grads = {n: p.grad.clone().detach() for n, p in self._q_func.named_parameters()
+                    unreg_grad = {n: p.grad.clone().detach() for n, p in self._q_func.named_parameters()
                                    if p.grad is not None}
 
                     self._critic_optim.zero_grad()
@@ -301,9 +316,9 @@ class COImpl():
                     replay_loss = replay_loss_
                     replay_losses.append(replay_loss_.cpu().detach().numpy())
                     replay_loss.backward()
-                    store_grad(self._q_func.parameters, self._critic_grads_cs[i], self._critic_grad_dims)
+                    store_grad(self._q_func.parameters(), self._critic_grad_cs[i], self._critic_grad_dims)
                 elif self._replay_type == "agem":
-                    store_grad(self._q_func.parameters, self._critic_grad_xy, self._critic_grad_dims)
+                    store_grad(self._q_func.parameters(), self._critic_grad_xy, self._critic_grad_dims)
                     replay_batch.n_steps = 1
                     replay_batch.masks = None
                     replay_batch = cast(TorchMiniBatch, replay_batch)
@@ -330,7 +345,7 @@ class COImpl():
             if self._replay_type == 'agem':
                 assert self._single_head
                 replay_loss.backward()
-                store_grad(self._q_func.parameters, self._critic_grad_er, self._critic_grad_dims)
+                store_grad(self._q_func.parameters(), self._critic_grad_er, self._critic_grad_dims)
                 dot_prod = torch.dot(self._critic_grad_xy, self._critic_grad_er)
                 if dot_prod.item() < 0:
                     g_tilde = project(gxy=self._critic_grad_xy, ger=self._critic_grad_er)
@@ -339,25 +354,25 @@ class COImpl():
                     overwrite_grad(self._q_func.parameters, self._critic_grad_xy, self._critic_grad_dims)
             elif self._replay_type == 'gem':
                 # copy gradient
-                store_grad(self._q_func.parameters, self._critic_grads_da, self._critic_grad_dims)
-                dot_prod = torch.mm(self._critic_grads_da.unsqueeze(0),
-                                torch.stack(list(self._critic_grads_cs).values()).T)
+                store_grad(self._q_func.parameters(), self._critic_grad_da, self._critic_grad_dims)
+                dot_prod = torch.mm(self._critic_grad_da.unsqueeze(0),
+                                torch.stack(list(self._critic_grad_cs).values()).T)
                 if (dot_prod < 0).sum() != 0:
-                    project2cone2(self._critic_grads_da.unsqueeze(1),
-                                  torch.stack(list(self._critic_grads_cs).values()).T, margin=self._gem_alpha)
+                    project2cone2(self._critic_grad_da.unsqueeze(1),
+                                  torch.stack(list(self._critic_grad_cs).values()).T, margin=self._gem_alpha)
                     # copy gradients back
-                    overwrite_grad(self._q_func.parameters, self._critic_grads_da,
+                    overwrite_grad(self._q_func.parameters, self._critic_grad_da,
                                    self._critic_grad_dims)
         self._critic_optim.step()
 
         if replay_batches is not None and len(replay_batches) != 0:
             if self._replay_type == 'rwalk':
-                assert unreg_grads is not None
+                assert unreg_grad is not None
                 assert curr_feat_ext is not None
                 with torch.no_grad():
                     for n, p in self._q_func.named_parameters():
-                        if n in unreg_grads.keys():
-                            self._critic_w[n] -= unreg_grads[n] * (p.detach() - curr_feat_ext[n])
+                        if n in unreg_grad.keys():
+                            self._critic_w[n] -= unreg_grad[n] * (p.detach() - curr_feat_ext[n])
 
         loss = loss.cpu().detach().numpy()
         if not isinstance(replay_loss, int):
@@ -387,7 +402,7 @@ class COImpl():
         if self._use_model:
             self._dynamic.eval()
 
-        unreg_grads = None
+        unreg_grad = None
         curr_feat_ext = None
         loss = 0
         replay_loss = 0
@@ -453,7 +468,7 @@ class COImpl():
         if self._use_model:
             self._dynamic.eval()
 
-        unreg_grads = None
+        unreg_grad = None
         curr_feat_ext = None
         loss = 0
         replay_loss = 0
@@ -493,7 +508,7 @@ class COImpl():
                 elif self._replay_type == 'rwalk':
                     curr_feat_ext = {n: p.clone().detach() for n, p in self._policy.named_parameters() if p.requires_grad}
                     # store gradients without regularization term
-                    unreg_grads = {n: p.grad.clone().detach() for n, p in self._policy.named_parameters()
+                    unreg_grad = {n: p.grad.clone().detach() for n, p in self._policy.named_parameters()
                                    if p.grad is not None}
 
                     self._actor_optim.zero_grad()
@@ -522,9 +537,9 @@ class COImpl():
                     replay_loss_ = self.compute_actor_loss(replay_batch) / len(replay_batches)
                     replay_loss = replay_loss_
                     replay_loss.backward()
-                    store_grad(self._policy.parameters, self._actor_grads_cs[i], self._actor_grad_dims)
+                    store_grad(self._policy.parameters(), self._actor_grad_cs[i], self._actor_grad_dims)
                 elif self._replay_type == "agem":
-                    store_grad(self._policy.parameters, self._actor_grad_xy, self._actor_grad_dims)
+                    store_grad(self._policy.parameters(), self._actor_grad_xy, self._actor_grad_dims)
                     replay_batch = cast(TorchMiniBatch, replay_batch)
                     replay_loss_ = self.compute_actor_loss(replay_batch) / len(replay_batches)
                     replay_loss = replay_loss + replay_loss_
@@ -553,7 +568,7 @@ class COImpl():
             if self._replay_type == 'agem':
                 assert self._single_head
                 replay_loss.backward()
-                store_grad(self._policy.parameters, self._actor_grad_er, self._actor_grad_dims)
+                store_grad(self._policy.parameters(), self._actor_grad_er, self._actor_grad_dims)
                 dot_prod = torch.dot(self._actor_grad_xy, self._actor_grad_er)
                 if dot_prod.item() < 0:
                     g_tilde = project(gxy=self._actor_grad_xy, ger=self._actor_grad_er)
@@ -562,27 +577,28 @@ class COImpl():
                     overwrite_grad(self._policy.parameters, self._actor_grad_xy, self._actor_grad_dims)
             elif self._replay_type == 'gem':
                 # copy gradient
-                store_grad(self._policy.parameters, self._actor_grads_da, self._actor_grad_dims)
-                dot_prod = torch.mm(self._actor_grads_da.unsqueeze(0),
-                                torch.stack(list(self._actor_grads_cs).values()).T)
+                store_grad(self._policy.parameters(), self._actor_grad_da, self._actor_grad_dims)
+                dot_prod = torch.mm(self._actor_grad_da.unsqueeze(0),
+                                torch.stack(list(self._actor_grad_cs).values()).T)
                 if (dot_prod < 0).sum() != 0:
-                    project2cone2(self._actor_grads_da.unsqueeze(1),
-                                  torch.stack(list(self._actor_grads_cs).values()).T, margin=self._gem_alpha)
+                    project2cone2(self._actor_grad_da.unsqueeze(1),
+                                  torch.stack(list(self._actor_grad_cs).values()).T, margin=self._gem_alpha)
                     # copy gradients back
-                    overwrite_grad(self._policy.parameters, self._actor_grads_da,
+                    overwrite_grad(self._policy.parameters, self._actor_grad_da,
                                    self._actor_grad_dims)
 
+        store_grad([p for n, p in self._policy.named_parameters() if not n.startswith("_fc")], self._actor_grad_save, self._actor_grad_save_dims)
         self._actor_optim.step()
 
         clone_loss = 0
         if replay_batches is not None and len(replay_batches) != 0:
             if self._replay_type == 'rwalk':
-                assert unreg_grads is not None
+                assert unreg_grad is not None
                 assert curr_feat_ext is not None
                 with torch.no_grad():
                     for n, p in self._policy.named_parameters():
-                        if n in unreg_grads.keys():
-                            self._actor_w[n] -= unreg_grads[n] * (p.detach() - curr_feat_ext[n])
+                        if n in unreg_grad.keys():
+                            self._actor_w[n] -= unreg_grad[n] * (p.detach() - curr_feat_ext[n])
             if self._clone_actor and self._replay_type == 'bc':
                 with torch.no_grad():
                     observations = batch.observations.to(self.device)
@@ -592,13 +608,14 @@ class COImpl():
                 self._clone_actor_optim.zero_grad()
                 clone_loss.backward()
                 self._clone_actor_optim.step()
+                store_grad([p for n, p in self._policy.named_parameters() if not n.startswith("_fc")], self._clone_actor_grad_save, self._clone_actor_grad_save_dims)
                 clone_loss = clone_loss.cpu().detach().numpy()
 
         loss = loss.cpu().detach().numpy()
         if not isinstance(replay_loss, int):
             replay_loss = replay_loss.cpu().detach().numpy()
 
-        return loss, replay_loss, clone_loss, replay_losses
+        return loss, replay_loss, clone_loss, replay_losses, self._actor_grad_save, self._clone_actor_grad_save
 
     @train_api
     def only_update_model(self, batch: TransitionMiniBatch):
@@ -698,7 +715,7 @@ class COImpl():
             self._phi.eval()
             self._psi.eval()
 
-        unreg_grads = None
+        unreg_grad = None
         curr_feat_ext = None
         loss = 0
         replay_loss = 0
@@ -736,7 +753,7 @@ class COImpl():
                 elif self._replay_type == 'rwalk':
                     curr_feat_ext = {n: p.clone().detach() for n, p in self._dynamic.named_parameters() if p.requires_grad}
                     # store gradients without regularization term
-                    unreg_grads = {n: p.grad.clone().detach() for n, p in self._dynamic.named_parameters()
+                    unreg_grad = {n: p.grad.clone().detach() for n, p in self._dynamic.named_parameters()
                                    if p.grad is not None}
 
                     self._model_optim.zero_grad()
@@ -773,9 +790,9 @@ class COImpl():
                     replay_loss_ = replay_loss_ / len(replay_batches)
                     replay_loss = replay_loss_
                     replay_loss.backward()
-                    store_grad(self._dynamic.parameters, self._model_grads_cs[i], self._model_grad_dims)
+                    store_grad(self._dynamic.parameters(), self._model_grad_cs[i], self._model_grad_dims)
                 elif self._replay_type == "agem":
-                    store_grad(self._dynamic.parameters, self._model_grad_xy, self._model_grad_dims)
+                    store_grad(self._dynamic.parameters(), self._model_grad_xy, self._model_grad_dims)
                     replay_batch = cast(TorchMiniBatch, replay_batch)
                     replay_loss_ = self._dynamic.compute_error(
                         observations=replay_batch.observations,
@@ -807,7 +824,7 @@ class COImpl():
             if self._replay_type == 'agem':
                 assert self._single_head
                 replay_loss.backward()
-                store_grad(self._dynamic.parameters, self._model_grad_er, self._model_grad_dims)
+                store_grad(self._dynamic.parameters(), self._model_grad_er, self._model_grad_dims)
                 dot_prod = torch.dot(self._model_grad_xy, self._model_grad_er)
                 if dot_prod.item() < 0:
                     g_tilde = project(gxy=self._model_grad_xy, ger=self._model_grad_er)
@@ -816,25 +833,25 @@ class COImpl():
                     overwrite_grad(self._dynamic.parameters, self._model_grad_xy, self._model_grad_dims)
             elif self._replay_type == 'gem':
                 # copy gradient
-                store_grad(self._dynamic.parameters, self._model_grads_da, self._model_grad_dims)
-                dot_prod = torch.mm(self._model_grads_da.unsqueeze(0),
-                                torch.stack(list(self._model_grads_cs).values()).T)
+                store_grad(self._dynamic.parameters(), self._model_grad_da, self._model_grad_dims)
+                dot_prod = torch.mm(self._model_grad_da.unsqueeze(0),
+                                torch.stack(list(self._model_grad_cs).values()).T)
                 if (dot_prod < 0).sum() != 0:
-                    project2cone2(self._model_grads_da.unsqueeze(1),
-                                  torch.stack(list(self._model_grads_cs).values()).T, margin=self._gem_gamma)
+                    project2cone2(self._model_grad_da.unsqueeze(1),
+                                  torch.stack(list(self._model_grad_cs).values()).T, margin=self._gem_gamma)
                     # copy gradients back
-                    overwrite_grad(self._dynamic.parameters, self._model_grads_da,
+                    overwrite_grad(self._dynamic.parameters, self._model_grad_da,
                                    self._model_grad_dims)
         self._model_optim.step()
 
         if replay_batches is not None and len(replay_batches) != 0:
             if self._replay_type == 'rwalk':
-                assert unreg_grads is not None
+                assert unreg_grad is not None
                 assert curr_feat_ext is not None
                 with torch.no_grad():
                     for n, p in self._dynamic.named_parameters():
-                        if n in unreg_grads.keys():
-                            self._model_w[n] -= unreg_grads[n] * (p.detach() - curr_feat_ext[n])
+                        if n in unreg_grad.keys():
+                            self._model_w[n] -= unreg_grad[n] * (p.detach() - curr_feat_ext[n])
 
         loss = loss.cpu().detach().numpy()
         self.change_task(self._impl_id)
@@ -997,14 +1014,19 @@ class COImpl():
         fisher = {n: (p / len(iterator)) for n, p in fisher.items()}
         return fisher
 
+    def fix_post_train_process(self):
+        for name, param in self._policy.named_parameters():
+            if not name.startswith("_fc"):
+                param.requires_grad_(False)
+
     def bc_post_train_process(self):
         self._policy.load_state_dict(copy.deepcopy(self._clone_policy.state_dict()))
 
     def gem_post_train_process(self):
-        self._critic_grads_cs[self._impl_id] = torch.zeros(np.sum(self._critic_grad_dims)).to(self.device)
-        self._actor_grads_cs[self._impl_id] = torch.zeros(np.sum(self._actor_grad_dims)).to(self.device)
+        self._critic_grad_cs[self._impl_id] = torch.zeros(np.sum(self._critic_grad_dims)).to(self.device)
+        self._actor_grad_cs[self._impl_id] = torch.zeros(np.sum(self._actor_grad_dims)).to(self.device)
         if self._use_model:
-            self._model_grads_cs[self._impl_id] = torch.zeros(np.sum(self._model_grad_dims)).to(self.device)
+            self._model_grad_cs[self._impl_id] = torch.zeros(np.sum(self._model_grad_dims)).to(self.device)
 
     def ewc_rwalk_post_train_process(self, iterator):
         if self._replay_critic:

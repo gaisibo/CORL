@@ -13,7 +13,7 @@ def store_grad(params, grads, grad_dims):
     # store the gradients
     grads.fill_(0.0)
     count = 0
-    for param in params():
+    for param in params:
         if param.grad is not None:
             begin = 0 if count == 0 else sum(grad_dims[:count])
             end = np.sum(grad_dims[:count + 1])

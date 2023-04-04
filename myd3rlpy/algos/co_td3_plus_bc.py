@@ -53,7 +53,7 @@ import gym
 from online.utils import ReplayBuffer
 from online.eval_policy import eval_policy
 
-from myd3rlpy.siamese_similar import similar_mb, similar_mb_euclid, similar_phi, similar_psi
+from myd3rlpy.siamese_similar import similar_mb, similar_phi, similar_psi
 # from myd3rlpy.dynamics.probabilistic_ensemble_dynamics import ProbabilisticEnsembleDynamics
 from myd3rlpy.algos.co import CO
 from utils.utils import Struct
@@ -148,7 +148,7 @@ class CO(CO, TD3PlusBC):
     _reduce_replay: str
     _replay_critic: bool
     _replay_model: bool
-    _generate_step: int
+    # _generate_step: int
     _select_time: int
     _model_noise: float
 
@@ -173,6 +173,7 @@ class CO(CO, TD3PlusBC):
         model_encoder_factory: EncoderArg = "default",
         q_func_factory: QFuncArg = "mean",
         replay_type='orl',
+        distance_type='l2',
         phi_bc_loss=True,
         psi_bc_loss=True,
         train_phi=True,
@@ -203,7 +204,7 @@ class CO(CO, TD3PlusBC):
         log_prob_topk = 10,
         model_n_ensembles = 5,
         experience_type = 'random_transition',
-        sample_type = 'retrain',
+        # sample_type = 'retrain',
         reduce_replay = 'retrain',
         use_phi = False,
         use_model = False,
@@ -211,7 +212,7 @@ class CO(CO, TD3PlusBC):
         clone_finish = True,
         replay_critic = False,
         replay_model = False,
-        generate_step = 100,
+        # generate_step = 100,
         model_noise = 0.3,
         retrain_time = 1,
         orl_alpha = 1,
@@ -249,6 +250,7 @@ class CO(CO, TD3PlusBC):
             kwargs = kwargs,
         )
         self._replay_type = replay_type
+        self._distance_type = distance_type
         self._id_size = id_size
 
         self._gem_alpha = gem_alpha
@@ -270,7 +272,7 @@ class CO(CO, TD3PlusBC):
         self._retrain_topk = retrain_topk
         self._log_prob_topk = log_prob_topk
         self._experience_type = experience_type
-        self._sample_type = sample_type
+        # self._sample_type = sample_type
         self._reduce_replay = reduce_replay
 
         self._task_id = task_id
@@ -289,7 +291,7 @@ class CO(CO, TD3PlusBC):
         self._clone_finish = clone_finish
         self._replay_critic = replay_critic
         self._replay_model = replay_model
-        self._generate_step = generate_step
+        # self._generate_step = generate_step
         self._select_time = select_time
         self._model_noise = model_noise
         self._orl_alpha = orl_alpha
@@ -390,10 +392,17 @@ class CO(CO, TD3PlusBC):
             metrics.update({"replay_critic_loss": replay_critic_loss})
 
         if self._grad_step % self._update_actor_interval == 0:
-            actor_loss, replay_actor_loss, replay_clone_loss, _ = self._impl.update_actor(batch, replay_batches)
+            # actor_loss, replay_actor_loss, replay_clone_loss, _ = self._impl.update_actor(batch, replay_batches)
+            actor_loss, replay_actor_loss, replay_clone_loss, _, actor_grad_save, clone_actor_grad_save = self._impl.update_actor(batch, replay_batches)
+            mean_actor_grads, mean_clone_actor_grads = self.calc_layer_mean_grad(actor_grad_save, clone_actor_grad_save)
             metrics.update({"actor_loss": actor_loss})
             metrics.update({"replay_actor_loss": replay_actor_loss})
             metrics.update({"replay_clone_loss": replay_clone_loss})
+            for num, mean_actor_grad in enumerate(mean_actor_grads):
+                metrics.update({f"mean_actor_grad_{num}": mean_actor_grad})
+            if mean_clone_actor_grads is not None:
+                for num, mean_clone_actor_grad in enumerate(mean_clone_actor_grads):
+                    metrics.update({f"mean_clone_actor_grad_{num}": mean_clone_actor_grad})
             self._impl.update_critic_target()
             self._impl.update_actor_target()
 
