@@ -356,7 +356,7 @@ class ST(ST, IQL):
                     replay_vs = []
                     for v_func in self._impl._value_funcs:
                         replay_vs.append(v_func(replay_observations))
-                    replay_vs = torch.mean(torch.stack(replay_vs, dim=0), dim=0)
+                    replay_vs, _ = torch.min(torch.stack(replay_vs, dim=0), dim=0)
                 new_replay_diff_qs.append(replay_qs - replay_vs)
             new_replay_diff_qs = torch.cat(new_replay_diff_qs, dim=0)
 
@@ -372,7 +372,7 @@ class ST(ST, IQL):
                     replay_vs = []
                     for v_func in self._impl._value_funcs:
                         replay_vs.append(v_func(replay_observations))
-                    replay_vs = torch.mean(torch.stack(replay_vs, dim=0), dim=0)
+                    replay_vs, _ = torch.min(torch.stack(replay_vs, dim=0), dim=0)
                 old_replay_diff_qs.append(replay_qs - replay_vs)
             old_replay_diff_qs = torch.cat(old_replay_diff_qs, dim=0)
 
@@ -381,7 +381,7 @@ class ST(ST, IQL):
             indices = indices[:max_save_num]
             indices_new = indices[indices < len(new_replay_dataset)]
             indices_old = indices[indices >= len(new_replay_dataset)] - len(new_replay_dataset)
-            print(str_)
+            # print(str_)
             replay_observations = torch.cat([new_replay_dataset.tensors[0][indices_new], old_replay_dataset.tensors[0][indices_old]], dim=0)
             replay_actions = torch.cat([new_replay_dataset.tensors[1][indices_new], old_replay_dataset.tensors[1][indices_old]], dim=0)
             replay_rewards = torch.cat([new_replay_dataset.tensors[2][indices_new], old_replay_dataset.tensors[2][indices_old]], dim=0)

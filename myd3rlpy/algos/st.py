@@ -501,21 +501,21 @@ class ST():
                         logger.add_metric(name, val)
                         epoch_loss[name].append(val)
 
-                    try:
-                        logger.add_metric("weight", self._impl._weight)
-                        logger.add_metric("log_probs", self._impl._log_probs)
-                        logger.add_metric("q_t", self._impl._q_t)
-                        logger.add_metric("v_t", self._impl._v_t)
-                        logger.add_metric("q_loss", self._impl._q_loss)
-                        logger.add_metric("v_loss", self._impl._v_loss)
-                        logger.add_metric("replay_weight", self._impl._replay_weight)
-                        logger.add_metric("replay_log_probs", self._impl._replay_log_probs)
-                        logger.add_metric("replay_q_t", self._impl._replay_q_t)
-                        logger.add_metric("replay_v_t", self._impl._replay_v_t)
-                        logger.add_metric("replay_q_loss", self._impl._replay_q_loss)
-                        logger.add_metric("replay_v_loss", self._impl._replay_v_loss)
-                    except AttributeError:
-                        pass
+                    # try:
+                    #     logger.add_metric("weight", self._impl._weight)
+                    #     logger.add_metric("log_probs", self._impl._log_probs)
+                    #     logger.add_metric("q_t", self._impl._q_t)
+                    #     logger.add_metric("v_t", self._impl._v_t)
+                    #     logger.add_metric("q_loss", self._impl._q_loss)
+                    #     logger.add_metric("v_loss", self._impl._v_loss)
+                    #     logger.add_metric("replay_weight", self._impl._replay_weight)
+                    #     logger.add_metric("replay_log_probs", self._impl._replay_log_probs)
+                    #     logger.add_metric("replay_q_t", self._impl._replay_q_t)
+                    #     logger.add_metric("replay_v_t", self._impl._replay_v_t)
+                    #     logger.add_metric("replay_q_loss", self._impl._replay_q_loss)
+                    #     logger.add_metric("replay_v_loss", self._impl._replay_v_loss)
+                    # except AttributeError:
+                    #     pass
 
                     # update progress postfix with losses
                     if itr % 10 == 0:

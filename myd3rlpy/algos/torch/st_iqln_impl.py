@@ -110,7 +110,7 @@ class STImpl(STImpl, IQLImpl):
         v_t = []
         for value_func in self._value_funcs:
             v_t.append(value_func(observations))
-        v_t = torch.mean(torch.stack(v_t, dim=0), dim=0)
+        v_t, _ = torch.min(torch.stack(v_t, dim=0), dim=0)
         if clone_actor and not online and '_clone_value_func' in self.__dict__.keys():
             # clone_q_t = self._clone_q_func(observations, self._clone_policy(observations), "min")
             # v_t = torch.where(v_t > clone_q_t, v_t, clone_q_t)
@@ -178,9 +178,9 @@ class STImpl(STImpl, IQLImpl):
         #     assert False, self._str
         # raise NotImplementedError(str(q_t.detach().mean()) + '  ' + str(v_t.mean()))
         if not first_time:
-            print(f"v_t_cv: {v_t_cv}")
-            print(f"v_t_cv mean: {v_t_cv.mean()}")
-            expectile = self._expectile + ((v_t_cv - self._std_bias) / self._std_lambda)
+            # print(f"v_t_cv: {v_t_cv}")
+            # print(f"v_t_cv mean: {v_t_cv.mean()}")
+            expectile = torch.clip(self._expectile + ((v_t_cv - self._std_bias) / self._std_lambda), self._expectile_min, self._expectile_max)
         else:
             expectile = self._expectile
         weight = (expectile - (diff < 0.0).float()).abs().detach()
@@ -202,12 +202,12 @@ class STImpl(STImpl, IQLImpl):
         if not online:
             critic_loss = self._compute_critic_loss(batch, q_tpn)
             value_loss = self._compute_value_loss(batch, clone_critic=clone_critic, replay=replay, first_time=False)
-            if not replay:
-                self._q_loss = critic_loss.mean()
-                self._v_loss = value_loss.mean()
-            else:
-                self._replay_q_loss = critic_loss.mean()
-                self._replay_v_loss = value_loss.mean()
+            # if not replay:
+            #     self._q_loss = critic_loss.mean()
+            #     self._v_loss = value_loss.mean()
+            # else:
+            #     self._replay_q_loss = critic_loss.mean()
+            #     self._replay_v_loss = value_loss.mean()
             # self._str += str(replay) + ' ' + str(critic_loss) + ' ' + str(value_loss) + '\n'
             # self._test_i += 1
             # if self._test_i > 1000:

@@ -143,7 +143,10 @@ def main(args, device):
             if dataset_id <= args.read_policy:
                 iterator, replay_iterator, replay_dataloader, n_epochs = st.make_iterator(dataset, replay_dataset, st_dict['n_steps'], st_dict['n_steps_per_epoch'], None, True)
                 if args.read_policy == 0:
-                    pretrain_path = "pretrained_network/" + "ST_" + args.algo_kind + '_' + args.dataset + '_' + args.dataset_nums[0] + '.pt'
+                    pretrain_path = "pretrained_network/" + "ST_" + args.algo_kind + '_' + str(args.expectile) + '_' + args.dataset + '_' + args.dataset_nums[0] + '.pt'
+                    if not os.path.exists(pretrain_path):
+                        pretrain_path = "pretrained_network/" + "ST_" + args.algo_kind + '_' + args.dataset + '_' + args.dataset_nums[0] + '.pt'
+                        assert os.path.exists(pretrain_path)
                 else:
                     pretrain_path = args.model_path + algos_name + '_' + str(dataset_id) + '.pt'
                 st.build_with_dataset(dataset, dataset_id)

@@ -141,12 +141,12 @@ class STImpl(STImpl, IQLImpl):
         if not online:
             critic_loss = self._compute_critic_loss(batch, q_tpn)
             value_loss = self._compute_value_loss(batch, clone_critic=clone_critic, replay=replay)
-            if not replay:
-                self._q_loss = critic_loss.mean()
-                self._v_loss = value_loss.mean()
-            else:
-                self._replay_q_loss = critic_loss.mean()
-                self._replay_v_loss = value_loss.mean()
+            # if not replay:
+            #     self._q_loss = critic_loss.mean()
+            #     self._v_loss = value_loss.mean()
+            # else:
+            #     self._replay_q_loss = critic_loss.mean()
+            #     self._replay_v_loss = value_loss.mean()
             return critic_loss + value_loss
         else:
             return self._compute_critic_loss(batch, q_tpn)
