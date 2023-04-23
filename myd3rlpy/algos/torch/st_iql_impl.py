@@ -64,10 +64,10 @@ class STImpl(STImpl, IQLImpl):
         with torch.no_grad():
             weight = self._compute_weight(batch.observations, batch.actions, clone_actor=clone_actor, online=online, replay=replay)
         ret = -(weight * log_probs).mean()
-        if not replay:
-            self._log_probs = log_probs.mean()
-        else:
-            self._replay_log_probs = log_probs.mean()
+        # if not replay:
+        #     self._log_probs = log_probs.mean()
+        # else:
+        #     self._replay_log_probs = log_probs.mean()
         # if clone_actor:
         #     # compute log probability
         #     dist = self._clone_policy.dist(batch.observations)
@@ -92,14 +92,14 @@ class STImpl(STImpl, IQLImpl):
             v_t = torch.where(v_t > clone_v_t, v_t, clone_v_t)
         adv = q_t - v_t
         weight = (self._weight_temp * adv).exp().clamp(max=self._max_weight)
-        if not replay:
-            self._q_t = q_t.mean()
-            self._v_t = v_t.mean()
-            self._weight = weight.mean()
-        else:
-            self._replay_q_t = q_t.mean()
-            self._replay_v_t = v_t.mean()
-            self._replay_weight = weight.mean()
+        # if not replay:
+        #     self._q_t = q_t.mean()
+        #     self._v_t = v_t.mean()
+        #     self._weight = weight.mean()
+        # else:
+        #     self._replay_q_t = q_t.mean()
+        #     self._replay_v_t = v_t.mean()
+        #     self._replay_weight = weight.mean()
         return weight
 
     def compute_target(self, batch: TorchMiniBatch) -> torch.Tensor:
@@ -141,12 +141,12 @@ class STImpl(STImpl, IQLImpl):
         if not online:
             critic_loss = self._compute_critic_loss(batch, q_tpn)
             value_loss = self._compute_value_loss(batch, clone_critic=clone_critic, replay=replay)
-            # if not replay:
-            #     self._q_loss = critic_loss.mean()
-            #     self._v_loss = value_loss.mean()
-            # else:
-            #     self._replay_q_loss = critic_loss.mean()
-            #     self._replay_v_loss = value_loss.mean()
+            if not replay:
+                self._q_loss = critic_loss.mean()
+                self._v_loss = value_loss.mean()
+            else:
+                self._replay_q_loss = critic_loss.mean()
+                self._replay_v_loss = value_loss.mean()
             return critic_loss + value_loss
         else:
             return self._compute_critic_loss(batch, q_tpn)

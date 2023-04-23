@@ -4,7 +4,7 @@ import types
 import time
 import math
 import copy
-from typing import Optional, Sequence, List, Any, Tuple, Dict, Union, cast
+from typing import Optional, Sequence, List, Any, Tuple, Dict, Union
 
 import numpy as np
 import torch
@@ -27,7 +27,6 @@ from d3rlpy.torch_utility import hard_sync
 from myd3rlpy.algos.torch.gem import overwrite_grad, store_grad, project2cone2
 from myd3rlpy.algos.torch.agem import project
 from myd3rlpy.models.vaes import VAEFactory
-from utils.utils import Struct
 
 
 replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'terminals', 'policy_actions', 'qs', 'phis', 'psis']
@@ -188,14 +187,8 @@ class STImpl():
         return BCE + KLD
 
     @train_api
-    def update_vae(self, batch_tran: TransitionMiniBatch, replay_batch: Optional[List[torch.Tensor]]=None):
-        batch = TorchMiniBatch(
-            batch_tran,
-            self._device,
-            scaler=None,
-            action_scaler=None,
-            reward_scaler=None,
-        )
+    @torch_api(reward_scaler_targets=["batch", "replay_batch"])
+    def update_vae(self, batch: TransitionMiniBatch, replay_batch: Optional[List[torch.Tensor]]=None):
         assert self._vae_optim is not None
         assert self._vae is not None
 
@@ -206,10 +199,6 @@ class STImpl():
         replay_loss = 0
         if self._impl_id != 0:
             replay_loss = 0
-            if replay_batch is not None:
-                replay_batch = [x.to(self._device) for x in replay_batch]
-                replay_batch = dict(zip(replay_name[:-2], replay_batch))
-                replay_batch = Struct(**replay_batch)
             if self._vae_replay_type == "orl":
                 replay_orl_loss = self._compute_vae_loss(replay_batch.observations)
                 replay_loss = replay_loss + replay_orl_loss
@@ -231,14 +220,8 @@ class STImpl():
         return loss, replay_loss
 
     @train_api
-    def update_critic(self, batch_tran: TransitionMiniBatch, replay_batch: Optional[List[torch.Tensor]]=None, clone_critic: bool=False, online: bool=False):
-        batch = TorchMiniBatch(
-            batch_tran,
-            self.device,
-            scaler=self.scaler,
-            action_scaler=self.action_scaler,
-            reward_scaler=self.reward_scaler,
-        )
+    @torch_api(reward_scaler_targets=["batch", "replay_batch"])
+    def update_critic(self, batch: TransitionMiniBatch, replay_batch: TransitionMiniBatch=None, clone_critic: bool=False, online: bool=False):
         assert self._critic_optim is not None
         assert self._q_func is not None
         assert self._policy is not None
@@ -249,27 +232,11 @@ class STImpl():
         replay_loss = 0
         if self._impl_id != 0 and not online:
             replay_loss = 0
-            if replay_batch is not None:
-                replay_batch = [x.to(self.device) for x in replay_batch]
-                replay_batch = dict(zip(replay_name[:-2], replay_batch))
-                replay_batch = Struct(**replay_batch)
             if self._critic_replay_type == "orl":
                 assert replay_batch is not None
-                replay_batch.n_steps = 1
-                replay_batch.masks = None
-                replay_batch = cast(TorchMiniBatch, replay_batch)
                 q_tpn = self.compute_target(replay_batch)
                 replay_cql_loss = self.compute_critic_loss(replay_batch, q_tpn, clone_critic=clone_critic, replay=True)
                 replay_loss = replay_loss + replay_cql_loss
-            elif self._critic_replay_type == "bc":
-                with torch.no_grad():
-                    replay_observations = replay_batch.observations.to(self.device)
-                    replay_actions = replay_batch.actions.to(self.device)
-                    replay_qs = replay_batch.qs.to(self.device)
-
-                q = self._q_func(replay_observations, replay_actions)
-                replay_bc_loss = F.mse_loss(replay_qs, q)
-                replay_loss = replay_loss + replay_bc_loss
             elif self._critic_replay_type == "lwf":
                 clone_q = self._clone_q_func(batch.observations, batch.actions)
                 q = self._q_func(batch.observations, batch.actions)
@@ -348,7 +315,6 @@ class STImpl():
                             replay_si_loss += torch.mean(self._value_omega[n] * (p - self._value_older_params[n]) ** 2)
                 replay_loss = replay_loss + replay_si_loss
             elif self._critic_replay_type == 'gem':
-                replay_batch = cast(TorchMiniBatch, replay_batch)
                 q_tpn = self.compute_target(replay_batch)
                 replay_loss = self.compute_critic_loss(replay_batch, q_tpn, clone_critic=clone_critic)
                 replay_loss.backward()
@@ -360,9 +326,6 @@ class STImpl():
                     store_grad(self._value_func.parameters(), self._value_grads_cs[i], self._value_grad_dims)
             elif self._critic_replay_type == "agem":
                 store_grad(self._q_func.parameters(), self._critic_grad_xy, self._critic_grad_dims)
-                replay_batch.n_steps = 1
-                replay_batch.masks = None
-                replay_batch = cast(TorchMiniBatch, replay_batch)
                 q_tpn = self.compute_target(replay_batch)
                 replay_agem_loss = self.compute_critic_loss(replay_batch, q_tpn, clone_critic=clone_critic)
                 replay_loss = replay_loss + replay_agem_loss
@@ -431,48 +394,40 @@ class STImpl():
 
         return loss, replay_loss
 
+    # @train_api
+    # def update_vae_critic(self, batch_tran: TransitionMiniBatch):
+    #     batch = TorchMiniBatch(
+    #         batch_tran,
+    #         self.device,
+    #         scaler=self.scaler,
+    #         action_scaler=self.action_scaler,
+    #         reward_scaler=self.reward_scaler,
+    #     )
+    #     assert self._critic_optim is not None
+    #     assert self._q_func is not None
+    #     assert self._policy is not None
+
+    #     unreg_grads = None
+    #     curr_feat_ext = None
+
+    #     loss = 0
+    #     replay_loss = 0
+
+    #     self._critic_optim.zero_grad()
+    #     q_tpn = self.compute_target(batch)
+    #     loss = self.compute_vae_critic_loss(batch)
+    #     loss.backward()
+    #     self._critic_optim.step()
+
+    #     loss = loss.cpu().detach().numpy()
+
+    #     return loss
+
     @train_api
-    def update_vae_critic(self, batch_tran: TransitionMiniBatch):
-        batch = TorchMiniBatch(
-            batch_tran,
-            self.device,
-            scaler=self.scaler,
-            action_scaler=self.action_scaler,
-            reward_scaler=self.reward_scaler,
-        )
-        assert self._critic_optim is not None
-        assert self._q_func is not None
-        assert self._policy is not None
-
-        unreg_grads = None
-        curr_feat_ext = None
-
-        loss = 0
-        replay_loss = 0
-
-        self._critic_optim.zero_grad()
-        q_tpn = self.compute_target(batch)
-        loss = self.compute_vae_critic_loss(batch)
-        loss.backward()
-        self._critic_optim.step()
-
-        loss = loss.cpu().detach().numpy()
-
-        return loss
-
-    def merge_update_critic(self, batch_tran, replay_batch):
-        batch = TorchMiniBatch(
-            batch_tran,
-            self.device,
-            scaler=self.scaler,
-            action_scaler=self.action_scaler,
-            reward_scaler=self.reward_scaler,
-        )
+    @torch_api(reward_scaler_targets=["batch", "replay_batch"])
+    def merge_update_critic(self, batch, replay_batch):
         replay_loss = 0
         if self._impl_id != 0:
-            replay_batch = [x.to(self.device) for x in replay_batch]
-            replay_batch = dict(zip(replay_name[:-2], replay_batch))
-            replay_batch = Struct(**replay_batch)
             if self._critic_replay_type == 'bc':
                 with torch.no_grad():
                     replay_observations = replay_batch.observations.to(self.device)
@@ -491,19 +446,12 @@ class STImpl():
         replay_loss.backward()
         self._critic_optim.step()
         return replay_loss.cpu().detach().numpy
-    def merge_update_actor(self, batch_tran, replay_batch):
-        batch = TorchMiniBatch(
-            batch_tran,
-            self.device,
-            scaler=self.scaler,
-            action_scaler=self.action_scaler,
-            reward_scaler=self.reward_scaler,
-        )
+
+    @train_api
+    @torch_api(scaler_targets=["batch", "replay_batch"])
+    def merge_update_actor(self, batch, replay_batch):
         replay_loss = 0
         if self._impl_id != 0:
-            replay_batch = [x.to(self.device) for x in replay_batch]
-            replay_batch = dict(zip(replay_name[:-2], replay_batch))
-            replay_batch = Struct(**replay_batch)
             if self._critic_replay_type == 'bc':
                 with torch.no_grad():
                     replay_observations = replay_batch.observations.to(self.device)
@@ -524,19 +472,12 @@ class STImpl():
         replay_loss.backward()
         self._actor_optim.step()
         return replay_loss.cpu().detach().numpy
-    def merge_update_vae(self, batch_tran, replay_batch):
-        batch = TorchMiniBatch(
-            batch_tran,
-            self.device,
-            scaler=self.scaler,
-            action_scaler=self.action_scaler,
-            reward_scaler=self.reward_scaler,
-        )
+
+    @train_api
+    @torch_api(scaler_targets=["batch", "replay_batch"])
+    def merge_update_vae(self, batch, replay_batch):
         replay_loss = 0
         if self._impl_id != 0:
-            replay_batch = [x.to(self.device) for x in replay_batch]
-            replay_batch = dict(zip(replay_name[:-2], replay_batch))
-            replay_batch = Struct(**replay_batch)
             if self._critic_replay_type == 'bc_merge':
                 with torch.no_grad():
                     replay_observations = replay_batch.observations.to(self.device)
@@ -554,17 +495,11 @@ class STImpl():
         return replay_loss.cpu().detach().numpy
 
     @train_api
-    def update_actor(self, batch_tran: TransitionMiniBatch, replay_batch: Optional[List[torch.Tensor]]=None, clone_actor: bool=False, online: bool=False) -> np.ndarray:
+    @torch_api(scaler_targets=["batch", "replay_batch"])
+    def update_actor(self, batch: TransitionMiniBatch, replay_batch: Optional[List[torch.Tensor]]=None, clone_actor: bool=False, online: bool=False) -> np.ndarray:
         assert self._q_func is not None
         assert self._policy is not None
         assert self._actor_optim is not None
-        batch = TorchMiniBatch(
-            batch_tran,
-            self.device,
-            scaler=self.scaler,
-            action_scaler=self.action_scaler,
-            reward_scaler=self.reward_scaler,
-        )
 
         # Q function should be inference mode for stability
         self._q_func.eval()
@@ -577,26 +512,8 @@ class STImpl():
         replay_loss = 0
         if self._impl_id != 0 and not online:
             replay_loss = 0
-            if replay_batch is not None:
-                replay_batch = [x.to(self.device) for x in replay_batch]
-                replay_batch = dict(zip(replay_name[:-2], replay_batch))
-                replay_batch = Struct(**replay_batch)
             if self._actor_replay_type == "orl":
-                replay_batch = cast(TorchMiniBatch, replay_batch)
                 replay_loss_ = self.compute_actor_loss(replay_batch, clone_actor=clone_actor, replay=True)
-                replay_loss = replay_loss + replay_loss_
-            elif self._actor_replay_type == "bc":
-                with torch.no_grad():
-                    replay_observations = replay_batch.observations.to(self.device)
-                    replay_policy_actions = replay_batch.policy_actions.to(self.device)
-                    replay_qs = replay_batch.qs.to(self.device)
-                replay_batch = cast(TorchMiniBatch, replay_batch)
-                actions = self._policy(replay_batch.observations)
-                q_t = self._q_func(replay_batch.observations, actions, "min")
-                replay_q_t = self._q_func(replay_batch.observations, replay_batch.actions, "min")
-                replay_loss_ = torch.mean((replay_policy_actions - actions) ** 2, dim=1)
-                zero_loss = torch.zeros_like(replay_loss_)
-                replay_loss_ = torch.where(replay_q_t > q_t, replay_loss_, zero_loss).mean()
                 replay_loss = replay_loss + replay_loss_
             elif self._actor_replay_type == 'lwf':
                 clone_actions = self._clone_policy(batch.observations)
@@ -616,14 +533,6 @@ class STImpl():
                 actions = self._policy(generate_observations)
                 replay_generate_loss = F.mse_loss(generate_actions, actions)
                 replay_loss = replay_loss + replay_generate_loss
-            if self._actor_replay_type == "generate_orl":
-                generate_observations = self._clone_vae.generate(batch.observations.shape[0]).detach()
-                generate_actions = self._clone_policy(generate_observations)
-                replay_batch = {'observations': generate_observations, 'actions': generate_actions}
-                replay_batch = Struct(**replay_batch)
-                print("replay_loss_")
-                replay_loss_ = self.compute_actor_loss(replay_batch, clone_actor=clone_actor)
-                replay_loss = replay_loss + replay_loss_
             elif self._actor_replay_type == "ewc":
                 replay_loss_ = 0
                 for n, p in self._policy.named_parameters():
@@ -654,14 +563,12 @@ class STImpl():
                         replay_loss_ = replay_loss_ + torch.mean(self._actor_omega[n] * (p - self._actor_older_params[n]) ** 2)
                 replay_loss = replay_loss + replay_loss_
             elif self._actor_replay_type == 'gem':
-                replay_batch = cast(TorchMiniBatch, replay_batch)
                 replay_loss_ = self.compute_actor_loss(replay_batch, clone_actor=clone_actor)
                 replay_loss = replay_loss_
                 replay_loss.backward()
                 store_grad(self._policy.parameters(), self._actor_grads_cs[i], self._actor_grad_dims)
             elif self._actor_replay_type == "agem":
                 store_grad(self._policy.parameters(), self._actor_grad_xy, self._actor_grad_dims)
-                replay_batch = cast(TorchMiniBatch, replay_batch)
                 replay_loss_ = self.compute_actor_loss(replay_batch, clone_actor=clone_actor)
                 replay_loss = replay_loss + replay_loss_
 
@@ -733,14 +640,9 @@ class STImpl():
 
     def critic_ewc_rwalk_post_train_process(self, iterator):
         # calculate Fisher information
+        @train_api()
+        @torch_api()
         def update(batch):
-            batch = TorchMiniBatch(
-                batch,
-                self.device,
-                scaler=self.scaler,
-                action_scaler=self.action_scaler,
-                reward_scaler=self.reward_scaler,
-            )
             q_tpn = self.compute_target(batch)
             loss = self.compute_critic_loss(batch, q_tpn)
             loss.backward()
@@ -767,26 +669,16 @@ class STImpl():
 
         if hasattr(self, "_value_func"):
             if self._ewc_type == 'normal':
+                @train_api()
+                @torch_api()
                 def update(batch):
-                    batch = TorchMiniBatch(
-                        batch,
-                        self.device,
-                        scaler=self.scaler,
-                        action_scaler=self.action_scaler,
-                        reward_scaler=self.reward_scaler,
-                    )
                     q_tpn = self.compute_target(batch)
                     loss = self.compute_critic_loss(batch, q_tpn)
                     loss.backward()
             elif self._ewc_type == 'raise':
+                @train_api()
+                @torch_api()
                 def update(batch):
-                    batch = TorchMiniBatch(
-                        batch,
-                        self.device,
-                        scaler=self.scaler,
-                        action_scaler=self.action_scaler,
-                        reward_scaler=self.reward_scaler,
-                    )
                     q_tpn = self.compute_target(batch)
                     loss = self.compute_critic_loss(batch, q_tpn)
                     loss.backward()
@@ -807,14 +699,9 @@ class STImpl():
                 for n, p in self._value_scores.items():
                     self._value_scores[n] = (self._value_scores[n] + curr_value_score[n]) / 2
     def actor_ewc_rwalk_post_train_process(self, iterator):
+        @train_api()
+        @torch_api()
         def update(batch):
-            batch = TorchMiniBatch(
-                batch,
-                self.device,
-                scaler=self.scaler,
-                action_scaler=self.action_scaler,
-                reward_scaler=self.reward_scaler,
-            )
             loss = self.compute_actor_loss(batch)
             loss.backward()
         # calculate Fisher information

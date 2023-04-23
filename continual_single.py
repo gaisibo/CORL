@@ -1,3 +1,4 @@
+import copy
 import os
 import sys
 import argparse
@@ -25,7 +26,7 @@ from d3rlpy.online.buffers import ReplayBuffer
 # from myd3rlpy.datasets import get_d4rl
 
 from utils.k_means import kmeans
-from myd3rlpy.metrics.scorer import dataset_value_scorer, single_evaluate_on_environment, q_dataset_scorer, q_play_scorer, q_online_diff_scorer, q_offline_diff_scorer, q_id_diff_scorer, q_ood_diff_scorer, policy_replay_scorer, policy_dataset_scorer, policy_online_diff_scorer, policy_offline_diff_scorer, policy_id_diff_scorer, policy_ood_diff_scorer
+from myd3rlpy.metrics.scorer import evaluate_on_environment_help, single_evaluate_on_environment, q_dataset_scorer, q_play_scorer, q_online_diff_scorer, q_offline_diff_scorer, q_id_diff_scorer, q_ood_diff_scorer, policy_replay_scorer, policy_dataset_scorer, policy_online_diff_scorer, policy_offline_diff_scorer, policy_id_diff_scorer, policy_ood_diff_scorer
 from dataset.load_d4rl import get_d4rl_local, get_dataset
 from rlkit.torch import pytorch_util as ptu
 from config.single_config import get_st_dict
@@ -65,12 +66,13 @@ def main(args, device):
         from myd3rlpy.algos.st_sacn import ST
     else:
         raise NotImplementedError
-    st_dict, online_st_dict = get_st_dict(args, args.dataset_kind, args.algo_kind)
+    st_dict, online_st_dict, step_dict = get_st_dict(args, args.dataset_kind, args.algo)
     if args.algo in ['iql', 'iqln']:
         st_dict['expectile'] = args.expectile
         st_dict['expectile_min'] = args.expectile_min
         st_dict['expectile_max'] = args.expectile_max
     st = ST(**st_dict)
+    st_dict_eval, *_ = get_st_dict(args, args.dataset_kind, 'iql')
 
     experiment_name = "ST" + '_'
     algos_name = args.algo
@@ -90,12 +92,16 @@ def main(args, device):
     if not args.eval:
         pklfile = {}
         max_itr_num = 3000
-        for dataset_num in args.dataset_nums:
-            h5_path = 'dataset/d4rl/' + args.dataset + '/' + dataset_num + '.hdf5'
-            task_datasets.append((dataset_num, get_d4rl_local(get_dataset(h5_path))))
+        for i, dataset_num in enumerate(args.dataset_nums):
+            if dataset_num != 'd4rl':
+                h5_path = 'dataset/d4rl/' + args.dataset + '/' + dataset_num + '.hdf5'
+                task_datasets.append((dataset_num, get_d4rl_local(get_dataset(h5_path))))
+            else:
+                task_datasets.append((dataset_num, d3rlpy.datasets.get_dataset(args.dataset)[0]))
         replay_dataset = None
         learned_datasets = []
         if not args.test:
+            pretrain_path_eval = "pretrained_network/" + "ST_iql_" + args.dataset + '_d4rl.pt'
             if env is not None:
                 # scorers_list = [{'environment': d3rlpy.metrics.evaluate_on_environment(env), 'fune_tuned_environment': single_evaluate_on_environment(env)}]
                 scorers_list = [{'environment': d3rlpy.metrics.evaluate_on_environment(env)}]
@@ -103,6 +109,7 @@ def main(args, device):
                 raise NotImplementedError
         else:
             scorers_list = []
+
         for dataset_id, (dataset_num, dataset) in enumerate(task_datasets):
             # if dataset_num != 0:
             #     root_path = f'../rlkit/data/sac-{args.dataset}/'
@@ -141,7 +148,7 @@ def main(args, device):
             start_time = time.perf_counter()
             print(f'Start Training {dataset_id}')
             if dataset_id <= args.read_policy:
-                iterator, replay_iterator, replay_dataloader, n_epochs = st.make_iterator(dataset, replay_dataset, st_dict['n_steps'], st_dict['n_steps_per_epoch'], None, True)
+                iterator, replay_iterator, n_epochs = st.make_iterator(dataset, replay_dataset, step_dict['merge_n_steps'], step_dict['n_steps_per_epoch'], None, True)
                 if args.read_policy == 0:
                     pretrain_path = "pretrained_network/" + "ST_" + args.algo_kind + '_' + str(args.expectile) + '_' + args.dataset + '_' + args.dataset_nums[0] + '.pt'
                     if not os.path.exists(pretrain_path):
@@ -160,14 +167,14 @@ def main(args, device):
                 #         print(f'Don\' have replay_dataset')
                 #         raise e
             elif args.merge and dataset_id == args.read_merge_policy:
-                iterator, replay_iterator, replay_dataloader, n_epochs = st.make_iterator(dataset, replay_dataset, st_dict['n_merge_steps'], st_dict['n_steps_per_epoch'], None, True)
+                iterator, replay_iterator, n_epochs = st.make_iterator(dataset, replay_dataset, step_dict['merge_n_steps'], step_dict['n_steps_per_epoch'], None, True)
                 pretrain_path = "pretrained_network/" + "ST_" + args.algo_kind + '_' + args.dataset + '_' + args.dataset_nums[0] + '.pt'
                 st.build_with_dataset(dataset, dataset_id)
                 st.load_model(pretrain_path)
                 for param_group in st._impl._actor_optim.param_groups:
                     param_group["lr"] = st_dict['actor_learning_rate']
                 if args.algo in ['iql', 'iqln']:
-                    scheduler = CosineAnnealingLR(st._impl._actor_optim, st_dict['n_steps'])
+                    scheduler = CosineAnnealingLR(st._impl._actor_optim, step_dict['n_steps'])
 
                     def callback(algo, epoch, total_step):
                         scheduler.step()
@@ -179,11 +186,10 @@ def main(args, device):
                     iterator=iterator,
                     replay_dataset=replay_dataset,
                     replay_iterator=replay_iterator,
-                    replay_dataloader=replay_dataloader,
                     eval_episodes_list=add_one_learned_datasets,
                     # n_epochs=args.n_epochs if not args.test else 1,
                     n_epochs=n_epochs,
-                    coldstart_steps=st_dict['coldstart_steps'],
+                    coldstart_steps=step_dict['coldstart_steps'],
                     save_interval=args.save_interval,
                     experiment_name=experiment_name + algos_name,
                     scorers_list = scorers_list,
@@ -194,18 +200,19 @@ def main(args, device):
                 # train
                 print(f'fitting dataset {dataset_id}')
                 if args.merge and args.read_merge_policy >= 0 and dataset_id > 0:
-                    iterator, replay_iterator, replay_dataloader, n_epochs = st.make_iterator(dataset, replay_dataset, st_dict['n_steps'] + st_dict['n_merge_steps'], st_dict['n_steps_per_epoch'], None, True)
+                    iterator, replay_iterator, n_epochs = st.make_iterator(dataset, replay_dataset, step_dict['n_steps'] + step_dict['merge_n_steps'], step_dict['n_steps_per_epoch'], None, True)
                 else:
-                    iterator, replay_iterator, replay_dataloader, n_epochs = st.make_iterator(dataset, replay_dataset, st_dict['n_steps'], st_dict['n_steps_per_epoch'], None, True)
+                    iterator, replay_iterator, n_epochs = st.make_iterator(dataset, replay_dataset, step_dict['n_steps'], step_dict['n_steps_per_epoch'], None, True)
                 st.build_with_dataset(dataset, dataset_id)
                 for param_group in st._impl._actor_optim.param_groups:
                     param_group["lr"] = st_dict['actor_learning_rate']
                 for param_group in st._impl._critic_optim.param_groups:
                     param_group["lr"] = st_dict['critic_learning_rate']
-                for param_group in st._impl._vae_optim.param_groups:
-                    param_group["lr"] = st_dict['vae_learning_rate']
+                if args.use_vae:
+                    for param_group in st._impl._vae_optim.param_groups:
+                        param_group["lr"] = st_dict['vae_learning_rate']
                 if args.algo in ['iql', 'iqln']:
-                    scheduler = CosineAnnealingLR(st._impl._actor_optim, 500000)
+                    scheduler = CosineAnnealingLR(st._impl._actor_optim, 1000000)
 
                     def callback(algo, epoch, total_step):
                         scheduler.step()
@@ -219,32 +226,31 @@ def main(args, device):
                     iterator=iterator,
                     replay_dataset=replay_dataset,
                     replay_iterator=replay_iterator,
-                    replay_dataloader=replay_dataloader,
                     eval_episodes_list=add_one_learned_datasets,
                     # n_epochs=args.n_epochs if not args.test else 1,
                     n_epochs=n_epochs,
-                    coldstart_steps=st_dict['coldstart_steps'],
+                    coldstart_steps=step_dict['coldstart_steps'],
                     save_interval=args.save_interval,
                     experiment_name=experiment_name + algos_name,
                     scorers_list = scorers_list,
                     callback=callback,
                     test=args.test,
                 )
-            st.after_learn(iterator, learned_datasets, scorers_list, experiment_name + algos_name)
+            st.after_learn(iterator, experiment_name + algos_name)
             print(f'Training task {dataset_id} time: {time.perf_counter() - start_time}')
             # st.save_model(args.model_path + algos_name + '_' + str(dataset_id) + '.pt')
-            if args.critic_replay_type in ['bc', 'orl', 'gem', 'agem'] or args.actor_replay_type in ['bc', 'orl', 'gem', 'agem'] or args.vae_replay_type in ['bc', 'orl', 'gem', 'agem']:
-                if args.mix_type == 'random':
-                    slide_dataset_length = args.max_save_num // (dataset_id + 1)
-                elif args.mix_type in ['q', 'vq_diff']:
-                    slide_dataset_length = args.max_save_num
-                else:
-                    raise NotImplementedError
-                new_replay_dataset = st.generate_replay(dataset_id, dataset, env, args.critic_replay_type, args.actor_replay_type, args.experience_type, slide_dataset_length, args.max_export_step, args.test)
-                if replay_dataset is not None:
-                    replay_dataset = st.select_replay(new_replay_dataset, replay_dataset, dataset_id, args.max_save_num, args.mix_type)
-                else:
-                    replay_dataset = new_replay_dataset
+            if args.critic_replay_type in ['bc', 'orl', 'gem', 'agem'] or args.actor_replay_type in ['bc', 'orl', 'gem', 'agem'] or (args.use_vae and args.vae_replay_type in ['bc', 'orl', 'gem', 'agem']):
+                # if args.mix_type == 'random':
+                #     slide_dataset_length = args.max_save_num // (dataset_id + 1)
+                # elif args.mix_type in ['q', 'vq_diff']:
+                #     slide_dataset_length = args.max_save_num
+                # else:
+                #     raise NotImplementedError
+                # new_replay_dataset = st.generate_replay(dataset_id, dataset, env, args.critic_replay_type, args.actor_replay_type, args.experience_type, slide_dataset_length, args.max_export_step, args.test)
+                # if replay_dataset is not None:
+                replay_dataset = st.select_replay(dataset, replay_dataset, dataset_id, args.max_save_num, args.mix_type)
+                # else:
+                #     replay_dataset = new_replay_dataset
             else:
                 replay_dataset = None
             if args.test and dataset_id >= 2:
@@ -255,8 +261,9 @@ def main(args, device):
                 param_group["lr"] = st_dict['actor_learning_rate']
             for param_group in st._impl._critic_optim.param_groups:
                 param_group["lr"] = st_dict['critic_learning_rate']
-            for param_group in st._impl._vae_optim.param_groups:
-                param_group["lr"] = st_dict['vae_learning_rate']
+            if args.use_vae:
+                for param_group in st._impl._vae_optim.param_groups:
+                    param_group["lr"] = st_dict['vae_learning_rate']
             buffer_ = ReplayBuffer(maxlen=online_st_dict['buffer_size'], env=env)
             st.online_fit(env, eval_env, buffer_, n_steps=online_st_dict['n_steps'], n_steps_per_epoch=online_st_dict['n_steps_per_epoch'], experiment_name = experiment_name + algos_name, test=args.test)
     print('finish')
@@ -299,9 +306,9 @@ if __name__ == '__main__':
     parser.add_argument('--clone', default='none', type=str)
     parser.add_argument('--vae_replay_type', default='generate', type=str, choices=['orl', 'bc', 'generate', 'ewc', 'gem', 'agem', 'rwalk', 'si', 'none'])
     parser.add_argument('--vae_replay_lambda', default=1, type=float)
-    parser.add_argument('--mix_type', default='q', type=str, choices=['q', 'random', 'vq_diff'])
+    parser.add_argument('--mix_type', default='q', type=str, choices=['q', 'random', 'vq_diff', 'all'])
 
-    parser.add_argument('--experience_type', default='siamese', type=str, choices=['all', 'none', 'single', 'online', 'generate', 'model_prob', 'model_next', 'model', 'model_this', 'coverage', 'random_transition', 'random_episode', 'max_reward', 'max_match', 'max_supervise', 'max_model', 'max_reward_end', 'max_reward_mean', 'max_match_end', 'max_match_mean', 'max_supervise_end', 'max_supervise_mean', 'max_model_end', 'max_model_mean', 'min_reward', 'min_match', 'min_supervise', 'min_model', 'min_reward_end', 'min_reward_mean', 'min_match_end', 'min_match_mean', 'min_supervise_end', 'min_supervise_mean', 'min_model_end', 'min_model_mean'])
+    parser.add_argument('--experience_type', default='random_episode', type=str, choices=['all', 'none', 'single', 'online', 'generate', 'model_prob', 'model_next', 'model', 'model_this', 'coverage', 'random_transition', 'random_episode', 'max_reward', 'max_match', 'max_supervise', 'max_model', 'max_reward_end', 'max_reward_mean', 'max_match_end', 'max_match_mean', 'max_supervise_end', 'max_supervise_mean', 'max_model_end', 'max_model_mean', 'min_reward', 'min_match', 'min_supervise', 'min_model', 'min_reward_end', 'min_reward_mean', 'min_match_end', 'min_match_mean', 'min_supervise_end', 'min_supervise_mean', 'min_model_end', 'min_model_mean'])
     parser.add_argument('--max_export_step', default=1000, type=int)
     parser.add_argument('--dense', default='dense', type=str)
     parser.add_argument('--sum', default='no_sum', type=str)

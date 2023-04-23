@@ -94,6 +94,7 @@ def main(args, device):
     algos_name = args.replay_type
     algos_name += "_" + args.algo
     algos_name += "_" + args.experience_type
+    algos_name += '_' + args.distance_type
     # algos_name += '_' + args.sample_type
     algos_name += '_' + args.dataset
     algos_name += '_' + str(args.max_save_num)

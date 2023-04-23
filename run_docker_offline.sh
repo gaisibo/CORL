@@ -1,6 +1,0 @@
-bash docker_files/docker_bc_l2_model_next_cheetah_vel_medium_random_1_1000_clone.sh 3 0
-bash docker_files/docker_bc_l2_model_next_cheetah_vel_medium_1_1000_clone.sh 3 0
-bash docker_files/docker_bc_l2_model_next_walker_dir_medium_random_1_1000_clone.sh 3 0
-bash docker_files/docker_bc_l2_model_next_walker_dir_medium_1_1000_clone.sh 3 0
-bash docker_files/docker_bc_l2_model_next_ant_dir_medium_random_1_1000_clone.sh 3 0
-bash docker_files/docker_bc_l2_model_next_ant_dir_medium_1_1000_clone.sh 3 0

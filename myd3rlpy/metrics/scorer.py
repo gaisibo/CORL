@@ -73,94 +73,88 @@ def td_error_scorer(real_action_size: int) -> Callable[..., Callable[...,float]]
         return scorer
     return id_scorer
 
-# def evaluate_on_environment(
-#          envs: Dict[int, gym.Env], end_points: Optional[List[Tuple[float, float]]], task_nums: int, draw_path: str, n_trials: int = 100, epsilon: float = 0.0, render: bool = False, dense: bool=False
-# ) -> Callable[..., Callable[..., float]]:
-# 
-#     # for image observation
-# 
-#     def id_scorer(id: int, epoch: int):
-#         env = envs[id]
-#         if end_points is not None:
-#             end_point = end_points[id]
-#         else:
-#             end_point = None
-#         observation_shape = env.observation_space.shape
-#         is_image = len(observation_shape) == 3
-#         def scorer(algo: AlgoProtocol, *args: Any) -> float:
-# 
-#             def draw(trajectories: List[List[Tuple[float, float]]]):
-#                 fig = plt.figure()
-#                 for i, trajectory in enumerate(trajectories):
-#                     x, y = list(map(list, zip(*trajectory)))
-#                     plt.plot(x, y)
-#                 if end_point is not None:
-#                     plt.plot(end_point[0], end_point[1], 'o', markersize=4)
-#                 plt.savefig(draw_path + '_' + str(id) + '_' + str(epoch) + '.png')
-#                 plt.close('all')
-#             if is_image:
-#                 stacked_observation = StackedObservation(
-#                     observation_shape, algo.n_frames
-#                 )
-# 
-#             trajectories = []
-# 
-#             rewards = []
-#             episode_rewards = []
-#             for _ in range(n_trials):
-#                 trajectory = []
-#                 episode_reward = 0
-#                 observation = env.reset()
-#                 task_id_numpy = np.eye(task_nums)[id].squeeze()
-#                 observation = np.concatenate([observation, task_id_numpy], axis=0)
-# 
-#                 # frame stacking
-#                 if is_image:
-#                     stacked_observation.clear()
-#                     stacked_observation.append(observation)
-# 
-#                 time = 0
-#                 while True:
-#                     # take action
-#                     if np.random.random() < epsilon:
-#                         action = env.action_space.sample()
-#                     else:
-#                         if is_image:
-#                             action = algo.predict([stacked_observation.eval()])[0]
-#                         else:
-#                             action = algo.predict([observation])[0]
-# 
-#                     # pdb.set_trace()
-#                     observation, reward, done, _ = env.step(action)
-#                     # finish = (np.linalg.norm(np.array(observation[:2]) - np.array(env.target_goal)) < 0.1)
-#                     # done = done or finish
-#                     # if dense:
-#                     #     reward = finish
-#                     # else:
-#                     #     reward = - np.linalg.norm(np.array(observation[:2]) - np.array(env.target_goal))
-#                     time += 1
-#                     trajectory.append(observation[:2])
-#                     task_id_numpy = np.eye(task_nums)[id].squeeze()
-#                     observation = np.concatenate([observation, task_id_numpy], axis=0)
-#                     episode_reward += reward
-# 
-#                     if is_image:
-#                         stacked_observation.append(observation)
-# 
-#                     if render:
-#                         env.render()
-# 
-#                     if done:
-#                         break
-#                 # trajectories.append(trajectory)
-#                 episode_rewards.append(episode_reward)
-#                 rewards.append(reward)
-#             # draw(trajectories)
-#             return float(np.mean(rewards))
-#         return scorer
-# 
-#     return id_scorer
-# 
+
+def evaluate_on_environment_help(
+    env: gym.Env, st_eval, eval_start_step = 0, eval_end_step=1000, n_trials: int = 10, epsilon: float = 0.0, render: bool = False
+) -> Callable[..., float]:
+    """Returns scorer function of evaluation on environment.
+    This function returns scorer function, which is suitable to the standard
+    scikit-learn scorer function style.
+    The metrics of the scorer function is ideal metrics to evaluate the
+    resulted policies.
+    .. code-block:: python
+        import gym
+        from d3rlpy.algos import DQN
+        from d3rlpy.metrics.scorer import evaluate_on_environment
+        env = gym.make('CartPole-v0')
+        scorer = evaluate_on_environment(env)
+        cql = CQL()
+        mean_episode_return = scorer(cql)
+    Args:
+        env: gym-styled environment.
+        n_trials: the number of trials.
+        epsilon: noise factor for epsilon-greedy policy.
+        render: flag to render environment.
+    Returns:
+        scoerer function.
+    """
+    assert eval_end_step > eval_start_step
+
+    # for image observation
+    observation_shape = env.observation_space.shape
+    is_image = len(observation_shape) == 3
+
+    def scorer(algo: AlgoProtocol, *args: Any) -> float:
+        if is_image:
+            stacked_observation = StackedObservation(
+                observation_shape, algo.n_frames
+            )
+
+        episode_rewards = []
+
+        for _ in range(n_trials):
+            observation = env.reset()
+
+            # frame stacking
+            if is_image:
+                stacked_observation.clear()
+                stacked_observation.append(observation)
+            episode_reward = 0.0
+
+            i = 0
+            while True:
+                # take action
+                if np.random.random() < epsilon:
+                    action = env.action_space.sample()
+                else:
+                    if i < eval_start_step:
+                        if is_image:
+                            action = st_eval.predict([stacked_observation.eval()])[0]
+                        else:
+                            action = st_eval.predict([observation])[0]
+                    else:
+                        if is_image:
+                            action = algo.predict([stacked_observation.eval()])[0]
+                        else:
+                            action = algo.predict([observation])[0]
+
+                observation, reward, done, _ = env.step(action)
+                episode_reward += reward
+
+                if is_image:
+                    stacked_observation.append(observation)
+
+                if render:
+                    env.render()
+
+                if i >= eval_end_step or done:
+                    break
+
+                i += 1
+            episode_rewards.append(episode_reward)
+        return float(np.mean(episode_rewards))
+
+    return scorer
 
 def match_on_environment(
     env: gym.Env, replay_dataset, test_id: str, clone_actor: bool = False, n_trials: int = 1, epsilon: float = 0.0, render: bool = False, mix: bool = False, task_id_dim: int = 0,

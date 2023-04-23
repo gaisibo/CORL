@@ -8,6 +8,7 @@ import random
 from typing import Any, Dict, Optional, Sequence, List, Union, Callable, Tuple, Generator, Iterator, cast
 import types
 from collections import defaultdict
+from numpy.matrixlib.defmatrix import N
 from tqdm.auto import tqdm
 from tqdm.auto import trange
 import numpy as np
@@ -66,7 +67,7 @@ from utils.utils import Struct
 
 
 replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'terminals', 'policy_actions', 'qs', 'phis', 'psis']
-class ST():
+class STBase():
     r"""Twin Delayed Deep Deterministic Policy Gradients algorithm.
     TD3 is an improved DDPG-based algorithm.
     Major differences from DDPG are as follows.
@@ -127,7 +128,7 @@ class ST():
     """
     _sample_type: str
 
-    def update(self, batch: TransitionMiniBatch, online: bool = False, batch_num: int=0, total_step: int=0, coldstart_steps: Optional[int] = None, replay_batch: Optional[List[Tensor]]=None) -> Dict[int, float]:
+    def update(self, batch: TransitionMiniBatch, online: bool = False, batch_num: int=0, total_step: int=0, coldstart_steps: Optional[int] = None, replay_batch: TransitionMiniBatch=None) -> Dict[int, float]:
     # def update(self, batch: TransitionMiniBatch, online: bool = False, batch_num: int=0, total_step: int=0, replay_batch: Optional[List[Tensor]]=None) -> Dict[int, float]:
         """Update parameters with mini-batch of data.
         Args:
@@ -140,7 +141,7 @@ class ST():
         return loss
 
     # 注意欧氏距离最近邻被塞到actions后面了。
-    def _merge_update(self, batch: TransitionMiniBatch, replay_batch: Optional[List[Tensor]]=None) -> Dict[int, float]:
+    def _merge_update(self, batch: TransitionMiniBatch, replay_batch: TransitionMiniBatch=None) -> Dict[int, float]:
         assert self._impl is not None, IMPL_NOT_INITIALIZED_ERROR
         metrics = {}
         critic_loss = self._impl.merge_update_critic(batch, replay_batch)
@@ -171,19 +172,6 @@ class ST():
             LOG.warning("Skip building models since they're already built.")
 
     def make_iterator(self, dataset, replay_dataset, n_steps, n_steps_per_epoch, n_epochs, shuffle):
-        if replay_dataset is not None:
-            replay_dataloader: Optional[DataLoader]
-            replay_iterator: Optional[Iterator]
-            if not isinstance(replay_dataset, Dataset):
-                raise NotImplementedError(f"replay_dataset is not Dataset, {replay_dataset}")
-            replay_dataloader = DataLoader(replay_dataset, batch_size=self._batch_size, shuffle=True)
-            replay_iterator = iter(replay_dataloader)
-            print(len(replay_iterator))
-            replay_batch = replay_iterator.next()
-        else:
-            replay_dataloader = None
-            replay_iterator = None
-
         iterator: TransitionIterator
         assert dataset is not None
         transitions = []
@@ -199,27 +187,6 @@ class ST():
             transitions = list(cast(List[Transition], dataset))
         else:
             raise ValueError(f"invalid dataset type: {type(dataset)}")
-
-        # initialize scaler
-        if self._scaler:
-            LOG.debug("Fitting scaler...", scaler=self._scaler.get_type())
-            self._scaler.fit(transitions)
-
-        # initialize action scaler
-        if self._action_scaler:
-            LOG.debug(
-                "Fitting action scaler...",
-                action_scaler=self._action_scaler.get_type(),
-            )
-            self._action_scaler.fit(transitions)
-
-        # initialize reward scaler
-        if self._reward_scaler:
-            LOG.debug(
-                "Fitting reward scaler...",
-                reward_scaler=self._reward_scaler.get_type(),
-            )
-            self._reward_scaler.fit(transitions)
 
         if n_steps is not None:
             assert n_steps >= n_steps_per_epoch
@@ -247,7 +214,74 @@ class ST():
             )
         else:
             raise ValueError("Either of n_epochs or n_steps must be given.")
-        return iterator, replay_iterator, replay_dataloader, n_epochs
+
+        if replay_dataset is not None:
+            replay_iterator: TransitionIterator
+            assert dataset is not None
+            replay_transitions = []
+            if isinstance(dataset, MDPDataset):
+                for episode in cast(MDPDataset, replay_dataset).episodes:
+                    replay_transitions += episode.transitions
+            elif not dataset:
+                raise ValueError("empty dataset is not supported.")
+            elif isinstance(replay_dataset[0], Episode):
+                for replay_episode in cast(List[Episode], replay_dataset):
+                    replay_transitions += replay_episode.transitions
+            elif isinstance(replay_dataset[0], Transition):
+                replay_transitions = list(cast(List[Transition], replay_dataset))
+            else:
+                raise ValueError(f"invalid dataset type: {type(replay_dataset)}")
+
+            if n_steps is not None:
+                assert n_steps >= n_steps_per_epoch
+                n_epochs = n_steps // n_steps_per_epoch
+                replay_iterator = RandomIterator(
+                    replay_transitions,
+                    n_steps_per_epoch,
+                    batch_size=self._batch_size,
+                    n_steps=self._n_steps,
+                    gamma=self._gamma,
+                    n_frames=self._n_frames,
+                    real_ratio=self._real_ratio,
+                    generated_maxlen=self._generated_maxlen,
+                )
+            elif n_epochs is not None and n_steps is None:
+                replay_iterator = RoundIterator(
+                    replay_transitions,
+                    batch_size=self._batch_size,
+                    n_steps=self._n_steps,
+                    gamma=self._gamma,
+                    n_frames=self._n_frames,
+                    real_ratio=self._real_ratio,
+                    generated_maxlen=self._generated_maxlen,
+                    shuffle=shuffle,
+                )
+            else:
+                raise ValueError("Either of n_epochs or n_steps must be given.")
+        else:
+            replay_iterator = None
+
+        # initialize scaler
+        if self._scaler:
+            LOG.debug("Fitting scaler...", scaler=self._scaler.get_type())
+            self._scaler.fit(transitions)
+
+        # initialize action scaler
+        if self._action_scaler:
+            LOG.debug(
+                "Fitting action scaler...",
+                action_scaler=self._action_scaler.get_type(),
+            )
+            self._action_scaler.fit(transitions)
+
+        # initialize reward scaler
+        if self._reward_scaler:
+            LOG.debug(
+                "Fitting reward scaler...",
+                reward_scaler=self._reward_scaler.get_type(),
+            )
+            self._reward_scaler.fit(transitions)
+        return iterator, replay_iterator, n_epochs
 
     def fit(
         self,
@@ -256,7 +290,6 @@ class ST():
         iterator: Optional[TransitionIterator] = None,
         replay_dataset: Optional[Union[TensorDataset, List[Transition]]] = None,
         replay_iterator: Optional[Iterator] = None,
-        replay_dataloader: Optional[DataLoader] = None,
         n_epochs: Optional[int] = None,
         coldstart_steps: Optional[int] = None,
         save_metrics: bool = True,
@@ -319,7 +352,6 @@ class ST():
                 iterator,
                 replay_dataset,
                 replay_iterator,
-                replay_dataloader,
                 n_epochs,
                 coldstart_steps,
                 save_metrics,
@@ -352,7 +384,6 @@ class ST():
         iterator: Optional[TransitionIterator] = None,
         replay_dataset: Optional[Union[TensorDataset, List[Transition]]] = None,
         replay_iterator: Optional[TransitionIterator] = None,
-        replay_dataloader: Optional[DataLoader] = None,
         n_epochs: Optional[int] = None,
         coldstart_steps: Optional[int] = None,
         save_metrics: bool = True,
@@ -459,10 +490,8 @@ class ST():
             )
 
             iterator.reset()
-            if replay_dataloader is not None:
-                replay_iterator = iter(replay_dataloader)
-            else:
-                replay_iterator = None
+            if replay_iterator is not None:
+                replay_iterator.reset()
 
             for batch_num, itr in enumerate(range_gen):
                 if batch_num > 10 and test:
@@ -481,12 +510,11 @@ class ST():
                     with logger.measure_time("sample_batch"):
                         batch = next(iterator)
                         if replay_iterator is not None:
-                            assert replay_dataloader is not None
                             replay_batch = dict()
                             try:
                                 replay_batch = next(replay_iterator)
                             except StopIteration:
-                                replay_iterator = iter(replay_dataloader)
+                                replay_iterator.reset()
                                 replay_batch = next(replay_iterator)
                         else:
                             replay_batch = None
@@ -501,21 +529,27 @@ class ST():
                         logger.add_metric(name, val)
                         epoch_loss[name].append(val)
 
-                    # try:
-                    #     logger.add_metric("weight", self._impl._weight)
-                    #     logger.add_metric("log_probs", self._impl._log_probs)
-                    #     logger.add_metric("q_t", self._impl._q_t)
-                    #     logger.add_metric("v_t", self._impl._v_t)
-                    #     logger.add_metric("q_loss", self._impl._q_loss)
-                    #     logger.add_metric("v_loss", self._impl._v_loss)
-                    #     logger.add_metric("replay_weight", self._impl._replay_weight)
-                    #     logger.add_metric("replay_log_probs", self._impl._replay_log_probs)
-                    #     logger.add_metric("replay_q_t", self._impl._replay_q_t)
-                    #     logger.add_metric("replay_v_t", self._impl._replay_v_t)
-                    #     logger.add_metric("replay_q_loss", self._impl._replay_q_loss)
-                    #     logger.add_metric("replay_v_loss", self._impl._replay_v_loss)
-                    # except AttributeError:
-                    #     pass
+                    try:
+                        # logger.add_metric("weight", self._impl._weight)
+                        # logger.add_metric("log_probs", self._impl._log_probs)
+                        # logger.add_metric("q_t", self._impl._q_t)
+                        # logger.add_metric("v_t", self._impl._v_t)
+                        logger.add_metric("q_loss", self._impl._q_loss.detach().cpu().numpy())
+                        logger.add_metric("v_loss", self._impl._v_loss.detach().cpu().numpy())
+                        epoch_loss["q_loss"].append(self._impl._q_loss.detach().cpu().numpy())
+                        epoch_loss["v_loss"].append(self._impl._v_loss.detach().cpu().numpy())
+                        logger.add_metric("replay_q_loss", self._impl._replay_q_loss.detach().cpu().numpy())
+                        logger.add_metric("replay_v_loss", self._impl._replay_v_loss.detach().cpu().numpy())
+                        epoch_loss["replay_q_loss"].append(self._impl._replay_q_loss.detach().cpu().numpy())
+                        epoch_loss["replay_v_loss"].append(self._impl._replay_v_loss.detach().cpu().numpy())
+                        # logger.add_metric("replay_weight", self._impl._replay_weight)
+                        # logger.add_metric("replay_log_probs", self._impl._replay_log_probs)
+                        # logger.add_metric("replay_q_t", self._impl._replay_q_t)
+                        # logger.add_metric("replay_v_t", self._impl._replay_v_t)
+                        # logger.add_metric("replay_q_loss", self._impl._replay_q_loss)
+                        # logger.add_metric("replay_v_loss", self._impl._replay_v_loss)
+                    except AttributeError:
+                        pass
 
                     # update progress postfix with losses
                     if itr % 10 == 0:
@@ -556,7 +590,7 @@ class ST():
 
             yield epoch, metrics
 
-    def after_learn(self, iterator, eval_episodes_list, scorers_list, experiment_name, logdir='d3rlpy_logs'):
+    def after_learn(self, iterator, experiment_name, logdir='d3rlpy_logs'):
         # for EWC
         if self._critic_replay_type in ['rwalk', 'ewc']:
             self._impl.critic_ewc_rwalk_post_train_process(iterator)
@@ -574,6 +608,22 @@ class ST():
             self._impl.match_prop_post_train_process(iterator)
         # self._impl.reinit_network()
 
+        # if scorers_list and eval_episodes_list:
+        #     for scorer_num, (scorers, eval_episodes) in enumerate(zip(scorers_list, eval_episodes_list)):
+        #         # setup logger
+        #         logger = self._prepare_logger(True, experiment_name, True, logdir, True, None)
+        #         rename_scorers = dict()
+        #         for name, scorer in scorers.items():
+        #             rename_scorers[str(scorer_num) + '_' + name] = scorer
+        #         self._evaluate(eval_episodes, rename_scorers, logger)
+        #         # save metrics
+        #         metrics = logger.commit(0, 0)
+        if self._merge or self._use_vae:
+            self._impl.save_clone_data()
+        self._impl._targ_q_func = copy.deepcopy(self._impl._q_func)
+        self._impl._targ_policy = copy.deepcopy(self._impl._policy)
+
+    def score(self, scorers_list, eval_episodes_list, iterator, experiment_name, logdir='d3rlpy_logs'):
         if scorers_list and eval_episodes_list:
             for scorer_num, (scorers, eval_episodes) in enumerate(zip(scorers_list, eval_episodes_list)):
                 # setup logger
@@ -582,12 +632,7 @@ class ST():
                 for name, scorer in scorers.items():
                     rename_scorers[str(scorer_num) + '_' + name] = scorer
                 self._evaluate(eval_episodes, rename_scorers, logger)
-                # save metrics
                 metrics = logger.commit(0, 0)
-        if self._merge or self._use_vae:
-            self._impl.save_clone_data()
-        self._impl._targ_q_func = copy.deepcopy(self._impl._q_func)
-        self._impl._targ_policy = copy.deepcopy(self._impl._policy)
 
     def online_fit(
         self,
@@ -881,12 +926,10 @@ class ST():
             replay_observations = torch.stack([torch.from_numpy(transition.observation) for transition in transitions], dim=0).to(torch.float32).detach().to('cpu')
             replay_actions = torch.stack([torch.from_numpy(transition.action) for transition in transitions], dim=0).to(torch.float32).detach().to('cpu')
             replay_rewards = torch.stack([torch.from_numpy(np.array([transition.reward])) for transition in transitions], dim=0).detach().to(torch.float32).to('cpu')
-            replay_next_observations = torch.stack([torch.from_numpy(transition.next_observation) for transition in transitions], dim=0).detach().to(torch.float32).to('cpu')
             replay_terminals = torch.stack([torch.from_numpy(np.array([transition.terminal])) for transition in transitions], dim=0).detach().to(torch.float32).to('cpu')
-            replay_policy_actions = self._impl._policy(replay_observations.to(self._impl.device)).detach().to(torch.float32).to('cpu')
-            transition_qs = self._impl._q_func(replay_observations.to(self._impl.device), replay_actions.to(self._impl.device))
-            replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals, replay_policy_actions, replay_qs)
-            return replay_dataset, replay_dataset
+            replay_episode_terminals = torch.ones_like(replay_terminals)
+            replay_dataset = MDPDataset(replay_observations, replay_actions, replay_rewards, replay_terminals, replay_episode_terminals)
+            return replay_dataset
 
     def _is_generating_new_data(self) -> bool:
         return self._grad_step % self._rollout_interval == 0
@@ -894,23 +937,8 @@ class ST():
     def _get_rollout_horizon(self):
         return self._rollout_horizon
 
-    def generate_replay_data_all(self, dataset):
-        transitions = [transition for episode in dataset.episodes for transition in episode.transitions]
-        replay_observations = torch.stack([torch.from_numpy(transition.observation) for transition in transitions], dim=0).to('cpu')
-        replay_actions = torch.stack([torch.from_numpy(transition.action) for transition in transitions], dim=0).to('cpu')
-        replay_rewards = torch.stack([torch.from_numpy(np.array([transition.reward])) for transition in transitions], dim=0).to('cpu')
-        replay_next_observations = torch.stack([torch.from_numpy(transition.next_observation) for transition in transitions], dim=0).to('cpu')
-        replay_terminals = torch.stack([torch.from_numpy(np.array([transition.terminal])) for transition in transitions], dim=0).to('cpu')
-        replay_policy_actions = self._impl._policy(replay_observations.to(self._impl.device)).to('cpu')
-        replay_qs = self._impl._q_func(replay_observations.to(self._impl.device), replay_actions.to(self._impl.device)).detach().to('cpu')
-        replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals, replay_policy_actions, replay_qs)
-        return replay_dataset, replay_dataset
-
-    def generate_replay_data_episode(self, dataset, all_max_save_num=1000, max_export_step=1000, start_num=1, batch_size=16, test=False):
+    def generate_replay_data_episode(self, dataset, max_save_num=1000, max_export_step=1000, start_num=1, batch_size=16, test=False):
         # max_save_num = all_max_save_num // 2
-        # random_save_num = all_max_save_num - max_save_num
-        max_save_num = all_max_save_num
-        random_save_num = 0
         with torch.no_grad():
             if isinstance(dataset, MDPDataset):
                 episodes = dataset.episodes
@@ -1022,23 +1050,41 @@ class ST():
                     episodes = [i for i, _ in sorted(zip(episodes, episode_log_probs), key=lambda x: x[1], reverse=True)]
                 elif self._experience_type[:3] == 'min':
                     episodes = [i for i, _ in sorted(zip(episodes, episode_log_probs), key=lambda x: x[1])]
+            elif self._experience_type == 'max_q_mean':
+                new_replay_diff_qs = []
+                i = 0
+                for episode in new_replay_dataset.episodes:
+                    replay_observations = episode.observations.to(self._impl.device)
+                    replay_actions = episode.actions.to(self._impl.device)
+                    replay_qs = self._impl._q_func(replay_observations, replay_actions).detach().to(torch.float32).to('cpu')
+                    replay_learned_qs = self._impl._q_func(replay_observations, self._impl._policy(replay_observations)).detach().to(torch.float32).to('cpu')
+                    new_replay_diff_qs.append((replay_qs - replay_learned_qs).mean())
+                new_replay_diff_qs = torch.stack(new_replay_diff_qs, dim=0)
             else:
                 raise NotImplementedError
 
             all_transitions = [transition for episode in episodes for transition in episode.transitions]
-            transitions = all_transitions[:max_save_num]
-            random_transitions = all_transitions[max_save_num:]
-            random.shuffle(random_transitions)
-            transitions += random_transitions[:random_save_num]
-            replay_observations = torch.stack([torch.from_numpy(transition.observation) for transition in transitions], dim=0).to(torch.float32).to('cpu')
-            replay_actions = torch.stack([torch.from_numpy(transition.action) for transition in transitions], dim=0).to(torch.float32).to('cpu')
-            replay_rewards = torch.stack([torch.from_numpy(np.array([transition.reward])) for transition in transitions], dim=0).to(torch.float32).to('cpu')
-            replay_next_observations = torch.stack([torch.from_numpy(transition.next_observation) for transition in transitions], dim=0).to(torch.float32).to('cpu')
+            if max_save_num is not None:
+                transitions = all_transitions[:max_save_num]
+            else:
+                transitions = all_transitions
+            replay_observations = torch.stack([torch.from_numpy(transition.observation) for transition in transitions], dim=0).to(torch.float32).to('cpu').numpy()
+            replay_actions = torch.stack([torch.from_numpy(transition.action) for transition in transitions], dim=0).to(torch.float32).to('cpu').numpy()
+            replay_rewards = torch.stack([torch.from_numpy(np.array([transition.reward])) for transition in transitions], dim=0).to(torch.float32).to('cpu').numpy()
             replay_terminals = torch.stack([torch.from_numpy(np.array([transition.terminal])) for transition in transitions], dim=0).to(torch.int64).to('cpu')
-            replay_policy_actions = self._impl._policy(replay_observations.to(self._impl.device)).to(torch.float32).to('cpu')
-            replay_qs = self._impl._q_func(replay_observations.to(self._impl.device), replay_actions.to(self._impl.device)).detach().to(torch.float32).to('cpu')
-            replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals, replay_policy_actions, replay_qs)
-            return replay_dataset, replay_dataset
+            replay_episode_terminals = torch.zeros_like(replay_terminals)
+            i = -1
+            for episode in episodes:
+                i += episode.observations.shape[0]
+                if i < replay_episode_terminals.shape[0]:
+                    replay_episode_terminals[i] = 1
+                else:
+                    break
+            replay_episode_terminals[-1] = 0
+            replay_terminals = replay_terminals.numpy()
+            replay_episode_terminals = replay_episode_terminals.numpy()
+            replay_dataset = MDPDataset(replay_observations, replay_actions, replay_rewards, replay_terminals, replay_episode_terminals)
+            return replay_dataset
 
     def generate_replay_data_online(self, env, test_id, test=False, max_save_num=1000):
         replay_observations = []
@@ -1046,6 +1092,7 @@ class ST():
         replay_rewards = []
         replay_next_observations = []
         replay_terminals = []
+        replay_episode_terminals = []
         replay_policy_actions = []
         replay_qs = []
         try:
@@ -1071,8 +1118,10 @@ class ST():
                 replay_terminals.append(done)
 
                 if done:
+                    replay_episode_terminals.append(0)
                     break
                 if i > 1000:
+                    replay_episode_terminals.append(1)
                     break
                 replay_observations.append(observation)
                 observation = torch.from_numpy(observation).to(self._impl.device).unsqueeze(dim=0).to(torch.float32)
@@ -1083,18 +1132,14 @@ class ST():
         random_indexes = list(range(len(replay_actions)))
         random.shuffle(random_indexes)
         random_indexes = random_indexes[:max_save_num]
-        replay_observations = torch.from_numpy(np.stack(replay_observations, axis=0)).to(self._impl.device).to(torch.float32)[random_indexes]
-        replay_next_observations = torch.from_numpy(np.stack(replay_next_observations, axis=0)).to(torch.float32)[random_indexes]
-        replay_actions = torch.from_numpy(np.stack(replay_actions, axis=0)).to(self._impl.device).to(torch.float32)[random_indexes]
-        replay_terminals = torch.from_numpy(np.array(replay_terminals)).to(torch.int32)[random_indexes]
-        replay_rewards = torch.from_numpy(np.array(replay_rewards)).to(torch.float32)[random_indexes]
+        replay_observations = torch.from_numpy(np.stack(replay_observations, axis=0)).to(self._impl.device).to(torch.float32)[random_indexes].numpy()
+        replay_actions = torch.from_numpy(np.stack(replay_actions, axis=0)).to(self._impl.device).to(torch.float32)[random_indexes].numpy()
+        replay_rewards = torch.from_numpy(np.array(replay_rewards)).to(torch.float32)[random_indexes].numpy()
+        replay_terminals = torch.from_numpy(np.array(replay_terminals)).to(torch.int32)[random_indexes].numpy()
+        replay_episode_terminals = torch.from_numpy(np.array(replay_episode_terminals)).to(torch.int32)[random_indexes].numpy()
         # online的情况下action就是由policy生成的。
-        replay_qs = self._impl._q_func(replay_observations, replay_actions).detach().to(torch.float32).to('cpu')
-        replay_policy_actions = replay_actions
-        replay_observations = replay_observations.detach().to('cpu')
-        replay_actions = replay_actions.detach().to('cpu')
-        replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals, replay_policy_actions, replay_qs)
-        return replay_dataset, replay_dataset
+        replay_dataset = MDPDataset(replay_observations, replay_actions, replay_rewards, replay_terminals, replay_episode_terminals)
+        return replay_dataset
 
     def generate_replay(self, dataset_id, dataset, env, critic_replay_type, actor_replay_type, experience_type, max_save_num, max_export_step, test):
 
@@ -1102,15 +1147,15 @@ class ST():
         if critic_replay_type in ['ewc', 'si', 'rwalk', 'none'] and actor_replay_type in ['ewc', 'si', 'rwalk', 'none'] or experience_type in ['none', 'all']:
             replay_dataset, save_dataset = None, None
         elif experience_type in ['random_transition', 'max_reward', 'max_match', 'max_supervise', 'max_model', 'min_reward', 'min_match', 'min_supervise', 'min_model']:
-            replay_dataset, save_dataset = self.generate_replay_data_transition(dataset, max_save_num=max_save_num)
+            replay_dataset = self.generate_replay_data_transition(dataset, max_save_num=max_save_num)
             print(f"len(replay_dataset): {len(replay_dataset)}")
-        elif experience_type in ['random_episode', 'max_reward_end', 'max_reward_mean', 'max_match_end', 'max_match_mean', 'max_supervise_end', 'max_supervise_mean', 'max_model_end', 'max_model_mean', 'min_reward_end', 'min_reward_mean', 'min_match_end', 'min_match_mean', 'min_model_end', 'min_model_mean']:
-            replay_dataset, save_dataset = self.generate_replay_data_episode(dataset, all_max_save_num=max_save_num, max_export_step=max_export_step, test=test)
+        elif experience_type in ['random_episode', 'max_reward_end', 'max_reward_mean', 'max_match_end', 'max_match_mean', 'max_supervise_end', 'max_supervise_mean', 'max_model_end', 'max_model_mean', 'min_reward_end', 'min_reward_mean', 'min_match_end', 'min_match_mean', 'min_model_end', 'min_model_mean', 'max_vq_diff', 'max_q']:
+            replay_dataset = self.generate_replay_data_episode(dataset, max_save_num=max_save_num, max_export_step=max_export_step, test=test)
             print(f"len(replay_dataset): {len(replay_dataset)}")
             print(f"len(replay_dataset): {len(replay_dataset)}")
         elif experience_type == 'online':
             assert env is not None
-            replay_dataset, save_dataset = self.generate_replay_data_online(env, dataset_id, test=test, max_save_num=max_save_num)
+            replay_dataset = self.generate_replay_data_online(env, dataset_id, test=test, max_save_num=max_save_num)
         else:
             print(f'experience_type: {experience_type}')
             raise NotImplementedError
@@ -1118,47 +1163,98 @@ class ST():
         return replay_dataset
 
     def select_replay(self, new_replay_dataset, old_replay_dataset, dataset_id, max_save_num, mix_type='random'):
-        if mix_type == 'q':
-            new_replay_dataloader = DataLoader(new_replay_dataset, batch_size = self._batch_size, shuffle=False)
+        indices_old = None
+        if mix_type == 'all':
+            indices_new = np.arange(len(new_replay_dataset.episodes))
+            if old_replay_dataset is not None:
+                indices_old = np.arange(len(old_replay_dataset.episodes))
+        elif mix_type == 'q':
             new_replay_diff_qs = []
-            for replay_observations, replay_actions, _, _, replay_terminals, *_ in new_replay_dataloader:
-                replay_observations = replay_observations.to(self._impl.device)
-                replay_actions = replay_actions.to(self._impl.device)
+            i = 0
+            for episode in new_replay_dataset.episodes:
+                replay_observations = torch.from_numpy(episode.observations).to(self._impl.device)
+                replay_actions = torch.from_numpy(episode.actions).to(self._impl.device)
                 replay_qs = self._impl._q_func(replay_observations, replay_actions).detach().to(torch.float32).to('cpu')
                 replay_learned_qs = self._impl._q_func(replay_observations, self._impl._policy(replay_observations)).detach().to(torch.float32).to('cpu')
-                new_replay_diff_qs.append(replay_qs - replay_learned_qs)
-            new_replay_diff_qs = torch.cat(new_replay_diff_qs, dim=0)
+                new_replay_diff_qs.append((replay_qs - replay_learned_qs).mean())
+            new_replay_diff_qs = torch.stack(new_replay_diff_qs, dim=0)
 
-            old_replay_dataloader = DataLoader(old_replay_dataset, batch_size = self._batch_size, shuffle=False)
-            old_replay_diff_qs = []
-            for replay_observations, replay_actions, _, _, replay_terminals, *_ in old_replay_dataloader:
-                replay_observations = replay_observations.to(self._impl.device)
-                replay_actions = replay_actions.to(self._impl.device)
-                replay_qs = self._impl._q_func(replay_observations, replay_actions).detach().to(torch.float32).to('cpu')
-                replay_learned_qs = self._impl._q_func(replay_observations, self._impl._policy(replay_observations)).detach().to(torch.float32).to('cpu')
-                old_replay_diff_qs.append(replay_qs - replay_learned_qs)
-            old_replay_diff_qs = torch.cat(old_replay_diff_qs, dim=0)
+            if old_replay_dataset is not None:
+                old_replay_diff_qs = []
+                i = 0
+                for episode in old_replay_dataset.episodes:
+                    replay_observations = torch.from_numpy(episode.observations).to(self._impl.device)
+                    replay_actions = torch.from_numpy(episode.actions).to(self._impl.device)
+                    replay_qs = self._impl._q_func(replay_observations, replay_actions).detach().to(torch.float32).to('cpu')
+                    replay_learned_qs = self._impl._q_func(replay_observations, self._impl._policy(replay_observations)).detach().to(torch.float32).to('cpu')
+                    old_replay_diff_qs.append((replay_qs - replay_learned_qs).mean())
+                old_replay_diff_qs = torch.stack(old_replay_diff_qs, dim=0)
 
-            replay_diff_qs = torch.cat([new_replay_diff_qs, old_replay_diff_qs])
-            _, indices = torch.sort(replay_diff_qs, descending=True)
-            indices = indices[:max_save_num]
-            indices_new = indices[indices < len(new_replay_dataset)]
-            indices_old = indices[indices >= len(new_replay_dataset)] - len(new_replay_dataset)
+                replay_diff_qs = torch.cat([new_replay_diff_qs, old_replay_diff_qs])
+                _, indices = torch.sort(replay_diff_qs, descending=True)
+                indices = indices[:max_save_num]
+                indices_new = indices[indices < len(new_replay_dataset)]
+                indices_old = indices[indices >= len(new_replay_dataset)] - len(new_replay_dataset)
+                indices_new = indices_new.detach().cpu().numpy()
+                indices_old = indices_old.detach().cpu().numpy()
+            else:
+                replay_diff_qs = new_replay_diff_qs
+                _, indices = torch.sort(replay_diff_qs, descending=True)
+                indices_new = indices[:max_save_num].detach().cpu().numpy()
         elif mix_type == 'random':
-            replay_dataset_length = len(old_replay_dataset)
-            slide_dataset_length = max_save_num // (dataset_id)
-            indices_new = torch.arange(new_replay_dataset.shape[0])
-            indices_old = torch.cat([torch.arange(slide_dataset_length * i, slide_dataset_length *(i + 1), device=self._impl.device)[torch.randperm(slide_dataset_length)[: slide_dataset_length // 2]] for i in range(dataset_id)])
+            replay_dataset_length = len(old_replay_dataset.episodes)
+            slide_dataset_length = max_save_num // (dataset_id + 1)
+            indices_new = torch.randperm(slide_dataset_length).detach().cpu().numpy()
+            if old_replay_dataset is not None:
+                old_slide_dataset_length = max_save_num // (dataset_id)
+                indices_old = torch.cat([torch.arange(old_slide_dataset_length * i, old_slide_dataset_length * (i + 1), device=self._impl.device)[torch.randperm(slide_dataset_length)] for i in range(dataset_id)]).detach().cpu().numpy()
         else:
             raise NotImplementedError
-        replay_observations = torch.cat([new_replay_dataset.tensors[0][indices_new], old_replay_dataset.tensors[0][indices_old]], dim=0)
-        replay_actions = torch.cat([new_replay_dataset.tensors[1][indices_new], old_replay_dataset.tensors[1][indices_old]], dim=0)
-        replay_rewards = torch.cat([new_replay_dataset.tensors[2][indices_new], old_replay_dataset.tensors[2][indices_old]], dim=0)
-        replay_next_observations = torch.cat([new_replay_dataset.tensors[3][indices_new], old_replay_dataset.tensors[3][indices_old]], dim=0)
-        replay_terminals = torch.cat([new_replay_dataset.tensors[4][indices_new], old_replay_dataset.tensors[4][indices_old]], dim=0)
-        replay_policy_actions = torch.cat([new_replay_dataset.tensors[5][indices_new], old_replay_dataset.tensors[5][indices_old]], dim=0)
-        replay_qs = torch.cat([new_replay_dataset.tensors[6][indices_new], old_replay_dataset.tensors[6][indices_old]], dim=0)
-        replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals, replay_policy_actions, replay_qs)
+        replay_dataset = self._generate_new_replay_dataset(new_replay_dataset, old_replay_dataset, indices_new, indices_old)
+        return replay_dataset
+
+    def _generate_new_replay_dataset(self, new_replay_dataset, old_replay_dataset, indices_new, indices_old):
+        replay_terminals = []
+        replay_episode_terminals = []
+        new_episodes = new_replay_dataset.episodes
+        if old_replay_dataset is not None:
+            old_episodes = old_replay_dataset.episodes
+            replay_observations = np.concatenate([new_episodes[i].observations for i in indices_new] + [old_episodes[i].observations for i in indices_old], axis=0)
+            replay_actions = np.concatenate([new_episodes[i].actions for i in indices_new] + [old_episodes[i].actions for i in indices_old], axis=0)
+            replay_rewards = np.concatenate([new_episodes[i].rewards for i in indices_new] + [old_episodes[i].rewards for i in indices_old], axis=0)
+            for i in indices_new:
+                terminals = np.zeros_like(replay_rewards, dtype=np.bool_)
+                terminals[-1] = new_episodes[i].terminal
+                episode_terminals = np.zeros_like(replay_rewards, dtype=np.bool_)
+                episode_terminals[-1] = True
+                replay_terminals.append(terminals)
+                replay_episode_terminals.append(episode_terminals)
+            for i in indices_old:
+                terminals = np.zeros_like(replay_rewards, dtype=np.bool_)
+                terminals[-1] = old_episodes[i].terminal
+                episode_terminals = np.zeros_like(replay_rewards, dtype=np.bool_)
+                episode_terminals[-1] = True
+                replay_terminals.append(terminals)
+                replay_episode_terminals.append(episode_terminals)
+        else:
+            replay_observations = np.concatenate([new_episodes[i].observations for i in indices_new], axis=0)
+            replay_actions = np.concatenate([new_episodes[i].actions for i in indices_new], axis=0)
+            replay_rewards = np.concatenate([new_episodes[i].rewards for i in indices_new], axis=0)
+            for i in indices_new:
+                terminals = np.zeros_like(new_episodes[i].rewards, dtype=np.bool_)
+                terminals[-1] = new_episodes[i].terminal
+                episode_terminals = np.zeros_like(new_episodes[i].rewards, dtype=np.bool_)
+                episode_terminals[-1] = True
+                replay_terminals.append(terminals)
+                replay_episode_terminals.append(episode_terminals)
+        replay_terminals = np.concatenate(replay_terminals, axis=0)
+        replay_episode_terminals = np.concatenate(replay_episode_terminals, axis=0)
+        print(replay_observations.shape)
+        print(replay_actions.shape)
+        print(replay_rewards.shape)
+        print(replay_terminals.shape)
+        print(replay_episode_terminals.shape)
+        replay_dataset = MDPDataset(replay_observations, replay_actions, replay_rewards, replay_terminals, replay_episode_terminals)
         return replay_dataset
 
     def copy_load_model(

@@ -1287,15 +1287,16 @@ class CO():
         observations = torch.from_numpy(dataset.observations)
         actions = torch.from_numpy(dataset.actions)
         terminals = torch.from_numpy(np.logical_or(dataset.terminals == 1, dataset.episode_terminals == 1))
-        terminals_stop = torch.where(((terminals == 1) == 0).nonzero())
+        terminals_stop = torch.where(terminals == 1)[0]
         # 关键算法
 
-        orl_indexes_all = torch.cat([torch.LongTensor(1), terminals_stop[:-1] + 1])
+        orl_indexes_all = torch.cat([torch.LongTensor(1), terminals_stop[:-1] + 1]).detach().cpu().numpy().tolist()
         orl_indexes_all[0] = 0
         random.shuffle(orl_indexes_all)
         # orl_ns_all = [0 for _ in orl_indexes_all]
-        orl_batch_size = 100
+        orl_batch_size = 10
         orl_indexes_list = [orl_indexes_all[i:i+orl_batch_size] for i in range(0,len(orl_indexes_all) - 1,orl_batch_size)]
+        selected_indexes = []
         # orl_ns_list = [orl_ns_all[i:i+orl_batch_size] for i in range(0,len(orl_ns_all) - 1,orl_batch_size)]
 
         if indexes_euclid is None:
@@ -1321,12 +1322,14 @@ class CO():
 
         export_time = 0
         old_orl_indexes_all = 0
-        while len(orl_indexes_all) < max_save_num:
-            for orl_indexes, orl_ns in zip(orl_indexes_list, orl_ns_list):
+        while len(selected_indexes) < max_save_num:
+            # for orl_indexes, orl_ns in zip(orl_indexes_list, orl_ns_list):
+            for orl_indexes in orl_indexes_list:
                 # if 'none' in self._sample_type:
                 #     if len(orl_indexes_all) > old_orl_indexes_all:
                 #         break
-                if len(orl_indexes_all) >= max_save_num:
+                selected_indexes.extend(orl_indexes)
+                if len(selected_indexes) >= max_save_num:
                     break
                 # if test and stop:
                 #     break
@@ -1346,33 +1349,34 @@ class CO():
                     # if test and export_step >= 3:
                     #     stop = True
                     #     break
-                    if len(orl_indexes) >= max_save_num:
+                    if len(selected_indexes) >= max_save_num:
                         break
                     print(f'next_step: {export_step}')
                     start_actions = self._impl._policy(start_observations)
                     # if 'noise' in self._sample_type:
-                    noise = self._model_noise * max(1, (export_time / max_export_time)) * torch.randn(start_actions.shape, device=self._impl.device)
-                    start_actions += noise
+                    # noise = self._model_noise * max(1, (export_time / max_export_time)) * torch.randn(start_actions.shape, device=self._impl.device)
+                    # start_actions += noise
 
                     if indexes_euclid is not None:
-                        if 'next' in self._experience_type:
-                            start_indexes = np.array(start_indexes)
-                            near_observations = observations[indexes_euclid[start_indexes]].to(self._impl.device)
-                            near_actions = actions[indexes_euclid[start_indexes]].to(self._impl.device)
-                            near_variances = []
-                            near_next_observations_list = []
-                            for i in range(near_observations.shape[0]):
-                                near_next_observations, _, variances = self._impl._dynamic.predict_with_variance(near_observations[i, :, :real_observation_size], near_actions[i, :, :real_action_size])
-                                near_variances.append(torch.mean(variances).detach().cpu().item())
-                                mean_near_next_observations = torch.mean(near_next_observations, dim=1).unsqueeze(dim=1).expand(-1, near_next_observations.shape[1], -1)
-                                _, diff_mean_near_next_observations_indices = torch.max(torch.mean(near_next_observations - mean_near_next_observations, dim=2), dim=1)
-                                near_next_observations = torch.stack([near_next_observations[i][diff_mean_near_next_observations_indices[i]] for i in range(diff_mean_near_next_observations_indices.shape[0])])
-                                near_next_observations_list.append(near_next_observations)
-                            near_variances = torch.mean(torch.from_numpy(np.array(near_variances)), dim=0).to(self._impl.device)
-                            near_next_observations = torch.stack(near_next_observations_list)
-                        elif 'this' in self._experience_type:
-                            start_indexes = np.array(start_indexes)
-                            near_next_observations = next_observations[indexes_euclid[start_indexes]].to(self._impl.device)
+                        # if 'next' in self._experience_type:
+                        #     start_indexes = np.array(start_indexes)
+                        #     near_observations = observations[indexes_euclid[start_indexes]].to(self._impl.device)
+                        #     near_actions = actions[indexes_euclid[start_indexes]].to(self._impl.device)
+                        #     near_variances = []
+                        #     near_next_observations_list = []
+                        #     for i in range(near_observations.shape[0]):
+                        #         near_next_observations, _, variances = self._impl._dynamic.predict_with_variance(near_observations[i, :, :real_observation_size], near_actions[i, :, :real_action_size])
+                        #         near_variances.append(torch.mean(variances).detach().cpu().item())
+                        #         mean_near_next_observations = torch.mean(near_next_observations, dim=1).unsqueeze(dim=1).expand(-1, near_next_observations.shape[1], -1)
+                        #         _, diff_mean_near_next_observations_indices = torch.max(torch.mean(near_next_observations - mean_near_next_observations, dim=2), dim=1)
+                        #         near_next_observations = torch.stack([near_next_observations[i][diff_mean_near_next_observations_indices[i]] for i in range(diff_mean_near_next_observations_indices.shape[0])])
+                        #         near_next_observations_list.append(near_next_observations)
+                        #     near_variances = torch.mean(torch.from_numpy(np.array(near_variances)), dim=0).to(self._impl.device)
+                        #     near_next_observations = torch.stack(near_next_observations_list)
+                        # elif 'this' in self._experience_type:
+                        start_indexes = np.array(start_indexes)
+                        near_next_observations = observations[indexes_euclid[start_indexes + 1]].to(self._impl.device)
+                        # near_next_observations = next_observations[indexes_euclid[start_indexes]].to(self._impl.device)
 
                     if 'model' in self._experience_type:
                         if 'prob' in self._experience_type:
@@ -1388,8 +1392,8 @@ class CO():
                             logstds += noise
 
                         # 找到最接近中间的，也就是最准的。
-                        start_next_observations, _, variances = self._impl._dynamic.predict_with_variance(start_observations[:, :real_observation_size], start_actions[:, :real_action_size])
-                        variances = torch.mean(variances, dim=1)
+                        start_next_observations, _, _ = self._impl._dynamic.predict_with_variance(start_observations[:, :real_observation_size], start_actions[:, :real_action_size])
+                        # variances = torch.mean(variances, dim=1)
                         # mean_start_next_observations = torch.mean(start_next_observations, dim=1).unsqueeze(dim=1).expand(-1, start_next_observations.shape[1], -1)
                         # _, diff_mean_start_next_observations_indices = torch.max(torch.mean(start_next_observations - mean_start_next_observations, dim=2), dim=1)
                         start_next_observations = torch.stack([start_next_observations[i][random.randint(0, len(start_next_observations[i]) - 1)] for i in range(start_next_observations.shape[0])])
@@ -1428,7 +1432,7 @@ class CO():
                                 if len(start_indexes) != 1:
                                     near_indexes = torch.LongTensor([indexes_euclid[start_indexes[i], near_indexes[i]] for i in range(start_indexes.shape[0])]).to(self._impl.device)
                                 else:
-                                    near_indexes = indexes_euclid[start_indexes[0], near_indexes.item()].to(torch.int64).to(self._impl.device)
+                                    near_indexes = torch.LongTensor([indexes_euclid[start_indexes[0], near_indexes.item()].to(torch.int64)]).to(self._impl.device)
                             else:
                                 idx = 0
                                 batch_idx = 0
@@ -1449,9 +1453,9 @@ class CO():
                                 near_distances, near_indexes_inner = torch.topk(near_distances, 1, largest=False, dim=1)
                                 near_indexes = near_indexes.gather(1, near_indexes_inner).squeeze()
                         # 仅在dynamic model足够准确的情况下跳转，否则不动。
-                        start_next_indexes = torch.from_numpy(np.array(start_indexes).astype(np.int64)).to(self._impl.device)
-                        if 'next' in self._experience_type:
-                            near_indexes = torch.where(variances < near_variances, near_indexes, start_next_indexes)
+                        # start_next_indexes = torch.from_numpy(np.array(start_indexes).astype(np.int64)).to(self._impl.device)
+                        # if 'next' in self._experience_type:
+                        #     near_indexes = torch.where(variances < near_variances, near_indexes, start_next_indexes)
                         # near_indexes = [near_index + 1 for near_index in near_indexes]
                     # elif 'siamese' in with_generate:
                     #     near_indexes, _, _ = similar_phi(start_observation, start_action[:, :real_action_size], near_observations, near_actions, self._impl._phi, topk=1)
@@ -1461,25 +1465,27 @@ class CO():
                     start_indexes = []
                     for start_index in near_indexes:
                         if start_index not in terminals_stop:
-                            start_indexes.append(start_index + 1)
+                            start_indexes.append(start_index)
                         else:
                             print(f'start_indexes {start_index} finish')
                     start_indexes_ = list(set(start_indexes))
                     start_indexes = []
                     for start_index in start_indexes_:
-                        if start_index in orl_indexes_all:
-                            new_index = orl_indexes_all.index(start_index)
-                            # orl_ns_all[new_index] += 1
-                            print(f'start_indexes {start_index} finish')
-                            # if self._sample_type != 'none' and export_time > 0:
-                            if export_time > 0:
-                                start_indexes.append(start_index)
-                        else:
-                            orl_indexes_all.append(start_index)
+                        if start_index not in selected_indexes:
+                        #     # new_index = orl_indexes_all.index(start_index)
+                        #     # orl_ns_all[new_index] += 1
+                        #     print(f'start_indexes {start_index} finish')
+                        #     # if self._sample_type != 'none' and export_time > 0:
+                        #     if export_time > 0:
+                        #         start_indexes.append(start_index)
+                        # else:
+                            selected_indexes.append(start_index)
                             # orl_ns_all.append(1)
-                            start_indexes.append(start_index)
+                            if dataset.terminals[start_index] == 0:
+                                start_indexes.append(start_index)
+                    start_indexes = np.array(start_indexes)
                     print(f'start_indexes: {len(start_indexes)}')
-                    print(f'len(orl_indexes_all): {len(orl_indexes_all)}')
+                    print(f'len(selected_indexes): {len(selected_indexes)}')
                     if len(start_indexes) == 0:
                         break
                     start_observations = observations[start_indexes].to(self._impl.device)
@@ -1525,18 +1531,16 @@ class CO():
             #         batch_retrain.device = self._impl.device
             #         batch_retrain = cast(TorchMiniBatch, batch_retrain)
             #         loss = self._retrain_model_update(batch_new, batch_retrain)
-            old_orl_indexes_all = len(orl_indexes_all)
+            # old_orl_indexes_all = len(orl_indexes_all)
         # if self._sample_type == 'retrain_actor':
         #     self._impl._policy.load_state_dict(policy_state_dict)
 
-        random.shuffle(orl_indexes_all)
-        if len(orl_indexes_all) >= max_save_num:
-            orl_indexes_all = orl_indexes_all[:max_save_num]
+        random.shuffle(selected_indexes)
+        if len(selected_indexes) >= max_save_num:
+            selected_indexes = selected_indexes[:max_save_num]
         transitions = []
-        for index in orl_indexes_all:
-            assert dataset.terminals[index] == 0
-            assert dataset.episode_terminals[index] == 0
-            transitions.append(Transition([dataset.observations.shape[1]], dataset.actions.shape[1], dataset.observations[index], dataset.actions[index], dataset.rewards[index], dataset.next_observations[index], 0))
+        for index in selected_indexes:
+            transitions.append(Transition([dataset.observations.shape[1]], dataset.actions.shape[1], dataset.observations[index], dataset.actions[index], dataset.rewards[index], dataset.observations[index + 1], 0))
         # if with_generate == 'generate_model':
         #     return self.generate_new_data_replay(transitions, max_save_num=max_save_num, real_observation_size=real_observation_size, real_action_size=real_action_size)
         # else:

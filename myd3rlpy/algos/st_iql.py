@@ -51,7 +51,7 @@ import gym
 from online.utils import ReplayBuffer
 from online.eval_policy import eval_policy
 
-from myd3rlpy.algos.st import ST
+from myd3rlpy.algos.st import STBase
 from myd3rlpy.algos.torch.state_vae_impl import StateVAEImpl as StateVAEImpl
 from myd3rlpy.models.vaes import VAEFactory, create_vae_factory
 from myd3rlpy.models.encoders import EnsembelDefaultEncoderFactory
@@ -59,7 +59,7 @@ from utils.utils import Struct
 
 
 replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'terminals', 'policy_actions', 'qs', 'phis', 'psis']
-class ST(ST, IQL):
+class ST(STBase, IQL):
     r"""Twin Delayed Deep Deterministic Policy Gradients algorithm.
     TD3 is an improved DDPG-based algorithm.
     Major differences from DDPG are as follows.
@@ -199,9 +199,7 @@ class ST(ST, IQL):
 
         **kwargs: Any
     ):
-        super().__init__(
-            **kwargs,
-        )
+        super(STBase, self).__init__(**kwargs)
         self._critic_replay_type = critic_replay_type
         self._critic_replay_lambda = critic_replay_lambda
         self._actor_replay_type = actor_replay_type
@@ -251,8 +249,7 @@ class ST(ST, IQL):
         self._feature_size = feature_size
 
     def _create_impl(
-        self, observation_shape: Sequence[int], action_size: int
-    ) -> None:
+        self, observation_shape: Sequence[int], action_size: int) -> None:
         impl_dict = {
             'observation_shape':observation_shape,
             'action_size':action_size,
@@ -343,12 +340,16 @@ class ST(ST, IQL):
         return None
 
     def select_replay(self, new_replay_dataset, old_replay_dataset, dataset_id, max_save_num, mix_type='vq_diff'):
-        if mix_type == 'vq_diff':
-            new_replay_dataloader = DataLoader(new_replay_dataset, batch_size = self._batch_size, shuffle=False)
+        if mix_type != 'vq_diff':
+            return super().select_replay(new_replay_dataset, old_replay_dataset, dataset_id, max_save_num, mix_type)
+        elif mix_type == 'vq_diff':
             new_replay_diff_qs = []
-            for replay_observations, replay_actions, _, _, replay_terminals, *_ in new_replay_dataloader:
-                replay_observations = replay_observations.to(self._impl.device)
-                replay_actions = replay_actions.to(self._impl.device)
+            i = 0
+            episodes = new_replay_dataset.episodes
+            for episode in episodes:
+                start_time = time.time()
+                replay_observations = torch.from_numpy(episode.observations).to(self._impl.device)
+                replay_actions = torch.from_numpy(episode.actions).to(self._impl.device)
                 replay_qs = self._impl._q_func(replay_observations, replay_actions)
                 if self._impl_name == 'iql':
                     replay_vs = self._impl._value_func(replay_observations)
@@ -356,40 +357,45 @@ class ST(ST, IQL):
                     replay_vs = []
                     for v_func in self._impl._value_funcs:
                         replay_vs.append(v_func(replay_observations))
-                    replay_vs, _ = torch.min(torch.stack(replay_vs, dim=0), dim=0)
-                new_replay_diff_qs.append(replay_qs - replay_vs)
-            new_replay_diff_qs = torch.cat(new_replay_diff_qs, dim=0)
+                    replay_vs = torch.mean(torch.stack(replay_vs, dim=0), dim=0)
+                else:
+                    raise NotImplementedError
+                new_replay_diff_qs.append((replay_qs - replay_vs).mean())
+            new_replay_diff_qs = torch.stack(new_replay_diff_qs, dim=0)
 
-            old_replay_dataloader = DataLoader(old_replay_dataset, batch_size = self._batch_size, shuffle=False)
-            old_replay_diff_qs = []
-            for replay_observations, replay_actions, _, _, replay_terminals, *_ in old_replay_dataloader:
-                replay_observations = replay_observations.to(self._impl.device)
-                replay_actions = replay_actions.to(self._impl.device)
-                replay_qs = self._impl._q_func(replay_observations, replay_actions)
-                if self._impl_name == 'iql':
-                    replay_vs = self._impl._value_func(replay_observations)
-                elif self._impl_name == 'iqln':
-                    replay_vs = []
-                    for v_func in self._impl._value_funcs:
-                        replay_vs.append(v_func(replay_observations))
-                    replay_vs, _ = torch.min(torch.stack(replay_vs, dim=0), dim=0)
-                old_replay_diff_qs.append(replay_qs - replay_vs)
-            old_replay_diff_qs = torch.cat(old_replay_diff_qs, dim=0)
+            if old_replay_dataset is not None:
+                old_replay_diff_qs = []
+                i = 0
+                episodes = old_replay_dataset.episodes
+                for episode in episodes:
+                    replay_observations = torch.from_numpy(episode.observations).to(self._impl.device)
+                    replay_actions = torch.from_numpy(episode.actions).to(self._impl.device)
+                    replay_qs = self._impl._q_func(replay_observations, replay_actions)
+                    if self._impl_name == 'iql':
+                        replay_vs = self._impl._value_func(replay_observations)
+                    elif self._impl_name == 'iqln':
+                        replay_vs = []
+                        for v_func in self._impl._value_funcs:
+                            replay_vs.append(v_func(replay_observations))
+                        replay_vs = torch.mean(torch.stack(replay_vs, dim=0), dim=0)
+                    else:
+                        raise NotImplementedError
+                    old_replay_diff_qs.append((replay_qs - replay_vs).mean())
+                old_replay_diff_qs = torch.stack(old_replay_diff_qs, dim=0)
 
-            replay_diff_qs = torch.cat([new_replay_diff_qs, old_replay_diff_qs]).detach().to(torch.float32).to('cpu').squeeze()
-            _, indices = torch.sort(replay_diff_qs, descending=True)
-            indices = indices[:max_save_num]
-            indices_new = indices[indices < len(new_replay_dataset)]
-            indices_old = indices[indices >= len(new_replay_dataset)] - len(new_replay_dataset)
-            # print(str_)
-            replay_observations = torch.cat([new_replay_dataset.tensors[0][indices_new], old_replay_dataset.tensors[0][indices_old]], dim=0)
-            replay_actions = torch.cat([new_replay_dataset.tensors[1][indices_new], old_replay_dataset.tensors[1][indices_old]], dim=0)
-            replay_rewards = torch.cat([new_replay_dataset.tensors[2][indices_new], old_replay_dataset.tensors[2][indices_old]], dim=0)
-            replay_next_observations = torch.cat([new_replay_dataset.tensors[3][indices_new], old_replay_dataset.tensors[3][indices_old]], dim=0)
-            replay_terminals = torch.cat([new_replay_dataset.tensors[4][indices_new], old_replay_dataset.tensors[4][indices_old]], dim=0)
-            replay_policy_actions = torch.cat([new_replay_dataset.tensors[5][indices_new], old_replay_dataset.tensors[5][indices_old]], dim=0)
-            replay_qs = torch.cat([new_replay_dataset.tensors[6][indices_new], old_replay_dataset.tensors[6][indices_old]], dim=0)
-            replay_dataset = torch.utils.data.TensorDataset(replay_observations, replay_actions, replay_rewards, replay_next_observations, replay_terminals, replay_policy_actions, replay_qs)
-        elif mix_type == 'random':
-            return super(new_replay_dataset, old_replay_dataset, dataset_id, max_save_num, mix_type)
+                replay_diff_qs = torch.cat([new_replay_diff_qs, old_replay_diff_qs])
+                _, indices = torch.sort(replay_diff_qs, descending=True)
+                indices = indices[:max_save_num]
+                indices_new = indices[indices < len(new_replay_dataset)]
+                indices_old = indices[indices >= len(new_replay_dataset)] - len(new_replay_dataset)
+            else:
+                replay_diff_qs = new_replay_diff_qs
+                _, indices = torch.sort(replay_diff_qs, descending=True)
+                indices_new = indices[:max_save_num]
+                indices_old = None
+        else:
+            raise NotImplementedError
+        if indices_old is not None:
+            indices_old = indices_old.detach().cpu().numpy()
+        replay_dataset = self._generate_new_replay_dataset(new_replay_dataset, old_replay_dataset, indices_new.detach().cpu().numpy(), indices_old)
         return replay_dataset
