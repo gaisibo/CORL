@@ -1174,9 +1174,13 @@ class STBase():
             for episode in new_replay_dataset.episodes:
                 replay_observations = torch.from_numpy(episode.observations).to(self._impl.device)
                 replay_actions = torch.from_numpy(episode.actions).to(self._impl.device)
-                replay_qs = self._impl._q_func(replay_observations, replay_actions).detach().to(torch.float32).to('cpu')
-                replay_learned_qs = self._impl._q_func(replay_observations, self._impl._policy(replay_observations)).detach().to(torch.float32).to('cpu')
-                new_replay_diff_qs.append((replay_qs - replay_learned_qs).mean())
+                temp_dataloader = DataLoader(TensorDataset(replay_observations, replay_actions), batch_size=64, shuffle=False)
+                replay_qs = []
+                replay_learned_qs = []
+                for replay_observations_batch, replay_actions_batch in temp_dataloader:
+                    replay_qs_learned_qs.append(self._impl._q_func(replay_observations_batch, replay_actions_batch) - self._impl._q_func(replay_observations_batch, self._impl._policy(replay_observations_batch)))
+                replay_qs_learned_qs = torch.cat(replay_qs, dim=0).detach().to('cpu')
+                new_replay_diff_qs.append(replay_qs_learned_qs.mean())
             new_replay_diff_qs = torch.stack(new_replay_diff_qs, dim=0)
 
             if old_replay_dataset is not None:
@@ -1185,9 +1189,12 @@ class STBase():
                 for episode in old_replay_dataset.episodes:
                     replay_observations = torch.from_numpy(episode.observations).to(self._impl.device)
                     replay_actions = torch.from_numpy(episode.actions).to(self._impl.device)
-                    replay_qs = self._impl._q_func(replay_observations, replay_actions).detach().to(torch.float32).to('cpu')
-                    replay_learned_qs = self._impl._q_func(replay_observations, self._impl._policy(replay_observations)).detach().to(torch.float32).to('cpu')
-                    old_replay_diff_qs.append((replay_qs - replay_learned_qs).mean())
+                    replay_qs = []
+                    replay_learned_qs = []
+                    for replay_observations_batch, replay_actions_batch in temp_dataloader:
+                        replay_qs_learned_qs.append(self._impl._q_func(replay_observations_batch, replay_actions_batch) - self._impl._q_func(replay_observations_batch, self._impl._policy(replay_observations_batch)))
+                    replay_qs_learned_qs = torch.cat(replay_qs_learned_qs, dim=0).detach().to(torch.float32).to('cpu')
+                    old_replay_diff_qs.append(replay_qs_learned_qs.mean())
                 old_replay_diff_qs = torch.stack(old_replay_diff_qs, dim=0)
 
                 replay_diff_qs = torch.cat([new_replay_diff_qs, old_replay_diff_qs])

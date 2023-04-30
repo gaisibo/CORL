@@ -116,7 +116,7 @@ def main(args, device):
         if args.experience_type == 'all':
             for epoch in range(int(args.n_steps // args.n_steps_per_epoch)):
                 for task_id, dataset in datasets.items():
-                    if int(task_id) < args.read_policies:
+                    if int(task_id) < args.read_policy:
                         replay_datasets[task_id] = torch.load(args.model_path + algos_name + '_' + str(task_id) + '_datasets.pt')
                         co._impl.change_task(int(task_id))
                         continue
@@ -135,15 +135,12 @@ def main(args, device):
                         raise NotImplementedError
                     pretrain_state_dict = None
                     # train
-                    if not args.test:
-                        if env is not None:
-                            scorers = dict(zip(['real_env' + str(n) for n in datasets.keys()], [evaluate_on_environment(env, test_id=str(n), mix='mix' in args.dataset and n == '0', add_on=args.add_on, clone_actor=args.clone_actor, task_id_dim=0 if not args.single_head else len(datasets.keys())) for n in learned_tasks]))
-                        elif envs is not None:
-                            scorers = dict(zip(['real_env' + str(n) for n in datasets.keys()], [evaluate_on_environment(envs[str(n)], test_id=str(n), mix='mix' in args.dataset and n == '0', add_on=args.add_on, clone_actor=args.clone_actor) for n in learned_tasks]))
-                        else:
-                            raise NotImplementedError
+                    if env is not None:
+                        scorers = dict(zip(['real_env' + str(n) for n in datasets.keys()], [evaluate_on_environment(env, test_id=str(n), mix='mix' in args.dataset and n == '0', add_on=args.add_on, clone_actor=args.clone_actor, task_id_dim=0 if not args.single_head else len(datasets.keys())) for n in learned_tasks]))
+                    elif envs is not None:
+                        scorers = dict(zip(['real_env' + str(n) for n in datasets.keys()], [evaluate_on_environment(envs[str(n)], test_id=str(n), mix='mix' in args.dataset and n == '0', add_on=args.add_on, clone_actor=args.clone_actor) for n in learned_tasks]))
                     else:
-                        scorers = None
+                        raise NotImplementedError
                     co.fit(
                         task_id,
                         dataset,
@@ -158,7 +155,7 @@ def main(args, device):
                         n_dynamic_steps_per_epoch=args.n_dynamic_steps_per_epoch,
                         dynamic_state_dict=dynamic_state_dict,
                         pretrain_state_dict=pretrain_state_dict,
-                        pretrain_task_id=args.read_policies,
+                        pretrain_task_id=args.read_policy,
                         experiment_name=experiment_name + algos_name,
                         scorers = scorers,
                         test=args.test,
@@ -169,7 +166,7 @@ def main(args, device):
         elif args.experience_type == 'single':
             for task_id, dataset in datasets.items():
                 co._impl = None
-                if int(task_id) < args.read_policies:
+                if int(task_id) < args.read_policy:
                     replay_datasets[task_id] = torch.load(args.model_path + algos_name + '_' + str(task_id) + '_datasets.pt')
                     co._impl.change_task(int(task_id))
                     continue
@@ -188,15 +185,12 @@ def main(args, device):
                     raise NotImplementedError
                 pretrain_state_dict = None
                 # train
-                if not args.test:
-                    if env is not None:
-                        scorers = dict(zip(['real_env' + str(n) for n in datasets.keys()], [evaluate_on_environment(env, test_id=str(n), mix='mix' in args.dataset and n == '0', add_on=args.add_on, clone_actor=args.clone_actor, task_id_dim=0 if not args.single_head else len(datasets.keys())) for n in learned_tasks]))
-                    elif envs is not None:
-                        scorers = dict(zip(['real_env' + str(n) for n in datasets.keys()], [evaluate_on_environment(envs[str(n)], test_id=str(n), mix='mix' in args.dataset and n == '0', add_on=args.add_on, clone_actor=args.clone_actor) for n in learned_tasks]))
-                    else:
-                        raise NotImplementedError
+                if env is not None:
+                    scorers = dict(zip(['real_env' + str(n) for n in datasets.keys()], [evaluate_on_environment(env, test_id=str(n), mix='mix' in args.dataset and n == '0', add_on=args.add_on, clone_actor=args.clone_actor, task_id_dim=0 if not args.single_head else len(datasets.keys())) for n in learned_tasks]))
+                elif envs is not None:
+                    scorers = dict(zip(['real_env' + str(n) for n in datasets.keys()], [evaluate_on_environment(envs[str(n)], test_id=str(n), mix='mix' in args.dataset and n == '0', add_on=args.add_on, clone_actor=args.clone_actor) for n in learned_tasks]))
                 else:
-                    scorers = None
+                    raise NotImplementedError
                 co.fit(
                     task_id,
                     dataset,
@@ -211,7 +205,7 @@ def main(args, device):
                     n_dynamic_steps_per_epoch=args.n_dynamic_steps_per_epoch,
                     dynamic_state_dict=dynamic_state_dict,
                     pretrain_state_dict=pretrain_state_dict,
-                    pretrain_task_id=args.read_policies,
+                    pretrain_task_id=args.read_policy,
                     experiment_name=experiment_name + algos_name,
                     scorers = scorers,
                     test=args.test,
@@ -219,13 +213,15 @@ def main(args, device):
                 print(f'Training task {task_id} time: {time.perf_counter() - start_time}')
                 co.save_model(args.model_path + algos_name + '_' + str(task_id) + '.pt')
         else:
+            print(f'datasets.items()')
             for task_id, dataset in datasets.items():
+                # train
                 max_transition_len = max(list([len(episode.transitions) for episode in dataset.episodes]))
-                if int(task_id) < args.read_policies:
+                learned_tasks.append(task_id)
+                if int(task_id) < args.read_policy:
                     replay_datasets[task_id] = torch.load(args.model_path + algos_name + '_' + str(task_id) + '_datasets.pt')
                     co._impl.change_task(int(task_id))
                     continue
-                learned_tasks.append(task_id)
                 task_id = str(task_id)
                 start_time = time.perf_counter()
                 print(f'Start Training {task_id}')
@@ -238,13 +234,14 @@ def main(args, device):
                     print(e)
                     dynamic_state_dict = None
                     raise NotImplementedError
-                if int(task_id) == args.read_policies:
-                    pretrain_path = args.model_path + args.algo + '_' + args.dataset + '_' + str(task_id) + '.pt'
-                    try:
-                        pretrain_state_dict = torch.load(pretrain_path, map_location=device)
-                    except BaseException as e:
-                        print(f'Don\'t have pretrain_state_dict[{task_id}]')
-                        raise e
+                if env is not None:
+                    scorers = dict(zip(['real_env' + str(n) for n in datasets.keys()], [evaluate_on_environment(env, test_id=str(n), mix='mix' in args.dataset and n == '0', add_on=args.add_on, clone_actor=args.clone_actor, task_id_dim=0 if not args.single_head else len(datasets.keys())) for n in learned_tasks]))
+                elif envs is not None:
+                    scorers = dict(zip(['real_env' + str(n) for n in datasets.keys()], [evaluate_on_environment(envs[str(n)], test_id=str(n), mix='mix' in args.dataset and n == '0', add_on=args.add_on, clone_actor=args.clone_actor) for n in learned_tasks]))
+                else:
+                    raise NotImplementedError
+                if int(task_id) == args.read_policy:
+                    pretrain_path = 'offline_pretrained_models/' + experiment_name + args.dataset + '_' + str(task_id) + '.pt'
                     if args.replay_type not in ['fix', 'ewc', 'si', 'rwalk']:
                         for past_task_id in range(int(task_id)):
                             try:
@@ -252,63 +249,53 @@ def main(args, device):
                             except BaseException as e:
                                 print(f'Don\' have replay_datasets[{past_task_id}]')
                                 raise e
+                    co.build_with_dataset(dataset, real_action_size, real_observation_size, task_id)
+                    co.load_model(pretrain_path)
                 else:
-                    pretrain_state_dict = None
-
-                # train
-                if not args.test:
-                    if env is not None:
-                        scorers = dict(zip(['real_env' + str(n) for n in datasets.keys()], [evaluate_on_environment(env, test_id=str(n), mix='mix' in args.dataset and n == '0', add_on=args.add_on, clone_actor=args.clone_actor, task_id_dim=0 if not args.single_head else len(datasets.keys())) for n in learned_tasks]))
-                    elif envs is not None:
-                        scorers = dict(zip(['real_env' + str(n) for n in datasets.keys()], [evaluate_on_environment(envs[str(n)], test_id=str(n), mix='mix' in args.dataset and n == '0', add_on=args.add_on, clone_actor=args.clone_actor) for n in learned_tasks]))
-                    else:
-                        raise NotImplementedError
-                else:
-                    scorers = None
-                co.fit(
-                    task_id,
-                    dataset,
-                    replay_datasets,
-                    real_action_size = real_action_size,
-                    real_observation_size = real_observation_size,
-                    eval_episodes=datasets,
-                    # n_epochs=args.n_epochs if not args.test else 1,
-                    n_steps=args.n_steps,
-                    n_steps_per_epoch=args.n_steps_per_epoch,
-                    n_dynamic_steps=args.n_dynamic_steps,
-                    n_dynamic_steps_per_epoch=args.n_dynamic_steps_per_epoch,
-                    dynamic_state_dict=dynamic_state_dict,
-                    pretrain_state_dict=pretrain_state_dict,
-                    pretrain_task_id=args.read_policies,
-                    experiment_name=experiment_name + algos_name,
-                    scorers = scorers,
-                    test=args.test,
-                )
-                print(f'Training task {task_id} time: {time.perf_counter() - start_time}')
-                co.save_model(args.model_path + algos_name + '_' + str(task_id) + '.pt')
+                    print("Start Fitting")
+                    co.fit(
+                        task_id,
+                        dataset,
+                        replay_datasets,
+                        real_action_size = real_action_size,
+                        real_observation_size = real_observation_size,
+                        eval_episodes=datasets,
+                        # n_epochs=args.n_epochs if not args.test else 1,
+                        n_steps=args.n_steps,
+                        n_steps_per_epoch=args.n_steps_per_epoch,
+                        n_dynamic_steps=args.n_dynamic_steps,
+                        n_dynamic_steps_per_epoch=args.n_dynamic_steps_per_epoch,
+                        dynamic_state_dict=dynamic_state_dict,
+                        # pretrain_state_dict=pretrain_state_dict,
+                        # pretrain_task_id=args.read_policy,
+                        experiment_name=experiment_name + algos_name,
+                        scorers = scorers,
+                        test=args.test,
+                    )
+                    print(f'Training task {task_id} time: {time.perf_counter() - start_time}')
+                    co.save_model(args.model_path + algos_name + '_' + str(task_id) + '.pt')
                 max_transition_len = 1000
                 if env is not None:
                     co.generate_replay(task_id, datasets, env, args.replay_type, args.experience_type, replay_datasets, save_datasets, args.max_save_num, max_transition_len, real_action_size, real_observation_size, indexes_euclids[task_id], distances_euclids[task_id], args.d_threshold, args.test, args.model_path, algos_name, learned_tasks)
                 else:
                     co.generate_replay(task_id, datasets, envs[task_id], args.replay_type, args.experience_type, replay_datasets, save_datasets, args.max_save_num, max_transition_len, real_action_size, real_observation_size, indexes_euclids[task_id], distances_euclids[task_id], args.d_threshold, args.test, args.model_path, algos_name, learned_tasks)
-                # eval
-                if args.replay_type not in ['fix', 'ewc', 'si', 'rwalk']:
-                    if env is not None:
-                        scorers = dict(zip(['dis_env' + str(n) for n in datasets.keys()], [dis_on_environment(env, replay_dataset = replay_datasets[n], test_id=str(n), mix='mix' in args.dataset and n == '0', clone_actor=args.clone_actor, task_id_dim=0 if not args.single_head else len(datasets.keys())) for n in learned_tasks]))
-                    elif envs is not None:
-                        scorers = dict(zip(['dis_env' + str(n) for n in datasets.keys()], [dis_on_environment(envs[str(n)], replay_dataset = replay_datasets[n], test_id=str(n), mix='mix' in args.dataset and n == '0', clone_actor=args.clone_actor) for n in learned_tasks]))
-                    else:
-                        raise NotImplementedError
-                # setup logger
-                logger = co._prepare_logger(True, experiment_name, True, "d3rply_logs", True, None,)
-                eval_episodes = datasets
-                if scorers and eval_episodes:
-                    co._evaluate(eval_episodes, scorers, logger)
+                # # eval
+                # if args.replay_type not in ['fix', 'ewc', 'si', 'rwalk']:
+                #     if env is not None:
+                #         scorers = dict(zip(['dis_env' + str(n) for n in datasets.keys()], [dis_on_environment(env, replay_dataset = replay_datasets[n], test_id=str(n), mix='mix' in args.dataset and n == '0', clone_actor=args.clone_actor, task_id_dim=0 if not args.single_head else len(datasets.keys())) for n in learned_tasks]))
+                #     elif envs is not None:
+                #         scorers = dict(zip(['dis_env' + str(n) for n in datasets.keys()], [dis_on_environment(envs[str(n)], replay_dataset = replay_datasets[n], test_id=str(n), mix='mix' in args.dataset and n == '0', clone_actor=args.clone_actor) for n in learned_tasks]))
+                #     else:
+                #         raise NotImplementedError
+                # # setup logger
+                # logger = co._prepare_logger(True, experiment_name, True, "d3rply_logs", True, None,)
+                # eval_episodes = datasets
+                # if scorers and eval_episodes:
+                #     co._evaluate(eval_episodes, scorers, logger)
 
-                logger.commit(int(task_id), 0)
-                if args.test and int(task_id) >= 2:
-                    break
-                print(f"replay_datasets: {replay_datasets}")
+                # logger.commit(int(task_id), 0)
+                # if args.test and int(task_id) >= 2:
+                #     break
     else:
         replay_datasets = dict()
         learned_tasks = []
@@ -344,13 +331,10 @@ def main(args, device):
             logger = co._prepare_logger(True, experiment_name, True, "d3rply_logs", True, None,)
 
             # eval
-            if not args.test:
-                if env is not None:
-                    scorers = dict(zip(['real_env' + str(n) for n in datasets.keys()], [evaluate_on_environment(env, test_id=str(n), mix='mix' in args.dataset and n == '0', add_on=args.add_on, clone_actor=args.clone_actor, task_id_dim=0 if not args.single_head else len(datasets.keys())) for n in learned_tasks]))
-                elif envs is not None:
-                    scorers = dict(zip(['real_env' + str(n) for n in datasets.keys()], [evaluate_on_environment(envs[str(n)], test_id=str(n), mix='mix' in args.dataset and n == '0', add_on=args.add_on, clone_actor=args.clone_actor) for n in learned_tasks]))
-                else:
-                    raise NotImplementedError
+            if env is not None:
+                scorers = dict(zip(['real_env' + str(n) for n in datasets.keys()], [evaluate_on_environment(env, test_id=str(n), mix='mix' in args.dataset and n == '0', add_on=args.add_on, clone_actor=args.clone_actor, task_id_dim=0 if not args.single_head else len(datasets.keys())) for n in learned_tasks]))
+            elif envs is not None:
+                scorers = dict(zip(['real_env' + str(n) for n in datasets.keys()], [evaluate_on_environment(envs[str(n)], test_id=str(n), mix='mix' in args.dataset and n == '0', add_on=args.add_on, clone_actor=args.clone_actor) for n in learned_tasks]))
             else:
                 raise NotImplementedError
             # setup logger
@@ -359,13 +343,10 @@ def main(args, device):
                 co._evaluate(eval_episodes, scorers, logger)
 
             # eval
-            if not args.test:
-                if env is not None:
-                    scorers = dict(zip(['dis_env' + str(n) for n in datasets.keys()], [dis_on_environment(env, replay_dataset = replay_datasets[n], test_id=str(n), mix='mix' in args.dataset and n == '0', clone_actor=args.clone_actor, task_id_dim=0 if not args.single_head else len(datasets.keys())) for n in learned_tasks]))
-                elif envs is not None:
-                    scorers = dict(zip(['dis_env' + str(n) for n in datasets.keys()], [dis_on_environment(envs[str(n)], replay_dataset = replay_datasets[n], test_id=str(n), mix='mix' in args.dataset and n == '0', clone_actor=args.clone_actor) for n in learned_tasks]))
-                else:
-                    raise NotImplementedError
+            if env is not None:
+                scorers = dict(zip(['dis_env' + str(n) for n in datasets.keys()], [dis_on_environment(env, replay_dataset = replay_datasets[n], test_id=str(n), mix='mix' in args.dataset and n == '0', clone_actor=args.clone_actor, task_id_dim=0 if not args.single_head else len(datasets.keys())) for n in learned_tasks]))
+            elif envs is not None:
+                scorers = dict(zip(['dis_env' + str(n) for n in datasets.keys()], [dis_on_environment(envs[str(n)], replay_dataset = replay_datasets[n], test_id=str(n), mix='mix' in args.dataset and n == '0', clone_actor=args.clone_actor) for n in learned_tasks]))
             else:
                 raise NotImplementedError
             # setup logger
@@ -396,7 +377,7 @@ if __name__ == '__main__':
     parser.add_argument('--algo', default='td3_plus_bc', type=str, choices=['combo', 'td3_plus_bc', 'cql'])
     parser.add_argument('--eval', action='store_true')
     parser.add_argument('--test', action='store_true')
-    parser.add_argument("--n_steps", default=500000, type=int)
+    parser.add_argument("--n_steps", default=150000, type=int)
     parser.add_argument("--n_steps_per_epoch", default=5000, type=int)
     parser.add_argument("--n_dynamic_steps", default=500000, type=int)
     parser.add_argument("--n_dynamic_steps_per_epoch", default=5000, type=int)
@@ -428,7 +409,7 @@ if __name__ == '__main__':
     parser.add_argument('--use_cpu', action='store_true')
     parser.add_argument('--gpu', type=str, default='0')
     parser.add_argument('--seed', type=int, default=0)
-    parser.add_argument('--read_policies', type=int, default=0)
+    parser.add_argument('--read_policy', type=int, default=0)
     args = parser.parse_args()
     args.env_path = f"{args.dataset}/env_{args.dataset}_train_tasknum.pkl"
     args.inner_path = f"sac_{args.dataset}_num/{args.quality}.hdf5"

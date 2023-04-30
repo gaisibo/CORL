@@ -45,6 +45,7 @@ class COImpl():
         hard_sync(self.q_function, impl.q_function)
 
     def build(self, task_id):
+        self._impl_id = task_id
         if self._use_phi:
             self._phi = create_phi(self._observation_shape, self._action_size, self._critic_encoder_factory)
             self._psi = create_psi(self._observation_shape, self._actor_encoder_factory)
@@ -544,18 +545,18 @@ class COImpl():
                     replay_loss_ = self.compute_actor_loss(replay_batch) / len(replay_batches)
                     replay_loss = replay_loss + replay_loss_
                     replay_losses.append(replay_loss_)
-                # if self._replay_type in ['orl', 'ewc', 'rwalk', 'si'] or (not self._clone_actor and self._replay_type == 'bc'):
-                #     time_replay_loss = self._replay_alpha * replay_loss / len(replay_batches)
-                #     self._actor_optim.zero_grad()
-                #     time_replay_loss.backward()
-                #     self._actor_optim.step()
-                #     replay_loss = replay_loss.cpu().detach().numpy()
+                if self._replay_type in ['orl', 'ewc', 'rwalk', 'si'] or (not self._clone_actor and self._replay_type == 'bc'):
+                    time_replay_loss = self._replay_alpha * replay_loss / len(replay_batches)
+                    self._actor_optim.zero_grad()
+                    time_replay_loss.backward()
+                    self._actor_optim.step()
+                    replay_loss = replay_loss
                 elif self._clone_actor and self._replay_type == 'bc':
                     time_replay_loss = self._replay_alpha * replay_loss / len(replay_batches)
                     self._clone_actor_optim.zero_grad()
                     time_replay_loss.backward()
                     self._clone_actor_optim.step()
-                    replay_loss = replay_loss.cpu().detach().numpy()
+                    replay_loss = replay_loss
 
         self.change_task(save_id)
         self._actor_optim.zero_grad()

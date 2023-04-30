@@ -164,44 +164,44 @@ class CO():
             self._impl.rebuild_critic()
             LOG.warning("Skip building models since they're already built.")
 
-    def load_state_dict(self, pretrain_state_dict, pretrain_task_id):
-        pretrain_task_id = int(pretrain_task_id)
-        assert self._impl is not None
-        for key, value in pretrain_state_dict.items():
-            if 'actor' in key or 'critic' in key or 'policy' in key or 'q_func' in key:
-                try:
-                    obj = getattr(self._impl, key)
-                    if isinstance(obj, (torch.nn.Module)):
-                        obj = getattr(self._impl, key)
-                        for name, input_param in pretrain_state_dict[key].items():
-                            try:
-                                param = obj.state_dict()[name]
-                            except:
-                                continue
-                            if len(input_param.shape) == 2:
-                                if input_param.shape[0] == param.shape[0] and input_param.shape[1] != param.shape[1]:
-                                    input_param_append = torch.zeros(param.shape[0], param.shape[1] - input_param.shape[1]).to(param.dtype).to(param.device)
-                                    torch.nn.init.kaiming_normal_(input_param_append)
-                                    pretrain_state_dict[key][name] = torch.cat([input_param, input_param_append], dim=1)
-                                if input_param.shape[0] != param.shape[0] and input_param.shape[1] == param.shape[1]:
-                                    input_param_append = torch.zeros(param.shape[0] - input_param.shape[0], param.shape[1]).to(param.dtype).to(param.device)
-                                    torch.nn.init.kaiming_normal_(input_param_append)
-                                    pretrain_state_dict[key][name] = torch.cat([input_param, input_param_append], dim=0)
-                            elif len(input_param.shape) == 1:
-                                if input_param.shape[0] != param.shape[0]:
-                                    input_param_append = torch.zeros(param.shape[0] - input_param.shape[0]).to(param.dtype).to(param.device)
-                                    pretrain_state_dict[key][name] = torch.cat([input_param, input_param_append], dim=0)
+    # def load_state_dict(self, pretrain_state_dict, pretrain_task_id):
+    #     pretrain_task_id = int(pretrain_task_id)
+    #     assert self._impl is not None
+    #     for key, value in pretrain_state_dict.items():
+    #         if 'actor' in key or 'critic' in key or 'policy' in key or 'q_func' in key:
+    #             try:
+    #                 obj = getattr(self._impl, key)
+    #                 if isinstance(obj, (torch.nn.Module)):
+    #                     obj = getattr(self._impl, key)
+    #                     for name, input_param in pretrain_state_dict[key].items():
+    #                         try:
+    #                             param = obj.state_dict()[name]
+    #                         except:
+    #                             continue
+    #                         if len(input_param.shape) == 2:
+    #                             if input_param.shape[0] == param.shape[0] and input_param.shape[1] != param.shape[1]:
+    #                                 input_param_append = torch.zeros(param.shape[0], param.shape[1] - input_param.shape[1]).to(param.dtype).to(param.device)
+    #                                 torch.nn.init.kaiming_normal_(input_param_append)
+    #                                 pretrain_state_dict[key][name] = torch.cat([input_param, input_param_append], dim=1)
+    #                             if input_param.shape[0] != param.shape[0] and input_param.shape[1] == param.shape[1]:
+    #                                 input_param_append = torch.zeros(param.shape[0] - input_param.shape[0], param.shape[1]).to(param.dtype).to(param.device)
+    #                                 torch.nn.init.kaiming_normal_(input_param_append)
+    #                                 pretrain_state_dict[key][name] = torch.cat([input_param, input_param_append], dim=0)
+    #                         elif len(input_param.shape) == 1:
+    #                             if input_param.shape[0] != param.shape[0]:
+    #                                 input_param_append = torch.zeros(param.shape[0] - input_param.shape[0]).to(param.dtype).to(param.device)
+    #                                 pretrain_state_dict[key][name] = torch.cat([input_param, input_param_append], dim=0)
 
-                        obj.load_state_dict(pretrain_state_dict[key])
-                except:
-                    key = str(key)
-                    obj = getattr(self._impl, key)
-                    if isinstance(obj, (torch.nn.Module)):
-                        obj = getattr(self._impl, key)
-                        obj.load_state_dict(pretrain_state_dict[key])
-        assert pretrain_task_id is not None
-        for preid in range(pretrain_task_id + 1):
-            self._impl.change_task(str(preid))
+    #                     obj.load_state_dict(pretrain_state_dict[key])
+    #             except:
+    #                 key = str(key)
+    #                 obj = getattr(self._impl, key)
+    #                 if isinstance(obj, (torch.nn.Module)):
+    #                     obj = getattr(self._impl, key)
+    #                     obj.load_state_dict(pretrain_state_dict[key])
+    #     assert pretrain_task_id is not None
+    #     for preid in range(pretrain_task_id + 1):
+    #         self._impl.change_task(str(preid))
 
     def fit(
         self,
@@ -217,8 +217,8 @@ class CO():
         n_dynamic_steps: Optional[int] = None,
         n_dynamic_steps_per_epoch: int = 10000,
         dynamic_state_dict: Optional[Dict[str, Any]] = None,
-        pretrain_state_dict: Optional[Dict[str, Any]] = None,
-        pretrain_task_id: Optional[int] = None,
+        # pretrain_state_dict: Optional[Dict[str, Any]] = None,
+        # pretrain_task_id: Optional[int] = None,
         save_metrics: bool = True,
         experiment_name: Optional[str] = None,
         with_timestamp: bool = True,
@@ -288,8 +288,8 @@ class CO():
                 n_dynamic_steps,
                 n_dynamic_steps_per_epoch,
                 dynamic_state_dict,
-                pretrain_state_dict,
-                pretrain_task_id,
+                # pretrain_state_dict,
+                # pretrain_task_id,
                 save_metrics,
                 experiment_name,
                 with_timestamp,
@@ -329,8 +329,8 @@ class CO():
         n_dynamic_steps: Optional[int] = 500000,
         n_dynamic_steps_per_epoch: int = 5000,
         dynamic_state_dict: Optional[Dict[str, Any]] = None,
-        pretrain_state_dict: Optional[Dict[str, Any]] = None,
-        pretrain_task_id: Optional[int] = None,
+        # pretrain_state_dict: Optional[Dict[str, Any]] = None,
+        # pretrain_task_id: Optional[int] = None,
         save_metrics: bool = True,
         experiment_name: Optional[str] = None,
         with_timestamp: bool = True,
@@ -400,7 +400,7 @@ class CO():
             LOG.debug("Models have been built.")
         else:
             self._impl.change_task(task_id)
-            # self._impl.rebuild_critic()
+            self._impl.rebuild_critic()
             LOG.warning("Skip building models since they're already built.")
 
         # setup logger
@@ -571,44 +571,46 @@ class CO():
                                 obj = getattr(self._impl, key)
                                 obj.load_state_dict(dynamic_state_dict[key])
 
-            if pretrain_state_dict is not None:
-                for key, value in pretrain_state_dict.items():
-                    if 'actor' in key or 'critic' in key or 'policy' in key or 'q_func' in key:
-                        try:
-                            obj = getattr(self._impl, key)
-                            if isinstance(obj, (torch.nn.Module)):
-                                obj = getattr(self._impl, key)
-                                for name, input_param in pretrain_state_dict[key].items():
-                                    try:
-                                        param = obj.state_dict()[name]
-                                    except:
-                                        continue
-                                    if len(input_param.shape) == 2:
-                                        if input_param.shape[0] == param.shape[0] and input_param.shape[1] != param.shape[1]:
-                                            input_param_append = torch.zeros(param.shape[0], param.shape[1] - input_param.shape[1]).to(param.dtype).to(param.device)
-                                            torch.nn.init.kaiming_normal_(input_param_append)
-                                            pretrain_state_dict[key][name] = torch.cat([input_param, input_param_append], dim=1)
-                                        if input_param.shape[0] != param.shape[0] and input_param.shape[1] == param.shape[1]:
-                                            input_param_append = torch.zeros(param.shape[0] - input_param.shape[0], param.shape[1]).to(param.dtype).to(param.device)
-                                            torch.nn.init.kaiming_normal_(input_param_append)
-                                            pretrain_state_dict[key][name] = torch.cat([input_param, input_param_append], dim=0)
-                                    elif len(input_param.shape) == 1:
-                                        if input_param.shape[0] != param.shape[0]:
-                                            input_param_append = torch.zeros(param.shape[0] - input_param.shape[0]).to(param.dtype).to(param.device)
-                                            pretrain_state_dict[key][name] = torch.cat([input_param, input_param_append], dim=0)
+            # if pretrain_state_dict is not None:
+            #     for key, value in pretrain_state_dict.items():
+            #         if 'actor' in key or 'critic' in key or 'policy' in key or 'q_func' in key:
+            #             try:
+            #                 obj = getattr(self._impl, key)
+            #                 if isinstance(obj, (torch.nn.Module)):
+            #                     obj = getattr(self._impl, key)
+            #                     for name, input_param in pretrain_state_dict[key].items():
+            #                         try:
+            #                             param = obj.state_dict()[name]
+            #                         except:
+            #                             continue
+            #                         if len(input_param.shape) == 2:
+            #                             if input_param.shape[0] == param.shape[0] and input_param.shape[1] != param.shape[1]:
+            #                                 input_param_append = torch.zeros(param.shape[0], param.shape[1] - input_param.shape[1]).to(param.dtype).to(param.device)
+            #                                 torch.nn.init.kaiming_normal_(input_param_append)
+            #                                 pretrain_state_dict[key][name] = torch.cat([input_param, input_param_append], dim=1)
+            #                             if input_param.shape[0] != param.shape[0] and input_param.shape[1] == param.shape[1]:
+            #                                 input_param_append = torch.zeros(param.shape[0] - input_param.shape[0], param.shape[1]).to(param.dtype).to(param.device)
+            #                                 torch.nn.init.kaiming_normal_(input_param_append)
+            #                                 pretrain_state_dict[key][name] = torch.cat([input_param, input_param_append], dim=0)
+            #                         elif len(input_param.shape) == 1:
+            #                             if input_param.shape[0] != param.shape[0]:
+            #                                 input_param_append = torch.zeros(param.shape[0] - input_param.shape[0]).to(param.dtype).to(param.device)
+            #                                 pretrain_state_dict[key][name] = torch.cat([input_param, input_param_append], dim=0)
 
-                                obj.load_state_dict(pretrain_state_dict[key])
-                        except:
-                            key = str(key)
-                            obj = getattr(self._impl, key)
-                            if isinstance(obj, (torch.nn.Module)):
-                                obj = getattr(self._impl, key)
-                                obj.load_state_dict(pretrain_state_dict[key])
-                assert pretrain_task_id is not None
-                for preid in range(pretrain_task_id + 1):
-                    self._impl.change_task(str(preid))
-            if pretrain_state_dict is not None:
-                return
+            #                     obj.load_state_dict(pretrain_state_dict[key])
+            #             except:
+            #                 key = str(key)
+            #                 obj = getattr(self._impl, key)
+            #                 if isinstance(obj, (torch.nn.Module)):
+            #                     obj = getattr(self._impl, key)
+            #                     obj.load_state_dict(pretrain_state_dict[key])
+            #     assert pretrain_task_id is not None
+            #     for preid in range(pretrain_task_id + 1):
+            #         self._impl.change_task(str(preid))
+            # if pretrain_state_dict is not None:
+            #     return
+
+            # self.load_state_dict(pretrain_state_dict, pretrain_task_id)
 
             if n_steps is not None:
                 assert n_steps >= n_steps_per_epoch
@@ -639,7 +641,7 @@ class CO():
             total_step = 0
             print(f'train policy')
             for epoch in range(1, n_epochs + 1):
-                if epoch > 1 and (test or (task_id == '0' and pretrain_state_dict is not None)):
+                if epoch > 1 and test:
                     break
 
                 # dict to add incremental mean losses to epoch
@@ -755,7 +757,7 @@ class CO():
                 total_step = 0
                 print(f'clone policy')
                 for epoch in range(1, n_epochs + 1):
-                    if epoch > 1 and (test or (task_id == '0' and pretrain_state_dict is not None)):
+                    if epoch > 1 and test:
                         break
 
                     # dict to add incremental mean losses to epoch
@@ -1358,24 +1360,24 @@ class CO():
                     # start_actions += noise
 
                     if indexes_euclid is not None:
-                        # if 'next' in self._experience_type:
-                        #     start_indexes = np.array(start_indexes)
-                        #     near_observations = observations[indexes_euclid[start_indexes]].to(self._impl.device)
-                        #     near_actions = actions[indexes_euclid[start_indexes]].to(self._impl.device)
-                        #     near_variances = []
-                        #     near_next_observations_list = []
-                        #     for i in range(near_observations.shape[0]):
-                        #         near_next_observations, _, variances = self._impl._dynamic.predict_with_variance(near_observations[i, :, :real_observation_size], near_actions[i, :, :real_action_size])
-                        #         near_variances.append(torch.mean(variances).detach().cpu().item())
-                        #         mean_near_next_observations = torch.mean(near_next_observations, dim=1).unsqueeze(dim=1).expand(-1, near_next_observations.shape[1], -1)
-                        #         _, diff_mean_near_next_observations_indices = torch.max(torch.mean(near_next_observations - mean_near_next_observations, dim=2), dim=1)
-                        #         near_next_observations = torch.stack([near_next_observations[i][diff_mean_near_next_observations_indices[i]] for i in range(diff_mean_near_next_observations_indices.shape[0])])
-                        #         near_next_observations_list.append(near_next_observations)
-                        #     near_variances = torch.mean(torch.from_numpy(np.array(near_variances)), dim=0).to(self._impl.device)
-                        #     near_next_observations = torch.stack(near_next_observations_list)
-                        # elif 'this' in self._experience_type:
-                        start_indexes = np.array(start_indexes)
-                        near_next_observations = observations[indexes_euclid[start_indexes + 1]].to(self._impl.device)
+                        if 'next' in self._experience_type:
+                            start_indexes = np.array(start_indexes)
+                            near_observations = observations[indexes_euclid[start_indexes]].to(self._impl.device)
+                            near_actions = actions[indexes_euclid[start_indexes]].to(self._impl.device)
+                            near_variances = []
+                            near_next_observations_list = []
+                            for i in range(near_observations.shape[0]):
+                                near_next_observations, _, variances = self._impl._dynamic.predict_with_variance(near_observations[i, :, :real_observation_size], near_actions[i, :, :real_action_size])
+                                near_variances.append(torch.mean(variances).detach().cpu().item())
+                                mean_near_next_observations = torch.mean(near_next_observations, dim=1).unsqueeze(dim=1).expand(-1, near_next_observations.shape[1], -1)
+                                _, diff_mean_near_next_observations_indices = torch.max(torch.mean(near_next_observations - mean_near_next_observations, dim=2), dim=1)
+                                near_next_observations = torch.stack([near_next_observations[i][diff_mean_near_next_observations_indices[i]] for i in range(diff_mean_near_next_observations_indices.shape[0])])
+                                near_next_observations_list.append(near_next_observations)
+                            near_variances = torch.mean(torch.from_numpy(np.array(near_variances)), dim=0).to(self._impl.device)
+                            near_next_observations = torch.stack(near_next_observations_list)
+                        elif 'this' in self._experience_type:
+                            start_indexes = np.array(start_indexes)
+                            near_next_observations = observations[indexes_euclid[start_indexes + 1]].to(self._impl.device)
                         # near_next_observations = next_observations[indexes_euclid[start_indexes]].to(self._impl.device)
 
                     if 'model' in self._experience_type:

@@ -16,6 +16,9 @@ from mygym.envs.halfcheetah_block import HalfCheetahBlockEnv
 import torch
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
+from d4rl.locomotion import maze_env, ant
+from d4rl.locomotion.wrappers import NormalizedBoxEnv
+
 import d3rlpy
 from d3rlpy.ope import FQE
 from d3rlpy.dataset import MDPDataset
@@ -30,6 +33,135 @@ from myd3rlpy.metrics.scorer import evaluate_on_environment_help, single_evaluat
 from dataset.load_d4rl import get_d4rl_local, get_dataset
 from rlkit.torch import pytorch_util as ptu
 from config.single_config import get_st_dict
+
+
+RESET = R = 'r'  # Reset position.
+GOAL = G = 'g'
+
+mazes = {
+    'umaze':
+        [[[[1, 1, 1, 1, 1],
+           [1, R, 0, 0, 1],
+           [1, 1, 1, G, 1],
+           [1, 0, 0, 0, 1],
+           [1, 1, 1, 1, 1]],
+
+          [[1, 1, 1, 1, 1],
+           [1, 0, 0, R, 1],
+           [1, 1, 1, 0, 1],
+           [1, G, 0, 0, 1],
+           [1, 1, 1, 1, 1]]],
+         None,
+        ],
+    'medium':
+	[[[[1, 1, 1, 1, 1, 1, 1, 1],
+           [1, R, 0, 1, 1, 0, 0, 1],
+           [1, 0, 0, 1, 0, 0, 0, 1],
+           [1, 1, 0, 0, 0, 1, 1, 1],
+           [1, 0, 0, 1, G, 0, 0, 1],
+           [1, 0, 1, 0, 0, 1, 0, 1],
+           [1, 0, 0, 0, 1, 0, 0, 1],
+           [1, 1, 1, 1, 1, 1, 1, 1]],
+	  [[1, 1, 1, 1, 1, 1, 1, 1],
+           [1, 0, 0, 1, 1, 0, 0, 1],
+           [1, 0, 0, 1, 0, 0, 0, 1],
+           [1, 1, 0, 0, R, 1, 1, 1],
+           [1, 0, 0, 1, 0, 0, 0, 1],
+           [1, 0, 1, 0, 0, 1, 0, 1],
+           [1, 0, 0, 0, 1, G, 0, 1],
+           [1, 1, 1, 1, 1, 1, 1, 1]]],
+
+	 [[[1, 1, 1, 1, 1, 1, 1, 1],
+           [1, R, 0, 1, 1, 0, 0, 1],
+           [1, 0, 0, 1, 0, 0, 0, 1],
+           [1, 1, G, 0, 0, 1, 1, 1],
+           [1, 0, 0, 1, 0, 0, 0, 1],
+           [1, 0, 1, 0, 0, 1, 0, 1],
+           [1, 0, 0, 0, 1, 0, 0, 1],
+           [1, 1, 1, 1, 1, 1, 1, 1]],
+	  [[1, 1, 1, 1, 1, 1, 1, 1],
+           [1, 0, 0, 1, 1, 0, 0, 1],
+           [1, 0, R, 1, 0, 0, 0, 1],
+           [1, 1, 0, 0, 0, 1, 1, 1],
+           [1, 0, 0, 1, G, 0, 0, 1],
+           [1, 0, 1, 0, 0, 1, 0, 1],
+           [1, 0, 0, 0, 1, 0, 0, 1],
+           [1, 1, 1, 1, 1, 1, 1, 1]],
+	  [[1, 1, 1, 1, 1, 1, 1, 1],
+           [1, 0, 0, 1, 1, 0, 0, 1],
+           [1, 0, 0, 1, 0, 0, 0, 1],
+           [1, 1, 0, 0, R, 1, 1, 1],
+           [1, 0, 0, 1, 0, 0, 0, 1],
+           [1, 0, 1, 0, 0, 1, G, 1],
+           [1, 0, 0, 0, 1, 0, 0, 1],
+           [1, 1, 1, 1, 1, 1, 1, 1]],
+	  [[1, 1, 1, 1, 1, 1, 1, 1],
+           [1, 0, 0, 1, 1, 0, 0, 1],
+           [1, 0, 0, 1, 0, 0, 0, 1],
+           [1, 1, 0, 0, 0, 1, 1, 1],
+           [1, 0, 0, 1, 0, 0, R, 1],
+           [1, 0, 1, 0, 0, 1, 0, 1],
+           [1, 0, 0, 0, 1, G, 0, 1],
+           [1, 1, 1, 1, 1, 1, 1, 1]]],
+        ],
+    'large':
+	[[[[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+	   [1, R, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1],
+	   [1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1],
+	   [1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1],
+	   [1, 0, 1, 1, 1, 1, G, 1, 1, 1, 0, 1],
+	   [1, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1],
+	   [1, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1],
+	   [1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1],
+	   [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]],
+	  [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+	   [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1],
+	   [1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1],
+	   [1, 0, 0, 0, 0, 0, R, 1, 0, 0, 0, 1],
+	   [1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1],
+	   [1, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1],
+	   [1, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1],
+	   [1, 0, 0, 1, 0, 0, 0, 1, 0, G, 0, 1],
+	   [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]]],
+
+	 [[[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+	   [1, R, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1],
+	   [1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1],
+	   [1, 0, 0, G, 0, 0, 0, 1, 0, 0, 0, 1],
+	   [1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1],
+	   [1, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1],
+	   [1, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1],
+	   [1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1],
+	   [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]],
+	  [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+	   [1, 0, 0, 0, 0, 1, G, 0, 0, 0, 0, 1],
+	   [1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1],
+	   [1, 0, R, 0, 0, 0, 0, 1, 0, 0, 0, 1],
+	   [1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1],
+	   [1, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1],
+	   [1, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1],
+	   [1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1],
+	   [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]],
+	  [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+	   [1, 0, 0, 0, 0, 1, 0, R, 0, 0, 0, 1],
+	   [1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1],
+	   [1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1],
+	   [1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1],
+	   [1, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1],
+	   [1, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1],
+	   [1, 0, 0, 1, 0, 0, G, 1, 0, 0, 0, 1],
+	   [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]],
+	  [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+	   [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1],
+	   [1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1],
+	   [1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1],
+	   [1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1],
+	   [1, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1],
+	   [1, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1],
+	   [1, 0, 0, 1, 0, R, 0, 1, 0, G, 0, 1],
+	   [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]]],
+        ]
+    }
 
 
 def read_dict(state_dict, prename):
@@ -102,46 +234,20 @@ def main(args, device):
         learned_datasets = []
         if not args.test:
             pretrain_path_eval = "pretrained_network/" + "ST_iql_" + args.dataset + '_d4rl.pt'
-            if env is not None:
-                # scorers_list = [{'environment': d3rlpy.metrics.evaluate_on_environment(env), 'fune_tuned_environment': single_evaluate_on_environment(env)}]
-                scorers_list = [{'environment': d3rlpy.metrics.evaluate_on_environment(env)}]
-            else:
-                raise NotImplementedError
-        else:
-            scorers_list = []
 
         for dataset_id, (dataset_num, dataset) in enumerate(task_datasets):
-            # if dataset_num != 0:
-            #     root_path = f'../rlkit/data/sac-{args.dataset}/'
-            #     time_dirs = os.listdir(root_path)
-            #     choose_path = None
-            #     scorer = None
-            #     for time_dir in time_dirs:
-            #         time_path = os.path.join(root_path, time_dir)
-            #         file_dirs = os.listdir(time_path)
-            #         if f'itr_{dataset_num}.pkl' in file_dirs:
-            #             choose_path = time_path
-            #             if dataset_num == max_itr_num:
-            #                 pklfile = os.path.join(choose_path, 'params.pkl')
-            #             else:
-            #                 pklfile = os.path.join(choose_path, f'itr_{dataset_num}.pkl')
-            #             pklfile = torch.load(pklfile, map_location=device)
-            #             scorer = {'q_online_diff_scorer': q_online_diff_scorer(pklfile), 'q_offline_diff_scorer': q_offline_diff_scorer, 'q_id_diff_scorer': q_id_diff_scorer(pklfile), 'q_ood_diff_scorer': q_ood_diff_scorer(pklfile), 'policy_dataset_scorer': policy_dataset_scorer, 'policy_online_diff_scorer': policy_online_diff_scorer(pklfile), 'policy_offline_diff_scorer': policy_offline_diff_scorer, 'policy_id_diff_scorer': policy_id_diff_scorer(pklfile), 'policy_ood_diff_scorer': policy_ood_diff_scorer(pklfile)}
-            #             # if dataset_id != 0:
-            #             #     scorer['q_dataset_scorer'] = q_dataset_scorer
-            #             #     scorer['q_play_scorer'] = q_play_scorer
-            #             #     scorer['policy_replay_scorer'] = policy_replay_scorer
-            #         else:
-            #             scorer = None
-            #     if scorer is not None:
-            #         scorers_list.append(scorer)
-            # else:
-            #     scorer = {'policy_dataset_scorer': policy_dataset_scorer}
-            #     # if dataset_id != 0:
-            #     #     scorer['q_dataset_scorer'] = q_dataset_scorer
-            #     #     scorer['q_play_scorer'] = q_play_scorer
-            #     #     scorer['policy_replay_scorer'] = policy_replay_scorer
-            #     scorers_list.append(scorer)
+            if env is not None:
+                # scorers_list = [{'environment': d3rlpy.metrics.evaluate_on_environment(env), 'fune_tuned_environment': single_evaluate_on_environment(env)}]
+                scorers_env = {'environment': d3rlpy.metrics.evaluate_on_environment(env)}
+                test_scorer_env = NormalizedBoxEnv(ant.AntMazeEnv(maze_map=mazes[args.maze][args.part_times_num][dataset_id], maze_size_scaling=4.0))
+                print(f"env.observation_shape")
+                print(f"test_scorer_env.observation_shape")
+                assert False
+                scorers_part = dict(zip(['environment_part' + str(n) for n in range(dataset_id + 1)], [d3rlpy.metrics.evaluate_on_environment(NormalizedBoxEnv(ant.AntMazeEnv(maze_map=mazes[args.maze][args.part_times_num][dataset_id], maze_size_scaling=4.0))) for n in range(dataset_id + 1)]))
+                scorers_env.update(scorers_part)
+                scorers_list = [scorers_env]
+            else:
+                raise NotImplementedError
             learned_datasets.append(dataset)
             add_one_learned_datasets = [None] + learned_datasets
 
@@ -334,6 +440,9 @@ if __name__ == '__main__':
         args.dataset_nums = ['itr_' + dataset_num for dataset_num in args.dataset_nums]
     elif 'antmaze' in args.dataset:
         args.dataset_kind = 'antmaze'
+        args.maze = args.dataset.split('-')[1]
+        assert args.maze in ['umaze', 'medium', 'large']
+        args.part_times_num = 0 if len(args.dataset_nums) == 2 else 1
     else:
         raise NotImplementedError
 

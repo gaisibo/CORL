@@ -350,17 +350,24 @@ class ST(STBase, IQL):
                 start_time = time.time()
                 replay_observations = torch.from_numpy(episode.observations).to(self._impl.device)
                 replay_actions = torch.from_numpy(episode.actions).to(self._impl.device)
-                replay_qs = self._impl._q_func(replay_observations, replay_actions)
-                if self._impl_name == 'iql':
-                    replay_vs = self._impl._value_func(replay_observations)
-                elif self._impl_name == 'iqln':
-                    replay_vs = []
-                    for v_func in self._impl._value_funcs:
-                        replay_vs.append(v_func(replay_observations))
-                    replay_vs = torch.mean(torch.stack(replay_vs, dim=0), dim=0)
-                else:
-                    raise NotImplementedError
-                new_replay_diff_qs.append((replay_qs - replay_vs).mean())
+                temp_dataloader = DataLoader(TensorDataset(replay_observations, replay_actions), batch_size=64, shuffle=False)
+                replay_qs = []
+                replay_vs_all = []
+                replay_qs_vs = []
+                for replay_observations_batch, replay_actions_batch in temp_dataloader:
+                    replay_qs = self._impl._q_func(replay_observations_batch, replay_actions_batch)
+                    if self._impl_name == 'iql':
+                        replay_vs = self._impl._value_func(replay_observations_batch)
+                    elif self._impl_name == 'iqln':
+                        replay_vs = []
+                        for v_func in self._impl._value_funcs:
+                            replay_vs.append(v_func(replay_observations_batch))
+                        replay_vs = torch.mean(torch.stack(replay_vs, dim=0), dim=0)
+                    else:
+                        raise NotImplementedError
+                    replay_qs_vs.append((replay_qs - replay_vs).detach().cpu())
+                replay_qs_vs = torch.cat(replay_qs_vs, dim=0)
+                new_replay_diff_qs.append((replay_qs_vs).mean())
             new_replay_diff_qs = torch.stack(new_replay_diff_qs, dim=0)
 
             if old_replay_dataset is not None:
@@ -370,17 +377,22 @@ class ST(STBase, IQL):
                 for episode in episodes:
                     replay_observations = torch.from_numpy(episode.observations).to(self._impl.device)
                     replay_actions = torch.from_numpy(episode.actions).to(self._impl.device)
-                    replay_qs = self._impl._q_func(replay_observations, replay_actions)
-                    if self._impl_name == 'iql':
-                        replay_vs = self._impl._value_func(replay_observations)
-                    elif self._impl_name == 'iqln':
-                        replay_vs = []
-                        for v_func in self._impl._value_funcs:
-                            replay_vs.append(v_func(replay_observations))
-                        replay_vs = torch.mean(torch.stack(replay_vs, dim=0), dim=0)
-                    else:
-                        raise NotImplementedError
-                    old_replay_diff_qs.append((replay_qs - replay_vs).mean())
+                    temp_dataloader = DataLoader(TensorDataset(replay_observations, replay_actions), batch_size=64, shuffle=False)
+                    replay_qs_vs = []
+                    for replay_observations_batch, replay_actions_batch in temp_dataloader:
+                        replay_qs = self._impl._q_func(replay_observations_batch, replay_actions_batch)
+                        if self._impl_name == 'iql':
+                            replay_vs = self._impl._value_func(replay_observations_batch)
+                        elif self._impl_name == 'iqln':
+                            replay_vs = []
+                            for v_func in self._impl._value_funcs:
+                                replay_vs.append(v_func(replay_observations_batch))
+                            replay_vs = torch.mean(torch.stack(replay_vs, dim=0), dim=0)
+                        else:
+                            raise NotImplementedError
+                        replay_qs_vs.append((replay_qs - replay_vs).detach().cpu())
+                    replay_qs_vs = torch.cat(replay_qs_vs, dim=0)
+                    old_replay_diff_qs.append((replay_qs_vs).mean())
                 old_replay_diff_qs = torch.stack(old_replay_diff_qs, dim=0)
 
                 replay_diff_qs = torch.cat([new_replay_diff_qs, old_replay_diff_qs])
@@ -396,6 +408,6 @@ class ST(STBase, IQL):
         else:
             raise NotImplementedError
         if indices_old is not None:
-            indices_old = indices_old.detach().cpu().numpy()
-        replay_dataset = self._generate_new_replay_dataset(new_replay_dataset, old_replay_dataset, indices_new.detach().cpu().numpy(), indices_old)
+            indices_old = indices_old.numpy()
+        replay_dataset = self._generate_new_replay_dataset(new_replay_dataset, old_replay_dataset, indices_new.numpy(), indices_old)
         return replay_dataset

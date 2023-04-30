@@ -134,3 +134,5 @@ class CODeterministicImpl(COImpl):
                 self._dynamic.parameters(), lr=self._model_learning_rate
             )
         self._impl_id = task_id
+        print(f"self._impl_id:{self._impl_id}")
+        print(f"task_id: {task_id}")

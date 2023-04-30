@@ -292,7 +292,6 @@ def evaluate_on_environment(
 
     def scorer(algo: AlgoProtocol, *args: Any) -> float:
         if test_id is not None:
-            # print(f"test_id: {test_id}")
             try:
                 env.reset_task(int(test_id))
             except:
