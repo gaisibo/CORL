@@ -214,6 +214,7 @@ class CO(CO, TD3PlusBC):
         replay_model = False,
         # generate_step = 100,
         model_noise = 0.3,
+        variance_lambda = 2,
         retrain_time = 1,
         orl_alpha = 1,
         replay_alpha = 1,
@@ -294,6 +295,7 @@ class CO(CO, TD3PlusBC):
         # self._generate_step = generate_step
         self._select_time = select_time
         self._model_noise = model_noise
+        self._variance_lambda = variance_lambda
         self._orl_alpha = orl_alpha
         self._retrain_time = retrain_time
         self._replay_alpha = replay_alpha

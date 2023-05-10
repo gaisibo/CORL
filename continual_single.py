@@ -47,7 +47,7 @@ mazes = {
            [1, 1, 1, 1, 1]],
 
           [[1, 1, 1, 1, 1],
-           [1, 0, 0, R, 1],
+           [1, R, 0, 0, 1],
            [1, 1, 1, 0, 1],
            [1, G, 0, 0, 1],
            [1, 1, 1, 1, 1]]],
@@ -63,9 +63,9 @@ mazes = {
            [1, 0, 0, 0, 1, 0, 0, 1],
            [1, 1, 1, 1, 1, 1, 1, 1]],
 	  [[1, 1, 1, 1, 1, 1, 1, 1],
-           [1, 0, 0, 1, 1, 0, 0, 1],
+           [1, R, 0, 1, 1, 0, 0, 1],
            [1, 0, 0, 1, 0, 0, 0, 1],
-           [1, 1, 0, 0, R, 1, 1, 1],
+           [1, 1, 0, 0, 0, 1, 1, 1],
            [1, 0, 0, 1, 0, 0, 0, 1],
            [1, 0, 1, 0, 0, 1, 0, 1],
            [1, 0, 0, 0, 1, G, 0, 1],
@@ -80,26 +80,26 @@ mazes = {
            [1, 0, 0, 0, 1, 0, 0, 1],
            [1, 1, 1, 1, 1, 1, 1, 1]],
 	  [[1, 1, 1, 1, 1, 1, 1, 1],
-           [1, 0, 0, 1, 1, 0, 0, 1],
-           [1, 0, R, 1, 0, 0, 0, 1],
+           [1, R, 0, 1, 1, 0, 0, 1],
+           [1, 0, 0, 1, 0, 0, 0, 1],
            [1, 1, 0, 0, 0, 1, 1, 1],
            [1, 0, 0, 1, G, 0, 0, 1],
            [1, 0, 1, 0, 0, 1, 0, 1],
            [1, 0, 0, 0, 1, 0, 0, 1],
            [1, 1, 1, 1, 1, 1, 1, 1]],
 	  [[1, 1, 1, 1, 1, 1, 1, 1],
-           [1, 0, 0, 1, 1, 0, 0, 1],
+           [1, R, 0, 1, 1, 0, 0, 1],
            [1, 0, 0, 1, 0, 0, 0, 1],
-           [1, 1, 0, 0, R, 1, 1, 1],
+           [1, 1, 0, 0, 0, 1, 1, 1],
            [1, 0, 0, 1, 0, 0, 0, 1],
            [1, 0, 1, 0, 0, 1, G, 1],
            [1, 0, 0, 0, 1, 0, 0, 1],
            [1, 1, 1, 1, 1, 1, 1, 1]],
 	  [[1, 1, 1, 1, 1, 1, 1, 1],
-           [1, 0, 0, 1, 1, 0, 0, 1],
+           [1, R, 0, 1, 1, 0, 0, 1],
            [1, 0, 0, 1, 0, 0, 0, 1],
            [1, 1, 0, 0, 0, 1, 1, 1],
-           [1, 0, 0, 1, 0, 0, R, 1],
+           [1, 0, 0, 1, 0, 0, 0, 1],
            [1, 0, 1, 0, 0, 1, 0, 1],
            [1, 0, 0, 0, 1, G, 0, 1],
            [1, 1, 1, 1, 1, 1, 1, 1]]],
@@ -115,9 +115,9 @@ mazes = {
 	   [1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1],
 	   [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]],
 	  [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-	   [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1],
+	   [1, R, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1],
 	   [1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1],
-	   [1, 0, 0, 0, 0, 0, R, 1, 0, 0, 0, 1],
+	   [1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1],
 	   [1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1],
 	   [1, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1],
 	   [1, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1],
@@ -134,16 +134,16 @@ mazes = {
 	   [1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1],
 	   [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]],
 	  [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-	   [1, 0, 0, 0, 0, 1, G, 0, 0, 0, 0, 1],
+	   [1, R, 0, 0, 0, 1, G, 0, 0, 0, 0, 1],
 	   [1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1],
-	   [1, 0, R, 0, 0, 0, 0, 1, 0, 0, 0, 1],
+	   [1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1],
 	   [1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1],
 	   [1, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1],
 	   [1, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1],
 	   [1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1],
 	   [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]],
 	  [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-	   [1, 0, 0, 0, 0, 1, 0, R, 0, 0, 0, 1],
+	   [1, R, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1],
 	   [1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1],
 	   [1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1],
 	   [1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1],
@@ -152,17 +152,18 @@ mazes = {
 	   [1, 0, 0, 1, 0, 0, G, 1, 0, 0, 0, 1],
 	   [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]],
 	  [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-	   [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1],
+	   [1, R, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1],
 	   [1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1],
 	   [1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1],
 	   [1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1],
 	   [1, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1],
 	   [1, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1],
-	   [1, 0, 0, 1, 0, R, 0, 1, 0, G, 0, 1],
+	   [1, 0, 0, 1, 0, 0, 0, 1, 0, G, 0, 1],
 	   [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]]],
         ]
     }
 
+mazes_start = {'umaze': [[(1, 1), (2, 3)], None], 'medium': [[(1, 1), (2, 5)], [(1, 1), (2, 2), (2, 5), (4, 6)]], 'large': [[(1, 1), (3, 6)], [(1, 1), (3, 2), (1, 7), (7, 5)]]}
 
 def read_dict(state_dict, prename):
     for key, value in state_dict.items():
@@ -177,7 +178,6 @@ replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'termi
 def main(args, device):
     np.set_printoptions(precision=1, suppress=True)
     ask_indexes = False
-    task_datasets = []
     if args.dataset_kind in ['d4rl', 'antmaze']:
         _, env = d3rlpy.datasets.get_dataset(args.dataset)
         _, eval_env = d3rlpy.datasets.get_dataset(args.dataset)
@@ -224,32 +224,36 @@ def main(args, device):
     if not args.eval:
         pklfile = {}
         max_itr_num = 3000
+        task_datasets = []
+        eval_envs = []
         for i, dataset_num in enumerate(args.dataset_nums):
             if dataset_num != 'd4rl':
                 h5_path = 'dataset/d4rl/' + args.dataset + '/' + dataset_num + '.hdf5'
-                task_datasets.append((dataset_num, get_d4rl_local(get_dataset(h5_path))))
+                dataset, eval_env = get_d4rl_local(get_dataset(h5_path), dataset_num + '-' + args.dataset, mazes[args.maze][args.part_times_num][int(dataset_num.split('_')[-1])])
+                task_datasets.append((dataset_num, dataset))
+                eval_envs.append(eval_env)
             else:
                 task_datasets.append((dataset_num, d3rlpy.datasets.get_dataset(args.dataset)[0]))
+                eval_envs.append(env)
         replay_dataset = None
+        learned_id = []
         learned_datasets = []
         if not args.test:
             pretrain_path_eval = "pretrained_network/" + "ST_iql_" + args.dataset + '_d4rl.pt'
 
         for dataset_id, (dataset_num, dataset) in enumerate(task_datasets):
+            learned_id.append(dataset_id)
+            learned_datasets.append(dataset)
+            add_one_learned_datasets = [None] + learned_datasets
+
             if env is not None:
                 # scorers_list = [{'environment': d3rlpy.metrics.evaluate_on_environment(env), 'fune_tuned_environment': single_evaluate_on_environment(env)}]
                 scorers_env = {'environment': d3rlpy.metrics.evaluate_on_environment(env)}
-                test_scorer_env = NormalizedBoxEnv(ant.AntMazeEnv(maze_map=mazes[args.maze][args.part_times_num][dataset_id], maze_size_scaling=4.0))
-                print(f"env.observation_shape")
-                print(f"test_scorer_env.observation_shape")
-                assert False
-                scorers_part = dict(zip(['environment_part' + str(n) for n in range(dataset_id + 1)], [d3rlpy.metrics.evaluate_on_environment(NormalizedBoxEnv(ant.AntMazeEnv(maze_map=mazes[args.maze][args.part_times_num][dataset_id], maze_size_scaling=4.0))) for n in range(dataset_id + 1)]))
+                scorers_part = dict(zip(['environment_part' + str(n) for n in range(dataset_id + 1)], [evaluate_on_environment_help(eval_envs[n], mazes_start[args.maze][args.part_times_num][n]) for n in learned_id]))
                 scorers_env.update(scorers_part)
                 scorers_list = [scorers_env]
             else:
                 raise NotImplementedError
-            learned_datasets.append(dataset)
-            add_one_learned_datasets = [None] + learned_datasets
 
             start_time = time.perf_counter()
             print(f'Start Training {dataset_id}')

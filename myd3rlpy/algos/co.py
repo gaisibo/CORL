@@ -1324,6 +1324,7 @@ class CO():
 
         export_time = 0
         old_orl_indexes_all = 0
+        diff = 0
         while len(selected_indexes) < max_save_num:
             # for orl_indexes, orl_ns in zip(orl_indexes_list, orl_ns_list):
             for orl_indexes in orl_indexes_list:
@@ -1394,8 +1395,8 @@ class CO():
                             logstds += noise
 
                         # 找到最接近中间的，也就是最准的。
-                        start_next_observations, _, _ = self._impl._dynamic.predict_with_variance(start_observations[:, :real_observation_size], start_actions[:, :real_action_size])
-                        # variances = torch.mean(variances, dim=1)
+                        start_next_observations, _, variances = self._impl._dynamic.predict_with_variance(start_observations[:, :real_observation_size], start_actions[:, :real_action_size])
+                        variances = torch.mean(variances, dim=1)
                         # mean_start_next_observations = torch.mean(start_next_observations, dim=1).unsqueeze(dim=1).expand(-1, start_next_observations.shape[1], -1)
                         # _, diff_mean_start_next_observations_indices = torch.max(torch.mean(start_next_observations - mean_start_next_observations, dim=2), dim=1)
                         start_next_observations = torch.stack([start_next_observations[i][random.randint(0, len(start_next_observations[i]) - 1)] for i in range(start_next_observations.shape[0])])
@@ -1455,10 +1456,11 @@ class CO():
                                 near_distances, near_indexes_inner = torch.topk(near_distances, 1, largest=False, dim=1)
                                 near_indexes = near_indexes.gather(1, near_indexes_inner).squeeze()
                         # 仅在dynamic model足够准确的情况下跳转，否则不动。
-                        # start_next_indexes = torch.from_numpy(np.array(start_indexes).astype(np.int64)).to(self._impl.device)
-                        # if 'next' in self._experience_type:
-                        #     near_indexes = torch.where(variances < near_variances, near_indexes, start_next_indexes)
-                        # near_indexes = [near_index + 1 for near_index in near_indexes]
+                        start_next_indexes = torch.from_numpy(np.array(start_indexes).astype(np.int64)).to(self._impl.device)
+                        if 'next' in self._experience_type:
+                            near_indexes = torch.where(variances < self._variance_lambda * near_variances, near_indexes, start_next_indexes)
+                        near_indexes = near_indexes + 1
+                        diff += sum(near_indexes != start_next_indexes) / near_indexes.shape[0]
                     # elif 'siamese' in with_generate:
                     #     near_indexes, _, _ = similar_phi(start_observation, start_action[:, :real_action_size], near_observations, near_actions, self._impl._phi, topk=1)
                     else:
@@ -1537,12 +1539,16 @@ class CO():
         # if self._sample_type == 'retrain_actor':
         #     self._impl._policy.load_state_dict(policy_state_dict)
 
+        print(f"Diff: {diff}")
         random.shuffle(selected_indexes)
         if len(selected_indexes) >= max_save_num:
             selected_indexes = selected_indexes[:max_save_num]
         transitions = []
         for index in selected_indexes:
-            transitions.append(Transition([dataset.observations.shape[1]], dataset.actions.shape[1], dataset.observations[index], dataset.actions[index], dataset.rewards[index], dataset.observations[index + 1], 0))
+            if dataset.terminals[index] == 0:
+                transitions.append(Transition([dataset.observations.shape[1]], dataset.actions.shape[1], dataset.observations[index], dataset.actions[index], dataset.rewards[index], dataset.observations[index + 1], 0))
+            else:
+                transitions.append(Transition([dataset.observations.shape[1]], dataset.actions.shape[1], dataset.observations[index], dataset.actions[index], dataset.rewards[index], dataset.observations[index], 1))
         # if with_generate == 'generate_model':
         #     return self.generate_new_data_replay(transitions, max_save_num=max_save_num, real_observation_size=real_observation_size, real_action_size=real_action_size)
         # else:

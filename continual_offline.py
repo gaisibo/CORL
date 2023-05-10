@@ -88,7 +88,7 @@ def main(args, device):
     else:
         use_phi = False
     # co = CO(impl_name=args.algo, use_gpu=not args.use_cpu, batch_size=args.batch_size, id_size=args.task_nums, replay_type=args.replay_type, experience_type=args.experience_type, sample_type=args.sample_type, reduce_replay=args.reduce_replay, use_phi=use_phi, use_model=args.use_model, replay_critic=args.replay_critic, replay_model=args.replay_model, replay_alpha=args.replay_alpha, generate_step=args.generate_step, model_noise=args.model_noise, retrain_time=args.retrain_time, orl_alpha=args.orl_alpha, single_head=args.single_head, clone_actor=args.clone_actor, clone_finish=args.clone_finish)
-    co = CO(impl_name=args.algo, use_gpu=not args.use_cpu, batch_size=args.batch_size, id_size=args.task_nums, replay_type=args.replay_type, experience_type=args.experience_type, reduce_replay=args.reduce_replay, use_phi=use_phi, use_model=args.use_model, replay_critic=args.replay_critic, replay_model=args.replay_model, replay_alpha=args.replay_alpha, model_noise=args.model_noise, retrain_time=args.retrain_time, orl_alpha=args.orl_alpha, single_head=args.single_head, clone_actor=args.clone_actor, clone_finish=args.clone_finish)
+    co = CO(impl_name=args.algo, use_gpu=not args.use_cpu, batch_size=args.batch_size, id_size=args.task_nums, replay_type=args.replay_type, experience_type=args.experience_type, reduce_replay=args.reduce_replay, use_phi=use_phi, use_model=args.use_model, replay_critic=args.replay_critic, replay_model=args.replay_model, replay_alpha=args.replay_alpha, model_noise=args.model_noise, variance_lambda=args.variance_lambda, retrain_time=args.retrain_time, orl_alpha=args.orl_alpha, single_head=args.single_head, clone_actor=args.clone_actor, clone_finish=args.clone_finish)
 
     experiment_name = "CO" + '_'
     algos_name = args.replay_type
@@ -400,6 +400,7 @@ if __name__ == '__main__':
     parser.add_argument('--replay_model', action='store_true')
     # parser.add_argument('--generate_step', default=10, type=int)
     parser.add_argument('--model_noise', default=0, type=float)
+    parser.add_argument('--variance_lambda', default=2, type=float)
     parser.add_argument('--retrain_time', type=int, default=1)
     parser.add_argument('--orl_alpha', type=float, default=1)
     parser.add_argument('--replay_alpha', type=float, default=1)

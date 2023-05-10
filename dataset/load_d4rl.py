@@ -13,6 +13,7 @@ from d4rl.offline_env import get_keys
 from d3rlpy.datasets import get_d4rl
 from d3rlpy.dataset import MDPDataset
 import gym
+from gym.envs.registration import register
 # from myd3rlpy.siamese_similar import similar_euclid
 # from mygym.envs.hopper_back import HopperBackEnv
 # from mygym.envs.walker2d_back import Walker2dBackEnv
@@ -49,7 +50,7 @@ def get_dataset(h5path, expert=False, env=None):
         str(data_dict['rewards'].shape))
     return data_dict
 
-def get_d4rl_local(dataset, timeout=1000) -> MDPDataset:
+def get_d4rl_local(dataset, dataset_name, maze, timeout=1000):
 
     observations = dataset["observations"]
     actions = dataset["actions"]
@@ -63,8 +64,6 @@ def get_d4rl_local(dataset, timeout=1000) -> MDPDataset:
     #     while i < terminals.shape[0]:
     #         episode_terminals[i] = 1
     #         i += timeout
-    print(sum(terminals))
-    print(sum(episode_terminals))
 
     mdp_dataset = MDPDataset(
         observations=np.array(observations, dtype=np.float32),
@@ -74,4 +73,19 @@ def get_d4rl_local(dataset, timeout=1000) -> MDPDataset:
         episode_terminals=episode_terminals,
     )
 
-    return mdp_dataset
+    register(id=dataset_name,
+            entry_point='d4rl.locomotion.ant:make_ant_maze_env',
+            max_episode_steps=1000,
+            kwargs={
+                'maze_map': maze,
+                'reward_type': 'sparse',
+                'non_zero_reset': False,
+                'eval': True,
+                'maze_size_scaling': 4.0,
+                'ref_min_score': 0.0,
+                'ref_max_score': 1.0,
+                'v2_resets': True,
+                })
+    eval_env = gym.make(dataset_name)
+
+    return mdp_dataset, eval_env

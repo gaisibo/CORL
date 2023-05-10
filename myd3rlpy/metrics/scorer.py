@@ -75,7 +75,7 @@ def td_error_scorer(real_action_size: int) -> Callable[..., Callable[...,float]]
 
 
 def evaluate_on_environment_help(
-    env: gym.Env, st_eval, eval_start_step = 0, eval_end_step=1000, n_trials: int = 10, epsilon: float = 0.0, render: bool = False
+    env: gym.Env, start_xy, n_trials: int = 10, epsilon: float = 0.0, render: bool = False
 ) -> Callable[..., float]:
     """Returns scorer function of evaluation on environment.
     This function returns scorer function, which is suitable to the standard
@@ -98,7 +98,6 @@ def evaluate_on_environment_help(
     Returns:
         scoerer function.
     """
-    assert eval_end_step > eval_start_step
 
     # for image observation
     observation_shape = env.observation_space.shape
@@ -113,7 +112,9 @@ def evaluate_on_environment_help(
         episode_rewards = []
 
         for _ in range(n_trials):
-            observation = env.reset()
+            env.reset()
+            env.set_xy(start_point)
+            observation = env._get_obs()
 
             # frame stacking
             if is_image:
@@ -127,16 +128,10 @@ def evaluate_on_environment_help(
                 if np.random.random() < epsilon:
                     action = env.action_space.sample()
                 else:
-                    if i < eval_start_step:
-                        if is_image:
-                            action = st_eval.predict([stacked_observation.eval()])[0]
-                        else:
-                            action = st_eval.predict([observation])[0]
+                    if is_image:
+                        action = algo.predict([stacked_observation.eval()])[0]
                     else:
-                        if is_image:
-                            action = algo.predict([stacked_observation.eval()])[0]
-                        else:
-                            action = algo.predict([observation])[0]
+                        action = algo.predict([observation])[0]
 
                 observation, reward, done, _ = env.step(action)
                 episode_reward += reward
@@ -147,7 +142,7 @@ def evaluate_on_environment_help(
                 if render:
                     env.render()
 
-                if i >= eval_end_step or done:
+                if done:
                     break
 
                 i += 1
