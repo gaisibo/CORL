@@ -9,7 +9,7 @@ from typing import Any, Dict, Optional, Sequence, List, Union, Callable, Tuple, 
 import types
 from collections import defaultdict
 from numpy.matrixlib.defmatrix import N
-from tqdm.auto import tqdm
+# from tqdm.auto import tqdm
 from tqdm.auto import trange
 import numpy as np
 from functools import partial
@@ -297,8 +297,8 @@ class STBase():
         with_timestamp: bool = True,
         logdir: str = "d3rlpy_logs",
         verbose: bool = True,
-        show_progress: bool = True,
-        tensorboard_dir: Optional[str] = None,
+        show_progress: bool = False,
+        tensorboard_dir: Optional[str] = "d3rlpy_tensorboard",
         eval_episodes_list: Optional[List[List[Episode]]] = None,
         save_interval: int = 10,
         discount: float = 0.99,
@@ -488,6 +488,7 @@ class STBase():
                 disable=not show_progress,
                 desc=f"Epoch {epoch}/{n_epochs}",
             )
+            range_gen = range(len(iterator))
 
             iterator.reset()
             if replay_iterator is not None:

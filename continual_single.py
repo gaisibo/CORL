@@ -179,8 +179,8 @@ def main(args, device):
     np.set_printoptions(precision=1, suppress=True)
     ask_indexes = False
     if args.dataset_kind in ['d4rl', 'antmaze']:
-        _, env = d3rlpy.datasets.get_dataset(args.dataset)
-        _, eval_env = d3rlpy.datasets.get_dataset(args.dataset)
+        env = gym.make(args.dataset)
+        eval_env = gym.make(args.dataset)
     elif args.dataset_kind == 'block':
         env = gym.make(args.dataset)
         eval_env = gym.make(args.dataset)
@@ -228,7 +228,7 @@ def main(args, device):
         eval_envs = []
         for i, dataset_num in enumerate(args.dataset_nums):
             if dataset_num != 'd4rl':
-                h5_path = 'dataset/d4rl/' + args.dataset + '/' + dataset_num + '.hdf5'
+                h5_path = '/gaisibo/Dataset/d4rl/' + args.dataset + '/' + dataset_num + '.hdf5'
                 dataset, eval_env = get_d4rl_local(get_dataset(h5_path), dataset_num + '-' + args.dataset, mazes[args.maze][args.part_times_num][int(dataset_num.split('_')[-1])])
                 task_datasets.append((dataset_num, dataset))
                 eval_envs.append(eval_env)

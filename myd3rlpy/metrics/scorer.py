@@ -75,7 +75,7 @@ def td_error_scorer(real_action_size: int) -> Callable[..., Callable[...,float]]
 
 
 def evaluate_on_environment_help(
-    env: gym.Env, start_xy, n_trials: int = 10, epsilon: float = 0.0, render: bool = False
+    env: gym.Env, start_point, n_trials: int = 10, epsilon: float = 0.0, render: bool = False
 ) -> Callable[..., float]:
     """Returns scorer function of evaluation on environment.
     This function returns scorer function, which is suitable to the standard
@@ -113,8 +113,8 @@ def evaluate_on_environment_help(
 
         for _ in range(n_trials):
             env.reset()
-            env.set_xy(start_point)
-            observation = env._get_obs()
+            env.env.set_xy(start_point)
+            observation = env.env._get_obs()
 
             # frame stacking
             if is_image:
