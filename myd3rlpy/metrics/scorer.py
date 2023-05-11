@@ -113,8 +113,10 @@ def evaluate_on_environment_help(
 
         for _ in range(n_trials):
             env.reset()
-            env.set_xy(start_point)
-            observation = env._get_obs()
+            print(env)
+            print(env.__dict__)
+            env.env._rowcol_to_xy(start_xy)
+            observation = env.env._get_obs()
 
             # frame stacking
             if is_image:
