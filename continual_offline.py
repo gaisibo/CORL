@@ -19,7 +19,7 @@ from d3rlpy.dataset import MDPDataset
 from d3rlpy.torch_utility import get_state_dict, set_state_dict
 # from myd3rlpy.datasets import get_d4rl
 from utils.k_means import kmeans
-from myd3rlpy.metrics.scorer import bc_error_scorer, td_error_scorer, evaluate_on_environment, match_on_environment, dis_on_environment, q_mean_scorer, q_replay_scorer
+from myd3rlpy.metrics.scorer import bc_error_scorer, td_error_scorer, evaluate_on_environment, evaluate_on_environment_noclone, match_on_environment, dis_on_environment, q_mean_scorer, q_replay_scorer
 from myd3rlpy.siamese_similar import similar_psi, similar_phi
 from myd3rlpy.dynamics.probabilistic_ensemble_dynamics import ProbabilisticEnsembleDynamics
 
@@ -48,11 +48,15 @@ def main(args, device):
         else:
             datasets = origin_datasets
         env = None
-    elif args.dataset in ['ant_dir_expert', 'cheetah_dir_expert', 'walker_dir_expert', 'cheetah_vel_expert', 'ant_dir_medium', 'cheetah_dir_medium', 'walker_dir_medium', 'cheetah_vel_medium', 'ant_dir_random', 'cheetah_dir_random', 'walker_dir_random', 'cheetah_vel_random', 'ant_dir_medium_random', 'cheetah_dir_medium_random', 'walker_dir_medium_random', 'cheetah_vel_medium_random', 'ant_dir_medium_replay', 'cheetah_dir_medium_replay', 'walker_dir_medium_replay', 'cheetah_vel_medium_replay']:
+    elif args.dataset in ['ant_dir_expert', 'cheetah_dir_expert', 'walker_dir_expert', 'cheetah_vel_expert', 'mix_expert', 'ant_dir_medium', 'cheetah_dir_medium', 'walker_dir_medium', 'cheetah_vel_medium', 'mix_medium', 'ant_dir_random', 'cheetah_dir_random', 'walker_dir_random', 'cheetah_vel_random', 'mix_random', 'ant_dir_medium_random', 'cheetah_dir_medium_random', 'walker_dir_medium_random', 'cheetah_vel_medium_random', 'mix_medium_random', 'ant_dir_medium_replay', 'cheetah_dir_medium_replay', 'walker_dir_medium_replay', 'cheetah_vel_medium_replay', 'mix_medium_replay']:
         from dataset.split_macaw import split_macaw
-        inner_paths = ['dataset/macaw/' + args.inner_path.replace('num', str(i)) for i in range(args.task_nums)]
-        env_paths = ['dataset/macaw/' + args.env_path.replace('num', str(i)) for i in range(args.task_nums)]
-        origin_datasets, taskid_datasets, indexes_euclids, distances_euclids, env, real_action_size, real_observation_size = split_macaw(args.top_euclid, args.dataset, inner_paths, env_paths, ask_indexes=ask_indexes, device=device)
+        if 'mix' not in args.dataset:
+            inner_paths = ['dataset/macaw/' + args.inner_path.replace('num', str(i)).replace('dataset', args.dataset_name) for i in range(args.task_nums)]
+            env_paths = ['dataset/macaw/' + args.env_path.replace('num', str(i)).replace('dataset', args.dataset_name) for i in range(args.task_nums)]
+        else:
+            inner_paths = ['dataset/macaw/' + args.inner_path.replace('num', str(i)).replace('dataset', dataset) for i in range(args.task_nums) for dataset in ['ant_dir', 'walker_dir', 'cheetah_vel']]
+            env_paths = ['dataset/macaw/' + args.env_path.replace('num', str(i)).replace('dataset', dataset) for i in range(args.task_nums) for dataset in ['ant_dir', 'walker_dir', 'cheetah_vel']]
+        origin_datasets, taskid_datasets, indexes_euclids, distances_euclids, env, real_action_size, real_observation_size, obs_pad_dim, act_pad_dim = split_macaw(args.top_euclid, args.dataset, inner_paths, env_paths, ask_indexes=ask_indexes, device=device)
         if args.single_head:
             datasets = taskid_datasets
         else:
@@ -70,11 +74,12 @@ def main(args, device):
         else:
             raise NotImplementedError
         env = None
-
     else:
+        print(f"{dataset: {args.dataset}}")
         raise NotImplementedError
 
     # prepare algorithm
+    print("prepare algorithm")
     if args.algo in ['td3_plus_bc', 'td3']:
         from myd3rlpy.algos.co_td3_plus_bc import CO
     elif args.algo == 'combo':
@@ -87,6 +92,7 @@ def main(args, device):
         use_phi = True
     else:
         use_phi = False
+    print("Start Generate")
     # co = CO(impl_name=args.algo, use_gpu=not args.use_cpu, batch_size=args.batch_size, id_size=args.task_nums, replay_type=args.replay_type, experience_type=args.experience_type, sample_type=args.sample_type, reduce_replay=args.reduce_replay, use_phi=use_phi, use_model=args.use_model, replay_critic=args.replay_critic, replay_model=args.replay_model, replay_alpha=args.replay_alpha, generate_step=args.generate_step, model_noise=args.model_noise, retrain_time=args.retrain_time, orl_alpha=args.orl_alpha, single_head=args.single_head, clone_actor=args.clone_actor, clone_finish=args.clone_finish)
     co = CO(impl_name=args.algo, use_gpu=not args.use_cpu, batch_size=args.batch_size, id_size=args.task_nums, replay_type=args.replay_type, experience_type=args.experience_type, reduce_replay=args.reduce_replay, use_phi=use_phi, use_model=args.use_model, replay_critic=args.replay_critic, replay_model=args.replay_model, replay_alpha=args.replay_alpha, model_noise=args.model_noise, variance_lambda=args.variance_lambda, retrain_time=args.retrain_time, orl_alpha=args.orl_alpha, single_head=args.single_head, clone_actor=args.clone_actor, clone_finish=args.clone_finish)
 
@@ -109,6 +115,7 @@ def main(args, device):
     pretrain_name = args.model_path
 
     if not args.eval:
+        print("Start Training")
         replay_datasets = dict()
         save_datasets = dict()
         eval_datasets = dict()
@@ -136,9 +143,15 @@ def main(args, device):
                     pretrain_state_dict = None
                     # train
                     if env is not None:
-                        scorers = dict(zip(['real_env' + str(n) for n in datasets.keys()], [evaluate_on_environment(env, test_id=str(n), mix='mix' in args.dataset and n == '0', add_on=args.add_on, clone_actor=args.clone_actor, task_id_dim=0 if not args.single_head else len(datasets.keys())) for n in learned_tasks]))
+                        if 'mix' not in args.dataset_name:
+                            scorers = dict(zip(['real_env' + str(n) for n in learned_tasks], [evaluate_on_environment(env, test_id=str(n), add_on=args.add_on, clone_actor=args.clone_actor, task_id_dim=0 if not args.single_head else len(datasets.keys())) for n in learned_tasks]))
+                        else:
+                            # 3 for cheetah_dir, walker_dir and cheetah_vel; 27 and 8 are the max dims of observation and action in these env.
+                            scorers = dict(zip(['real_env' + str(n) for n in learned_tasks], [evaluate_on_environment(env[env_num], test_id=str(n), mix=True, obs_pad_dim=obs_pad_dim, add_on=args.add_on, clone_actor=args.clone_actor, task_id_dim=0 if not args.single_head else len(datasets.keys())) for n in range(args.task_nums) for env_num in range(3)]))
+                            print(f"scorers: {scorers}")
+                            assert False
                     elif envs is not None:
-                        scorers = dict(zip(['real_env' + str(n) for n in datasets.keys()], [evaluate_on_environment(envs[str(n)], test_id=str(n), mix='mix' in args.dataset and n == '0', add_on=args.add_on, clone_actor=args.clone_actor) for n in learned_tasks]))
+                        scorers = dict(zip(['real_env' + str(n) for n in learned_tasks], [evaluate_on_environment(envs[str(n)], test_id=str(n), mix='mix' in args.dataset and n == '0', add_on=args.add_on, clone_actor=args.clone_actor) for n in learned_tasks]))
                     else:
                         raise NotImplementedError
                     co.fit(
@@ -186,9 +199,15 @@ def main(args, device):
                 pretrain_state_dict = None
                 # train
                 if env is not None:
-                    scorers = dict(zip(['real_env' + str(n) for n in datasets.keys()], [evaluate_on_environment(env, test_id=str(n), mix='mix' in args.dataset and n == '0', add_on=args.add_on, clone_actor=args.clone_actor, task_id_dim=0 if not args.single_head else len(datasets.keys())) for n in learned_tasks]))
+                    if 'mix' not in args.dataset_name:
+                        scorers = dict(zip(['real_env' + str(n) for n in learned_tasks], [evaluate_on_environment(env, test_id=str(n), add_on=args.add_on, clone_actor=args.clone_actor, task_id_dim=0 if not args.single_head else len(datasets.keys())) for n in learned_tasks]))
+                    else:
+                        # 3 for cheetah_dir, walker_dir and cheetah_vel; 27 and 8 are the max dims of observation and action in these env.
+                        scorers = dict(zip(['real_env' + str(n) for n in learned_tasks], [evaluate_on_environment(env[env_num], test_id=str(n), mix=True, obs_pad_dim=obs_pad_dim, add_on=args.add_on, clone_actor=args.clone_actor, task_id_dim=0 if not args.single_head else len(datasets.keys())) for n in range(args.task_nums) for env_num in range(3)]))
+                        print(f"scorers: {scorers}")
+                        assert False
                 elif envs is not None:
-                    scorers = dict(zip(['real_env' + str(n) for n in datasets.keys()], [evaluate_on_environment(envs[str(n)], test_id=str(n), mix='mix' in args.dataset and n == '0', add_on=args.add_on, clone_actor=args.clone_actor) for n in learned_tasks]))
+                    scorers = dict(zip(['real_env' + str(n) for n in learned_tasks], [evaluate_on_environment(envs[str(n)], test_id=str(n), mix='mix' in args.dataset and n == '0', add_on=args.add_on, clone_actor=args.clone_actor) for n in learned_tasks]))
                 else:
                     raise NotImplementedError
                 co.fit(
@@ -213,7 +232,6 @@ def main(args, device):
                 print(f'Training task {task_id} time: {time.perf_counter() - start_time}')
                 co.save_model(args.model_path + algos_name + '_' + str(task_id) + '.pt')
         else:
-            print(f'datasets.items()')
             for task_id, dataset in datasets.items():
                 # train
                 max_transition_len = max(list([len(episode.transitions) for episode in dataset.episodes]))
@@ -224,20 +242,42 @@ def main(args, device):
                     continue
                 task_id = str(task_id)
                 start_time = time.perf_counter()
-                print(f'Start Training {task_id}')
+                # print(f'Start Training {task_id}')
                 eval_datasets[task_id] = dataset
                 draw_path = args.model_path + algos_name + '_trajectories_' + str(task_id)
                 dynamic_path = args.model_path + args.dataset + '_' + str(task_id) + '_dynamic.pt'
                 try:
                     dynamic_state_dict = torch.load(dynamic_path, map_location=device)
                 except Exception as e:
-                    print(e)
-                    dynamic_state_dict = None
-                    raise NotImplementedError
+                    co.fit_dynamic(
+                        task_id,
+                        dataset,
+                        env,
+                        args.seed,
+                        real_action_size=real_action_size,
+                        real_observation_size=real_observation_size,
+                        n_dynamic_steps=args.n_dynamic_steps,
+                        n_dynamic_steps_per_epoch=args.n_dynamic_steps_per_epoch,
+                        dynamic_state_dict=None,
+                        # pretrain_state_dict=pretrain_state_dict,
+                        # pretrain_task_id=args.read_policy,
+                        experiment_name=experiment_name + algos_name,
+                        test=args.test,
+                    )
+                    dynamic_state_dict = co._impl._dynamic.state_dict()
+                    torch.save(dynamic_state_dict, dynamic_path)
+                    print(f"Dynamic model save to {dynamic_path}")
                 if env is not None:
-                    scorers = dict(zip(['real_env' + str(n) for n in datasets.keys()], [evaluate_on_environment(env, test_id=str(n), mix='mix' in args.dataset and n == '0', add_on=args.add_on, clone_actor=args.clone_actor, task_id_dim=0 if not args.single_head else len(datasets.keys())) for n in learned_tasks]))
+                    if 'mix' not in args.dataset_name:
+                        scorers = dict(zip(['real_env' + str(n) for n in learned_tasks], [evaluate_on_environment(env, test_id=str(n), add_on=args.add_on, clone_actor=args.clone_actor, task_id_dim=0 if not args.single_head else len(datasets.keys())) for n in learned_tasks]))
+                        scorers.update(dict(zip(['noclone_env' + str(n) for n in learned_tasks], [evaluate_on_environment_noclone(env, test_id=str(n), add_on=args.add_on, clone_actor=args.clone_actor, task_id_dim=0 if not args.single_head else len(datasets.keys())) for n in learned_tasks])))
+                    else:
+                        # 3 for cheetah_dir, walker_dir and cheetah_vel; 27 and 8 are the max dims of observation and action in these env.
+                        scorers = dict(zip(['real_env' + str(n) for n in learned_tasks], [evaluate_on_environment(env[env_num], test_id=str(n), mix=True, obs_pad_dim=obs_pad_dim, add_on=args.add_on, clone_actor=args.clone_actor, task_id_dim=0 if not args.single_head else len(datasets.keys())) for n in range(args.task_nums) for env_num in range(3)]))
+                        scorers.update(dict(zip(['noclone_env' + str(n) for n in learned_tasks], [evaluate_on_environment(env[env_num], test_id=str(n), mix=True, obs_pad_dim=obs_pad_dim, add_on=args.add_on, clone_actor=args.clone_actor, task_id_dim=0 if not args.single_head else len(datasets.keys())) for n in range(args.task_nums) for env_num in range(3)])))
                 elif envs is not None:
-                    scorers = dict(zip(['real_env' + str(n) for n in datasets.keys()], [evaluate_on_environment(envs[str(n)], test_id=str(n), mix='mix' in args.dataset and n == '0', add_on=args.add_on, clone_actor=args.clone_actor) for n in learned_tasks]))
+                    scorers = dict(zip(['real_env' + str(n) for n in learned_tasks], [evaluate_on_environment(envs[str(n)], test_id=str(n), mix='mix' in args.dataset and n == '0', add_on=args.add_on, clone_actor=args.clone_actor) for n in learned_tasks]))
+                    scorers.update(dict(zip(['noclone_env' + str(n) for n in learned_tasks], [evaluate_on_environment(envs[str(n)], test_id=str(n), mix='mix' in args.dataset and n == '0', add_on=args.add_on, clone_actor=args.clone_actor) for n in learned_tasks])))
                 else:
                     raise NotImplementedError
                 if int(task_id) == args.read_policy:
@@ -252,7 +292,7 @@ def main(args, device):
                     co.build_with_dataset(dataset, real_action_size, real_observation_size, task_id)
                     co.load_model(pretrain_path)
                 else:
-                    print("Start Fitting")
+                    print(f"Start Fitting {task_id}")
                     co.fit(
                         task_id,
                         dataset,
@@ -327,7 +367,8 @@ def main(args, device):
                         print(f'Don\' have replay_datasets[{past_task_id}]')
                         raise e
             co.build_with_dataset(dataset, real_action_size, real_observation_size, task_id)
-            co.load_state_dict(pretrain_state_dict, task_id)
+            co.load_model(pretrain_path)
+            #co.load_state_dict(pretrain_state_dict, task_id)
             logger = co._prepare_logger(True, experiment_name, True, "d3rply_logs", True, None,)
 
             # eval
@@ -363,7 +404,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Experimental evaluation of lifelong PG learning')
     parser.add_argument('--add_name', default='', type=str)
     parser.add_argument("--dataset", default='ant_dir', type=str)
-    parser.add_argument("--quality", default='medium', type=str)
+    parser.add_argument("--quality", default='medium', type=str, choices=['medium', 'medium_random'])
     parser.add_argument('--inner_buffer_size', default=-1, type=int)
     parser.add_argument('--task_config', default='task_config/cheetah_dir.json', type=str)
     parser.add_argument('--siamese_hidden_size', default=100, type=int)
@@ -412,8 +453,9 @@ if __name__ == '__main__':
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--read_policy', type=int, default=0)
     args = parser.parse_args()
-    args.env_path = f"{args.dataset}/env_{args.dataset}_train_tasknum.pkl"
-    args.inner_path = f"sac_{args.dataset}_num/{args.quality}.hdf5"
+    args.env_path = "dataset/env_dataset_train_tasknum.pkl"
+    args.inner_path = "dataset/buffers_dataset_train_num_sub_task_0.hdf5"
+    args.dataset_name = args.dataset
     args.dataset = f"{args.dataset}_{args.quality}"
     args.model_path = 'd3rlpy' + '_' + args.dataset
     if not os.path.exists(args.model_path):

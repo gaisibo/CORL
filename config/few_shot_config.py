@@ -29,7 +29,7 @@ def get_st_dict(args, dataset, algo):
         # step_dict['merge_n_steps'] = 200000
         step_dict['n_steps_per_epoch'] = 1000
         st_dict['critic_update_step'] = 0
-        st_dict['batch_size'] = 256
+        st_dict['batch_size'] = 16
         st_dict['vae_learning_rate'] = 1e-3
         st_dict['n_action_samples'] = args.n_action_samples
         if args.algo_kind == 'cql':
@@ -70,7 +70,7 @@ def get_st_dict(args, dataset, algo):
             st_dict['actor_encoder_factory'] = "default"
             st_dict['critic_encoder_factory'] = "default"
             st_dict['value_encoder_factory'] = "default"
-            st_dict['actor_learning_rate'] = 3e-4
+            st_dict['actor_learning_rate'] = 1e-5
             st_dict['critic_learning_rate'] = 3e-4
             st_dict['weight_temp'] = 3.0
             st_dict['max_weight'] = 100.0

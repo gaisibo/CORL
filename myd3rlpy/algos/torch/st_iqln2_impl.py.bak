@@ -34,7 +34,7 @@ replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'termi
 class STImpl(STImpl, IQLImpl):
     def __init__(
         self,
-        n_ensemble = 10,
+        n_ensembles = 10,
         std_time = 1,
         std_type = 'clamp',
         expectile_max = 0.7,
@@ -45,7 +45,7 @@ class STImpl(STImpl, IQLImpl):
         super().__init__(
             **kwargs
         )
-        self._n_ensemble = n_ensemble
+        self._n_ensembles = n_ensembles
         self._test_i = 0
         self._str = ''
         self._std_time = std_time
@@ -65,8 +65,9 @@ class STImpl(STImpl, IQLImpl):
         )
 
     def _build_critic(self) -> None:
-        super()._build_critic()
         # self._value_func = nn.ModuleList([create_value_function(self._observation_shape, self._value_encoder_factory) for _ in range(self._n_ensemble)])
+        self._q_func = ParallelizedEnsembleFlattenMLP(self._n_ensemble, [256, 256], self._observation_shape[0] + self._action_size, 1, device=self.device)
+        self._targ_q_func = copy.deepcopy(self._q_func)
         self._value_func = ParallelizedEnsembleFlattenMLP(self._n_ensemble, [256, 256], self._observation_shape[0], 1, device=self.device)
 
     def _build_critic_optim(self) -> None:
@@ -105,7 +106,8 @@ class STImpl(STImpl, IQLImpl):
     def _compute_weight(self, observations, actions) -> torch.Tensor:
         assert self._targ_q_func
         assert self._value_func
-        q_t = self._targ_q_func(observations, actions, "min")
+        q_ts = self._targ_q_func(observations, actions)
+        q_t, _ = torch.min(q_ts, dim=0)
         # v_t = []
         # for value_func in self._value_func:
         #     v_t.append(value_func(observations))
@@ -134,26 +136,53 @@ class STImpl(STImpl, IQLImpl):
         self, batch: TorchMiniBatch, q_tpn: torch.Tensor
     ) -> torch.Tensor:
         assert self._q_func is not None
-        error = self._q_func.compute_error(
-            observations=batch.observations,
-            actions=batch.actions,
-            rewards=batch.rewards,
-            target=q_tpn,
-            terminals=batch.terminals,
-            gamma=self._gamma**batch.n_steps,
-        )
-        # self._str += str((self._q_func(batch.observations, batch.actions) + batch.rewards - q_tpn * self._gamma).mean()) + ' ' + str(error.mean()) + '\n'
-        return error
+        # error = self._q_func.compute_error(
+        #     observations=batch.observations,
+        #     actions=batch.actions,
+        #     rewards=batch.rewards,
+        #     target=q_tpn,
+        #     terminals=batch.terminals,
+        #     gamma=self._gamma**batch.n_steps,
+        # )
+
+        value, _ = torch.min(self._q_func(batch.observations, batch.actions), dim=0)
+        y = batch.rewards + self._gamma * q_tpn * (1 - batch.terminals)
+        loss = F.mse_loss(value, y, reduction="mean")
+        return loss
 
     def _compute_value_loss(self, batch: TorchMiniBatch, clone_critic=False, replay=False, first_time=False) -> torch.Tensor:
         assert self._targ_q_func
         assert self._value_func
-        q_t = self._targ_q_func(batch.observations, batch.actions, "min")
+        q_t, _ = torch.min(self._targ_q_func(batch.observations, batch.actions), dim=0)
+        # v_ts = []
+        # for value_func in self._value_func:
+        #     v_ts.append(value_func(batch.observations))
         v_ts = self._value_func(batch.observations)
+        v_ts_mean = torch.mean(v_ts, dim=0)
         v_ts_std = torch.std(v_ts, dim=0)
-        diff = q_t.detach().expand(self._n_ensemble, -1, -1) - v_ts
-        weight = (self._expectile - (diff < 0.0).float()).abs().detach()
-        ret = torch.mean(torch.sum(weight * (diff ** 2), dim=0))
+        v_ts_min, _ = torch.min(v_ts, dim=0)
+        diff_mean = q_t.detach() - v_ts_mean
+        diff = q_t.detach().expand(self._n_ensembles, -1, -1) - v_ts
+        diff_min = q_t.detach() - v_ts_min
+        # if self._std_type == 'clamp':
+        #     diff_minus_std = q_t.detach() - (v_ts_mean - v_ts_std * float(self._std_time))
+        #     weight = (torch.where(diff_minus_std < 0.0, self._expectile, self._expectile_max) - (diff_mean < 0.0).float()).abs().detach()
+        # elif self._std_type == 'linear':
+        #     weight = (torch.clamp((v_ts_mean - q_t.detach()) / (float(self._std_time) * v_ts_std), 1, 0) * (self._expectile_max - self._expectile) + self._expectile - (diff_mean < 0.0).float()).abs().detach()
+        # elif self._std_type == 'entropy':
+        #     entropy = 0.5 * torch.log(2 * math.pi * math.e * v_ts_std)
+        #     weight = (self._expectile_max - torch.clamp(entropy / torch.mean(entropy), 1, 0) * (self._expectile_max - self._expectile_min) - (diff_mean < 0.0).float()).abs().detach()
+        # else:
+        #     raise NotImplementedError
+        # else:
+        #     expectile = self._expectile
+        # weight = (expectile - (diff < 0.0).float()).abs().detach()
+        # self._test_i += 1
+        # self._str += str(replay) + ' ' + str(expectile.mean()) + ' ' + str(v_t_cv.mean()) + '\n'
+        # if self._test_i > 1000:
+        #     raise NotImplementedError(self._str)
+        weight = (self._expectile - (diff_min < 0.0).float()).abs().detach()
+        ret = torch.mean(torch.sum(weight * (diff_min ** 2), dim=0))
         if self._entropy_time != 0:
             entropy = 0.5 * torch.log(2 * math.pi * math.e * v_ts_std)
             ret -= torch.mean(entropy) / self._entropy_time

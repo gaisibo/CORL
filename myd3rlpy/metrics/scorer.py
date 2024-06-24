@@ -1,3 +1,4 @@
+import numpy as np
 import copy
 import pdb
 import os
@@ -75,7 +76,7 @@ def td_error_scorer(real_action_size: int) -> Callable[..., Callable[...,float]]
 
 
 def evaluate_on_environment_help(
-    env: gym.Env, start_point, n_trials: int = 10, epsilon: float = 0.0, render: bool = False
+    env: gym.Env, start_xy, n_trials: int = 10, epsilon: float = 0.0, render: bool = False
 ) -> Callable[..., float]:
     """Returns scorer function of evaluation on environment.
     This function returns scorer function, which is suitable to the standard
@@ -113,7 +114,20 @@ def evaluate_on_environment_help(
 
         for _ in range(n_trials):
             env.reset()
-            env.env.set_xy(env.env._rowcol_to_xy(start_xy))
+            xy = env.env._rowcol_to_xy(start_xy)
+            random_x = np.random.uniform(low=0, high=0.5) * 0.5 * env.env._maze_size_scaling
+            random_y = np.random.uniform(low=0, high=0.5) * 0.5 * env.env._maze_size_scaling
+            xy = (max(xy[0] + random_x, 0), max(xy[1] + random_y, 0))
+            qpos = env.env.init_qpos + env.env.np_random.uniform(
+                size=env.env.model.nq, low=-.1, high=.1)
+            qvel = env.env.init_qvel + env.env.np_random.randn(env.env.model.nv) * .1
+
+            qpos[:2] = xy
+
+            # Set everything other than ant to original position and 0 velocity.
+            qpos[15:] = env.env.init_qpos[15:]
+            qvel[14:] = 0.
+            env.env.set_state(qpos, qvel)
             observation = env.env._get_obs()
 
             # frame stacking
@@ -256,8 +270,8 @@ def match_on_environment(
 
     return scorer
 
-def evaluate_on_environment(
-    env: gym.Env, test_id: str=None, clone_actor: bool = False, n_trials: int = 100, epsilon: float = 0.0, render: bool = False, mix: bool = False, add_on: bool = False, task_id_dim: int = 0,
+def evaluate_on_environment_noclone(
+    env: gym.Env, test_id: str=None, clone_actor: bool = False, n_trials: int = 100, epsilon: float = 0.0, render: bool = False, mix: bool = False, obs_pad_dim: int = 0, add_on: bool = False, task_id_dim: int = 0,
 ) -> Callable[..., float]:
     """Returns scorer function of evaluation on environment.
     This function returns scorer function, which is suitable to the standard
@@ -301,10 +315,104 @@ def evaluate_on_environment(
         episode_rewards = []
         for _ in range(n_trials):
             observation = env.reset()
-            if mix:
-                observation = np.concatenate([observation, np.zeros([observation.shape[0], 6], dtype=np.float32)], axis=1)
-                observation = np.pad(observation, ((0, 0), (0, 6)), 'constant', constant_values=(0, 0))
             observation = torch.from_numpy(observation).to(algo._impl.device).unsqueeze(dim=0).to(torch.float32)
+            if mix:
+                observation = torch.cat([observation, torch.zeros([observation.shape[0], obs_pad_dim - observation.shape[1]], dtype=observation.dtype, device=observation.device)], dim=1)
+            episode_reward = 0.0
+
+            # frame stacking
+            if is_image:
+                stacked_observation.clear()
+                stacked_observation.append(observation)
+
+            i = 0
+            while True:
+                if test_id is not None and task_id_dim != 0:
+                    task_id_tensor = torch.zeros(observation.shape[0], task_id_dim).to(observation.device).to(torch.float32)
+                    task_id_tensor[:, test_id] = 1
+                    observation = torch.cat([observation, task_id_tensor])
+                # take action
+                if np.random.random() < epsilon:
+                    action = env.action_space.sample()
+                else:
+                    action = algo._impl._policy(observation)
+                    action = action.squeeze().cpu().detach().numpy()
+                    if mix:
+                        action = action[:env.action_space.sample().shape[0]]
+
+                observation, reward, done, pos = env.step(action)
+                episode_reward += reward
+                observation = torch.from_numpy(observation).to(algo._impl.device).unsqueeze(dim=0).to(torch.float32)
+                if mix:
+                    observation = torch.cat([observation, torch.zeros([observation.shape[0], obs_pad_dim - observation.shape[1]], dtype=observation.dtype, device=observation.device)], dim=1)
+
+                if render:
+                    env.render()
+
+                if done:
+                    break
+                if i > 1000:
+                    break
+
+                i += 1
+            episode_rewards.append(episode_reward)
+        if test_id is not None:
+            algo._impl.change_task(save_id)
+        if add_on:
+            return float(np.mean(episode_rewards))
+        else:
+            return float(np.max(episode_rewards))
+
+    return scorer
+
+def evaluate_on_environment(
+    env: gym.Env, test_id: str=None, clone_actor: bool = False, n_trials: int = 100, epsilon: float = 0.0, render: bool = False, mix: bool = False, obs_pad_dim: int = 0, add_on: bool = False, task_id_dim: int = 0,
+) -> Callable[..., float]:
+    """Returns scorer function of evaluation on environment.
+    This function returns scorer function, which is suitable to the standard
+    scikit-learn scorer function style.
+    The metrics of the scorer function is ideal metrics to evaluate the
+    resulted policies.
+    .. code-block:: python
+        import gym
+        from d3rlpy.algos import DQN
+        from d3rlpy.metrics.scorer import evaluate_on_environment
+        env = gym.make('CartPole-v0')
+        scorer = evaluate_on_environment(env)
+        cql = CQL()
+        mean_episode_return = scorer(cql)
+    Args:
+        env: gym-styled environment.
+        n_trials: the number of trials.
+        epsilon: noise factor for epsilon-greedy policy.
+        render: flag to render environment.
+    Returns:
+        scoerer function.
+    """
+
+    # for image observation
+    observation_shape = env.observation_space.shape
+    is_image = len(observation_shape) == 3
+
+    def scorer(algo: AlgoProtocol, *args: Any) -> float:
+        if test_id is not None:
+            try:
+                env.reset_task(int(test_id))
+            except:
+                pass
+            save_id = algo._impl._impl_id
+            algo._impl.change_task(test_id)
+        if is_image:
+            stacked_observation = StackedObservation(
+                observation_shape, algo.n_frames
+            )
+
+        episode_rewards = []
+        for _ in range(n_trials):
+            observation = env.reset()
+            observation = torch.from_numpy(observation).to(algo._impl.device).unsqueeze(dim=0).to(torch.float32)
+            if mix:
+                observation = torch.cat([observation, torch.zeros([observation.shape[0], obs_pad_dim - observation.shape[1]], dtype=observation.dtype, device=observation.device)], dim=1)
             episode_reward = 0.0
 
             # frame stacking
@@ -324,14 +432,17 @@ def evaluate_on_environment(
                 else:
                     if test_id is not None and clone_actor and int(save_id) != 0:
                         action = algo._impl._clone_policy(observation)
-                        action = action.squeeze().cpu().detach().numpy()
                     else:
                         action = algo._impl._policy(observation)
-                        action = action.squeeze().cpu().detach().numpy()
+                    action = action.squeeze().cpu().detach().numpy()
+                    if mix:
+                        action = action[:env.action_space.sample().shape[0]]
 
                 observation, reward, done, pos = env.step(action)
                 episode_reward += reward
                 observation = torch.from_numpy(observation).to(algo._impl.device).unsqueeze(dim=0).to(torch.float32)
+                if mix:
+                    observation = torch.cat([observation, torch.zeros([observation.shape[0], obs_pad_dim - observation.shape[1]], dtype=observation.dtype, device=observation.device)], dim=1)
 
                 if render:
                     env.render()
@@ -425,8 +536,8 @@ def merge_evaluate_on_environment(
 
     return scorer
 
-def single_evaluate_on_environment(
-    env: gym.Env, n_trials: int = 5, epsilon: float = 0.0, render: bool = False,
+def few_shot_evaluate_on_environment(
+        env: gym.Env, action_size: int, observation_size: int = 27, n_trials: int = 5, epsilon: float = 0.0, render: bool = False,
 ) -> Callable[..., float]:
     """Returns scorer function of evaluation on environment.
     This function returns scorer function, which is suitable to the standard
@@ -452,24 +563,29 @@ def single_evaluate_on_environment(
 
     # for image observation
     observation_shape = env.observation_space.shape
+    action_size = action_size
 
     def scorer(algo: AlgoProtocol, *args: Any) -> float:
         episode_rewards = []
         for _ in trange(n_trials):
             observation = env.reset()
-            observation = torch.from_numpy(observation).to(algo._impl.device).unsqueeze(dim=0).to(torch.float32)
+            observation_part = torch.from_numpy(observation).to(algo._impl.device).unsqueeze(dim=0).to(torch.float32)
+            observation = torch.zeros((observation_part.shape[0], observation_size)).to(algo._impl.device).to(torch.float32)
+            observation[:, :observation_part.shape[1]] = observation_part
             episode_reward = 0.0
 
             i = 0
             while True:
                 # take action
-                action = algo._impl.fine_tuned_action(observation)
-                # action = algo._impl._policy(observation)
+                action = algo._impl._policy(observation)
+                action = action[:, :action_size]
                 action = action.squeeze().cpu().detach().numpy()
 
                 observation, reward, done, pos = env.step(action)
                 episode_reward += reward
-                observation = torch.from_numpy(observation).to(algo._impl.device).unsqueeze(dim=0).to(torch.float32)
+                observation_part = torch.from_numpy(observation).to(algo._impl.device).unsqueeze(dim=0).to(torch.float32)
+                observation = torch.zeros((observation_part.shape[0], observation_size)).to(algo._impl.device).to(torch.float32)
+                observation[:, :observation_part.shape[1]] = observation_part
 
                 if render:
                     env.render()
@@ -700,166 +816,3 @@ def dataset_value_scorer(
             values = algo.predict_value(batch.observations, batch.actions)
             total_values += cast(np.ndarray, values).tolist()
     return float(np.mean(total_values))
-
-
-
-
-# For single task
-def q_dataset_scorer(algo, episodes: List[Episode]) -> Callable[..., float]:
-    total_values = []
-    for episode in episodes:
-        for batch in _make_batches(episode, WINDOW_SIZE, algo.n_frames):
-            observations = torch.from_numpy(batch.observations).to(algo._impl.device).to(torch.float32)
-            actions = torch.from_numpy(batch.actions).to(algo._impl.device).to(torch.float32)
-            q_old = algo._impl._clone_q_func(observations, actions)
-            q_new = algo._impl._q_func(observations, actions)
-            total_values.append(F.mse_loss(q_old, q_new).item())
-    return sum(total_values) / len(total_values)
-
-def q_play_scorer(algo, episodes: List[Episode]) -> Callable[..., float]:
-    total_values = []
-    for episode in episodes:
-        for batch in _make_batches(episode, WINDOW_SIZE, algo.n_frames):
-            observations = torch.from_numpy(batch.observations).to(algo._impl.device).to(torch.float32)
-            actions = algo._impl._policy(observations)
-            q_old = algo._impl._clone_q_func(observations, actions)
-            q_new = algo._impl._q_func(observations, actions)
-            total_values.append(F.mse_loss(q_old, q_new).item())
-    return sum(total_values) / len(total_values)
-
-def q_online_diff_scorer(online_network):
-    q_network = online_network['trainer/qf1']
-    policy_network = online_network['trainer/policy']
-    def scorer(algo, episodes: List[Episode]):
-        total_values = []
-        for episode in episodes:
-            for batch in _make_batches(episode, WINDOW_SIZE, algo.n_frames):
-                observations = torch.from_numpy(batch.observations).to(algo._impl.device).to(torch.float32)
-                dist = policy_network(observations)
-                actions = dist.sample()
-                q_old = q_network(observations, actions)
-                observations = observations + torch.randn_like(observations) * 0.1
-                dist = policy_network(observations)
-                actions = dist.sample()
-                q_new = q_network(observations, actions)
-                total_values.append(F.mse_loss(q_old, q_new).item())
-        return sum(total_values) / len(total_values)
-    return scorer
-
-def q_offline_diff_scorer(algo, episodes: List[Episode]):
-    total_values = []
-    for episode in episodes:
-        for batch in _make_batches(episode, WINDOW_SIZE, algo.n_frames):
-            observations = algo._impl._vae.generate(batch.observations.shape[0]).detach()
-            actions = algo._impl._policy(observations)
-            q_old = algo._impl._q_func(observations, actions)
-            observations = observations + torch.randn_like(observations) * 0.1
-            actions = algo._impl._policy(observations)
-            q_new = algo._impl._q_func(observations, actions)
-            total_values.append(F.mse_loss(q_old, q_new).item())
-    return sum(total_values) / len(total_values)
-
-def q_id_diff_scorer(online_network):
-    q_network = online_network['trainer/qf1']
-    def scorer(algo, episodes: List[Episode]):
-        total_values = []
-        for episode in episodes:
-            for batch in _make_batches(episode, WINDOW_SIZE, algo.n_frames):
-                observations = torch.from_numpy(batch.observations).to(algo._impl.device).to(torch.float32)
-                actions = torch.from_numpy(batch.actions).to(algo._impl.device).to(torch.float32)
-                q_old = q_network(observations, actions)
-                q_new = algo._impl._q_func(observations, actions)
-                total_values.append(F.mse_loss(q_old, q_new).item())
-        return sum(total_values) / len(total_values)
-    return scorer
-
-def q_ood_diff_scorer(online_network):
-    q_network = online_network['trainer/qf1']
-    def scorer(algo, episodes: List[Episode]):
-        total_values = []
-        for episode in episodes:
-            for batch in _make_batches(episode, WINDOW_SIZE, algo.n_frames):
-                observations = torch.from_numpy(batch.observations).to(algo._impl.device).to(torch.float32)
-                observations += torch.randn_like(observations) * 0.1
-                actions = algo._impl._policy(observations)
-                q_old = q_network(observations, actions)
-                q_new = algo._impl._q_func(observations, actions)
-                total_values.append(F.mse_loss(q_old, q_new).item())
-        return sum(total_values) / len(total_values)
-    return scorer
-
-def policy_replay_scorer(algo, episodes: List[Episode]) -> Callable[..., float]:
-    total_values = []
-    for episode in episodes:
-        for batch in _make_batches(episode, WINDOW_SIZE, algo.n_frames):
-            observations = torch.from_numpy(batch.observations).to(algo._impl.device).to(torch.float32)
-            actions_new = algo._impl._policy(observations)
-            actions_old = algo._impl._clone_policy(observations)
-            total_values.append(F.mse_loss(actions_old, actions_new).item())
-    return sum(total_values) / len(total_values)
-
-def policy_dataset_scorer(algo, episodes: List[Episode]) -> Callable[..., float]:
-    total_values = []
-    for episode in episodes:
-        for batch in _make_batches(episode, WINDOW_SIZE, algo.n_frames):
-            observations = torch.from_numpy(batch.observations).to(algo._impl.device).to(torch.float32)
-            actions = torch.from_numpy(batch.actions).to(algo._impl.device).to(torch.float32)
-            actions_new = algo._impl._policy(observations)
-            total_values.append(F.mse_loss(actions, actions_new).item())
-    return sum(total_values) / len(total_values)
-
-def policy_online_diff_scorer(online_network):
-    policy_network = online_network['trainer/policy']
-    def scorer(algo, episodes: List[Episode]):
-        total_values = []
-        for episode in episodes:
-            for batch in _make_batches(episode, WINDOW_SIZE, algo.n_frames):
-                observations = torch.from_numpy(batch.observations).to(algo._impl.device).to(torch.float32)
-                dist_old = policy_network(observations)
-                actions_old = dist_old.sample()
-                observations = observations + torch.randn_like(observations) * 0.1
-                dist_new = policy_network(observations)
-                actions_new = dist_old.sample()
-                total_values.append(F.mse_loss(actions_old.to(algo._impl.device), actions_new).item())
-        return sum(total_values) / len(total_values)
-    return scorer
-
-def policy_offline_diff_scorer(algo, episodes: List[Episode]):
-    total_values = []
-    for episode in episodes:
-        for batch in _make_batches(episode, WINDOW_SIZE, algo.n_frames):
-            observations = algo._impl._vae.generate(batch.observations.shape[0]).detach()
-            actions_old = algo._impl._policy(observations)
-            observations = observations + torch.randn_like(observations) * 0.1
-            actions_new = algo._impl._policy(observations)
-            total_values.append(F.mse_loss(actions_old, actions_new).item())
-    return sum(total_values) / len(total_values)
-
-def policy_id_diff_scorer(online_network):
-    policy_network = online_network['trainer/policy']
-    def scorer(algo, episodes: List[Episode]):
-        total_values = []
-        for episode in episodes:
-            for batch in _make_batches(episode, WINDOW_SIZE, algo.n_frames):
-                observations = torch.from_numpy(batch.observations).to(algo._impl.device).to(torch.float32)
-                dist_old = policy_network(observations)
-                actions_old = dist_old.sample()
-                actions_new = algo._impl._policy(observations)
-                total_values.append(F.mse_loss(actions_old.to(algo._impl.device), actions_new).item())
-        return sum(total_values) / len(total_values)
-    return scorer
-
-def policy_ood_diff_scorer(online_network):
-    policy_network = online_network['trainer/policy']
-    def scorer(algo, episodes: List[Episode]):
-        total_values = []
-        for episode in episodes:
-            for batch in _make_batches(episode, WINDOW_SIZE, algo.n_frames):
-                observations = algo._impl._vae.generate(batch.observations.shape[0]).detach()
-                observations = observations + torch.randn_like(observations) * 0.1
-                dist_old = policy_network(observations)
-                actions_old = dist_old.sample()
-                actions_new = algo._impl._policy(observations)
-                total_values.append(F.mse_loss(actions_old, actions_new).item())
-        return sum(total_values) / len(total_values)
-    return scorer

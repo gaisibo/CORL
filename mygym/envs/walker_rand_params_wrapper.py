@@ -1,6 +1,6 @@
 import numpy as np
 from typing import List, Dict
-from rand_param_envs.walker2d_rand_params import Walker2DRandParamsEnv
+from mygym.envs.walker2d_rand_params import Walker2DRandParamsEnv
 from gym.utils.ezpickle import EzPickle
 
 from . import register_env

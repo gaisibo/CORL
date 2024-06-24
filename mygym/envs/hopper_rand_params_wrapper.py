@@ -1,6 +1,5 @@
 import numpy as np
-from rand_param_envs.hopper_rand_params import HopperRandParamsEnv
-from gym.utils.ezpickle import EzPickle
+from mygym.envs.hopper_rand_params import HopperRandParamsEnv
 
 from . import register_env
 

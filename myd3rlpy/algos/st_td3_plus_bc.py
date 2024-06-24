@@ -53,14 +53,14 @@ import gym
 from online.utils import ReplayBuffer
 from online.eval_policy import eval_policy
 
-from myd3rlpy.algos.st import ST
+from myd3rlpy.algos.st import STBase
 from myd3rlpy.algos.torch.state_vae_impl import StateVAEImpl as StateVAEImpl
 from myd3rlpy.models.vaes import VAEFactory, create_vae_factory
 from utils.utils import Struct
 
 
 replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'terminals', 'policy_actions', 'qs', 'phis', 'psis']
-class ST(ST, TD3PlusBC):
+class ST(STBase, TD3PlusBC):
     r"""Twin Delayed Deep Deterministic Policy Gradients algorithm.
     TD3 is an improved DDPG-based algorithm.
     Major differences from DDPG are as follows.
@@ -160,10 +160,10 @@ class ST(ST, TD3PlusBC):
         experience_type = 'random_transition',
         sample_type = 'retrain',
 
-        critic_update_step = 100000,
+        critic_update_step = 0,
 
-        clone_critic = True,
-        clone_actor = True,
+        clone_critic = False,
+        clone_actor = False,
         merge = False,
         coldstart_step = 5000,
 
@@ -177,9 +177,7 @@ class ST(ST, TD3PlusBC):
 
         **kwargs: Any
     ):
-        super().__init__(
-            kwargs = kwargs,
-        )
+        super(STBase, self).__init__(**kwargs)
         self._critic_replay_type = critic_replay_type
         self._critic_replay_lambda = critic_replay_lambda
         self._actor_replay_type = actor_replay_type
@@ -277,7 +275,7 @@ class ST(ST, TD3PlusBC):
         metrics = {}
 
         if not self._merge or total_step < coldstart_step:
-            if total_step > self._critic_update_step:
+            if total_step >= self._critic_update_step:
                 critic_loss, replay_critic_loss = self._impl.update_critic(batch, replay_batch)
                 metrics.update({"critic_loss": critic_loss})
                 metrics.update({"replay_critic_loss": replay_critic_loss})

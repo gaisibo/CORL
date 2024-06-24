@@ -9,7 +9,7 @@ from typing import Any, Dict, Optional, Sequence, List, Union, Callable, Tuple, 
 import types
 from collections import defaultdict
 from numpy.matrixlib.defmatrix import N
-# from tqdm.auto import tqdm
+from tqdm.auto import tqdm
 from tqdm.auto import trange
 import numpy as np
 from functools import partial
@@ -59,7 +59,6 @@ from online.utils import ReplayBuffer
 from online.eval_policy import eval_policy
 
 # from myd3rlpy.dynamics.probabilistic_ensemble_dynamics import ProbabilisticEnsembleDynamics
-from myd3rlpy.algos.torch.co_impl import COImpl
 from myd3rlpy.algos.torch.state_vae_impl import StateVAEImpl
 from myd3rlpy.metrics.scorer import q_mean_scorer, q_replay_scorer
 from myd3rlpy.models.vaes import create_vae_factory
@@ -298,7 +297,7 @@ class STBase():
         logdir: str = "d3rlpy_logs",
         verbose: bool = True,
         show_progress: bool = False,
-        tensorboard_dir: Optional[str] = "d3rlpy_tensorboard",
+        tensorboard_dir: Optional[str] = None,
         eval_episodes_list: Optional[List[List[Episode]]] = None,
         save_interval: int = 10,
         discount: float = 0.99,
@@ -391,7 +390,7 @@ class STBase():
         with_timestamp: bool = True,
         logdir: str = "d3rlpy_logs",
         verbose: bool = True,
-        show_progress: bool = True,
+        show_progress: bool = False,
         tensorboard_dir: Optional[str] = None,
         eval_episodes_list: Optional[Dict[int, List[Episode]]] = None,
         save_interval: int = 1,
@@ -488,7 +487,6 @@ class STBase():
                 disable=not show_progress,
                 desc=f"Epoch {epoch}/{n_epochs}",
             )
-            range_gen = range(len(iterator))
 
             iterator.reset()
             if replay_iterator is not None:
@@ -591,36 +589,36 @@ class STBase():
 
             yield epoch, metrics
 
-    def after_learn(self, iterator, experiment_name, logdir='d3rlpy_logs'):
+    def after_learn(self, iterator, experiment_name, scorers_list, eval_episodes_list, logdir='d3rlpy_logs'):
         # for EWC
         if self._critic_replay_type in ['rwalk', 'ewc']:
             self._impl.critic_ewc_rwalk_post_train_process(iterator)
-        elif self._critic_replay_type == 'si':
-            self._impl.critic_si_post_train_process()
-        elif self._critic_replay_type == 'gem':
-            self._impl.critic_gem_post_train_process()
+        # elif self._critic_replay_type == 'si':
+        #     self._impl.critic_si_post_train_process()
+        # elif self._critic_replay_type == 'gem':
+        #     self._impl.gem_post_train_process()
         if self._actor_replay_type in ['rwalk', 'ewc']:
             self._impl.actor_ewc_rwalk_post_train_process(iterator)
-        elif self._actor_replay_type == 'si':
-            self._impl.actor_si_post_train_process()
-        elif self._actor_replay_type == 'gem':
-            self._impl.actor_gem_post_train_process()
+        # elif self._actor_replay_type == 'si':
+        #     self._impl.actor_si_post_train_process()
         if self._impl_name in ['mgcql', 'mqcql', 'mrcql']:
             self._impl.match_prop_post_train_process(iterator)
         # self._impl.reinit_network()
 
-        # if scorers_list and eval_episodes_list:
-        #     for scorer_num, (scorers, eval_episodes) in enumerate(zip(scorers_list, eval_episodes_list)):
-        #         # setup logger
-        #         logger = self._prepare_logger(True, experiment_name, True, logdir, True, None)
-        #         rename_scorers = dict()
-        #         for name, scorer in scorers.items():
-        #             rename_scorers[str(scorer_num) + '_' + name] = scorer
-        #         self._evaluate(eval_episodes, rename_scorers, logger)
-        #         # save metrics
-        #         metrics = logger.commit(0, 0)
-        if self._merge or self._use_vae:
-            self._impl.save_clone_data()
+        # # TEST
+        # for scorer_num, (scorers, eval_episodes) in enumerate(zip(scorers_list, eval_episodes_list)):
+        #     # setup logger
+        #     logger = self._prepare_logger(True, experiment_name, True, logdir, True, None)
+        #     rename_scorers = dict()
+        #     for name, scorer in scorers.items():
+        #         rename_scorers[str(scorer_num) + '_' + name] = scorer
+        #     self._evaluate(eval_episodes, rename_scorers, logger)
+        #     # save metrics
+        #     metrics = logger.commit(0, 0)
+
+        if self._clone_actor:
+            self._impl.save_clone_policy()
+            # self._impl.save_clone_data()
         self._impl._targ_q_func = copy.deepcopy(self._impl._q_func)
         self._impl._targ_policy = copy.deepcopy(self._impl._policy)
 
@@ -652,7 +650,7 @@ class STBase():
         with_timestamp: bool = True,
         logdir: str = "d3rlpy_logs",
         verbose: bool = True,
-        show_progress: bool = True,
+        show_progress: bool = False,
         tensorboard_dir: Optional[str] = None,
         timelimit_aware: bool = True,
         callback: Optional[Callable[[LearnableBase, int, int], None]] = None,
@@ -1169,6 +1167,44 @@ class STBase():
             indices_new = np.arange(len(new_replay_dataset.episodes))
             if old_replay_dataset is not None:
                 indices_old = np.arange(len(old_replay_dataset.episodes))
+        elif mix_type == 'q_sample':
+            new_replay_diff_qs = []
+            temp_dataloader = DataLoader(TensorDataset(new_replay_dataset.obsrvations, new_replay_dataset.actions), batch_size=64, shuffle=False)
+            for replay_observations_batch, replay_actions_batch in temp_dataloader:
+                if self._impl_name in ['sacn', 'edac', 'iqln2']:
+                    replay_q, _ = torch.min(self._impl._q_func(replay_observations_batch, replay_actions_batch), dim=0)
+                else:
+                    replay_q = self._impl._q_func(replay_observations_batch, replay_actions_batch)
+                new_replay_diff_qs.append(replay_q)
+            new_replay_diff_qs= torch.cat(replay_qs, dim=0)
+
+            if old_replay_dataset is not None:
+                new_replay_diff_qs = []
+                temp_dataloader = DataLoader(TensorDataset(old_replay_dataset.observations, old_replay_dataset.actions), batch_size=64, shuffle=False)
+                for replay_observations_batch, replay_actions_batch in temp_dataloader:
+                    if self._impl_name in ['sacn', 'edac', 'iqln2']:
+                        replay_q, _ = torch.min(self._impl._q_func(replay_observations_batch, replay_actions_batch), dim=0)
+                    else:
+                        replay_q = self._impl._q_func(replay_observations_batch, replay_actions_batch)
+                    new_replay_diff_qs.append(replay_q)
+                new_replay_diff_qs= torch.cat(replay_qs, dim=0)
+
+                replay_diff_qs = torch.cat([new_replay_diff_qs, old_replay_diff_qs])
+                replay_diff_qs = torch.clamp(replay_diff_qs, min = 1e-5)
+                if max_save_num > replay_diff_qs.shape[0]:
+                    indices = torch.arange(max_save_num)
+                else:
+                    indices = torch.multinomial(replay_diff_qs / torch.sum(replay_diff_qs), max_save_num)
+                indices_new = indices[indices < len(new_replay_dataset)]
+                indices_old = indices[indices >= len(new_replay_dataset)] - len(new_replay_dataset)
+            else:
+                replay_diff_qs = new_replay_diff_qs / torch.sum(new_replay_diff_qs)
+                replay_diff_qs = torch.clamp(replay_diff_qs, min = 0)
+                if max_save_num > replay_diff_qs.shape[0]:
+                    indices_new = torch.arange(max_save_num)
+                else:
+                    indices_new = torch.multinomial(replay_diff_qs / torch.sum(replay_diff_qs), max_save_num)
+                indices_old = None
         elif mix_type == 'q':
             new_replay_diff_qs = []
             i = 0
@@ -1177,11 +1213,14 @@ class STBase():
                 replay_actions = torch.from_numpy(episode.actions).to(self._impl.device)
                 temp_dataloader = DataLoader(TensorDataset(replay_observations, replay_actions), batch_size=64, shuffle=False)
                 replay_qs = []
-                replay_learned_qs = []
                 for replay_observations_batch, replay_actions_batch in temp_dataloader:
-                    replay_qs_learned_qs.append(self._impl._q_func(replay_observations_batch, replay_actions_batch) - self._impl._q_func(replay_observations_batch, self._impl._policy(replay_observations_batch)))
-                replay_qs_learned_qs = torch.cat(replay_qs, dim=0).detach().to('cpu')
-                new_replay_diff_qs.append(replay_qs_learned_qs.mean())
+                    if self._impl_name in ['sacn', 'edac', 'iqln2']:
+                        replay_q, _ = torch.min(self._impl._q_func(replay_observations_batch, replay_actions_batch), dim=0)
+                    else:
+                        replay_q = self._impl._q_func(replay_observations_batch, replay_actions_batch)
+                    replay_qs.append(replay_q)
+                replay_qs = torch.cat(replay_qs, dim=0)
+                new_replay_diff_qs.append(replay_qs.mean())
             new_replay_diff_qs = torch.stack(new_replay_diff_qs, dim=0)
 
             if old_replay_dataset is not None:
@@ -1190,32 +1229,50 @@ class STBase():
                 for episode in old_replay_dataset.episodes:
                     replay_observations = torch.from_numpy(episode.observations).to(self._impl.device)
                     replay_actions = torch.from_numpy(episode.actions).to(self._impl.device)
+                    temp_dataloader = DataLoader(TensorDataset(replay_observations, replay_actions), batch_size=64, shuffle=False)
                     replay_qs = []
-                    replay_learned_qs = []
                     for replay_observations_batch, replay_actions_batch in temp_dataloader:
-                        replay_qs_learned_qs.append(self._impl._q_func(replay_observations_batch, replay_actions_batch) - self._impl._q_func(replay_observations_batch, self._impl._policy(replay_observations_batch)))
-                    replay_qs_learned_qs = torch.cat(replay_qs_learned_qs, dim=0).detach().to(torch.float32).to('cpu')
-                    old_replay_diff_qs.append(replay_qs_learned_qs.mean())
+                        if self._impl_name in ['sacn', 'edac', 'iqln2']:
+                            replay_q, _ = torch.min(self._impl._q_func(replay_observations_batch, replay_actions_batch), dim=0)
+                        else:
+                            replay_q = self._impl._q_func(replay_observations_batch, replay_actions_batch)
+                        replay_qs.append(replay_q)
+                    replay_qs = torch.cat(replay_qs, dim=0)
+                    old_replay_diff_qs.append(replay_qs.mean())
                 old_replay_diff_qs = torch.stack(old_replay_diff_qs, dim=0)
 
                 replay_diff_qs = torch.cat([new_replay_diff_qs, old_replay_diff_qs])
-                _, indices = torch.sort(replay_diff_qs, descending=True)
-                indices = indices[:max_save_num]
+                replay_diff_qs = torch.clamp(replay_diff_qs, min = 1e-5)
+                if max_save_num > replay_diff_qs.shape[0]:
+                    indices = torch.arange(max_save_num)
+                else:
+                    # indices = torch.multinomial(replay_diff_qs / torch.sum(replay_diff_qs), max_save_num)
+                    _, indices = torch.topk(replay_diff_qs, max_save_num)
                 indices_new = indices[indices < len(new_replay_dataset)]
                 indices_old = indices[indices >= len(new_replay_dataset)] - len(new_replay_dataset)
-                indices_new = indices_new.detach().cpu().numpy()
-                indices_old = indices_old.detach().cpu().numpy()
             else:
-                replay_diff_qs = new_replay_diff_qs
-                _, indices = torch.sort(replay_diff_qs, descending=True)
-                indices_new = indices[:max_save_num].detach().cpu().numpy()
+                replay_diff_qs = new_replay_diff_qs / torch.sum(new_replay_diff_qs)
+                replay_diff_qs = torch.clamp(replay_diff_qs, min = 0)
+                if max_save_num > replay_diff_qs.shape[0]:
+                    indices_new = torch.arange(max_save_num)
+                else:
+                    # indices_new = torch.multinomial(replay_diff_qs / torch.sum(replay_diff_qs), max_save_num)
+                    _, indices_new = torch.topk(replay_diff_qs, max_save_num)
+                indices_old = None
         elif mix_type == 'random':
-            replay_dataset_length = len(old_replay_dataset.episodes)
-            slide_dataset_length = max_save_num // (dataset_id + 1)
-            indices_new = torch.randperm(slide_dataset_length).detach().cpu().numpy()
+            # slide_dataset_length = max_save_num // (dataset_id + 1)
+            # indices_new = torch.randperm(slide_dataset_length).detach().cpu().numpy()
+            # if old_replay_dataset is not None:
+            #     old_slide_dataset_length = max_save_num // (dataset_id)
+            #     indices_old = torch.cat([torch.arange(old_slide_dataset_length * i, old_slide_dataset_length * (i + 1), device=self._impl.device)[torch.randperm(slide_dataset_length)] for i in range(dataset_id)]).detach().cpu().numpy()
+            indices_new = torch.randperm(len(new_replay_dataset.episodes))[: max_save_num // (dataset_id + 1)].detach().cpu().numpy()
             if old_replay_dataset is not None:
-                old_slide_dataset_length = max_save_num // (dataset_id)
-                indices_old = torch.cat([torch.arange(old_slide_dataset_length * i, old_slide_dataset_length * (i + 1), device=self._impl.device)[torch.randperm(slide_dataset_length)] for i in range(dataset_id)]).detach().cpu().numpy()
+                indices_old = torch.randperm(len(old_replay_dataset.episodes))[max_save_num // (dataset_id + 1) :].detach().cpu().numpy()
+            # slide_dataset_length = max_save_num // (dataset_id + 1)
+            # indices_new = torch.randperm(slide_dataset_length).detach().cpu().numpy()
+            # if old_replay_dataset is not None:
+            #     old_slide_dataset_length = max_save_num // (dataset_id)
+            #     indices_old = torch.cat([torch.arange(old_slide_dataset_length * i, old_slide_dataset_length * (i + 1), device=self._impl.device)[torch.randperm(slide_dataset_length)] for i in range(dataset_id)]).detach().cpu().numpy()
         else:
             raise NotImplementedError
         replay_dataset = self._generate_new_replay_dataset(new_replay_dataset, old_replay_dataset, indices_new, indices_old)
@@ -1227,9 +1284,9 @@ class STBase():
         new_episodes = new_replay_dataset.episodes
         if old_replay_dataset is not None:
             old_episodes = old_replay_dataset.episodes
-            replay_observations = np.concatenate([new_episodes[i].observations for i in indices_new] + [old_episodes[i].observations for i in indices_old], axis=0)
-            replay_actions = np.concatenate([new_episodes[i].actions for i in indices_new] + [old_episodes[i].actions for i in indices_old], axis=0)
-            replay_rewards = np.concatenate([new_episodes[i].rewards for i in indices_new] + [old_episodes[i].rewards for i in indices_old], axis=0)
+            replay_observations = np.concatenate([new_episodes[i].observations for i in indices_new if i < len(new_episodes)] + [old_episodes[i].observations for i in indices_old if i < len(old_episodes)], axis=0)
+            replay_actions = np.concatenate([new_episodes[i].actions for i in indices_new if i < len(new_episodes)] + [old_episodes[i].actions for i in indices_old if i < len(old_episodes)], axis=0)
+            replay_rewards = np.concatenate([new_episodes[i].rewards for i in indices_new if i < len(new_episodes)] + [old_episodes[i].rewards for i in indices_old if i < len(old_episodes)], axis=0)
             for i in indices_new:
                 terminals = np.zeros_like(replay_rewards, dtype=np.bool_)
                 terminals[-1] = new_episodes[i].terminal
@@ -1245,9 +1302,9 @@ class STBase():
                 replay_terminals.append(terminals)
                 replay_episode_terminals.append(episode_terminals)
         else:
-            replay_observations = np.concatenate([new_episodes[i].observations for i in indices_new], axis=0)
-            replay_actions = np.concatenate([new_episodes[i].actions for i in indices_new], axis=0)
-            replay_rewards = np.concatenate([new_episodes[i].rewards for i in indices_new], axis=0)
+            replay_observations = np.concatenate([new_episodes[i].observations for i in indices_new if i < len(new_episodes)], axis=0)
+            replay_actions = np.concatenate([new_episodes[i].actions for i in indices_new if i < len(new_episodes)], axis=0)
+            replay_rewards = np.concatenate([new_episodes[i].rewards for i in indices_new if i < len(new_episodes)], axis=0)
             for i in indices_new:
                 terminals = np.zeros_like(new_episodes[i].rewards, dtype=np.bool_)
                 terminals[-1] = new_episodes[i].terminal
@@ -1257,11 +1314,6 @@ class STBase():
                 replay_episode_terminals.append(episode_terminals)
         replay_terminals = np.concatenate(replay_terminals, axis=0)
         replay_episode_terminals = np.concatenate(replay_episode_terminals, axis=0)
-        print(replay_observations.shape)
-        print(replay_actions.shape)
-        print(replay_rewards.shape)
-        print(replay_terminals.shape)
-        print(replay_episode_terminals.shape)
         replay_dataset = MDPDataset(replay_observations, replay_actions, replay_rewards, replay_terminals, replay_episode_terminals)
         return replay_dataset
 

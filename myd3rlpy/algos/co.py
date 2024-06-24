@@ -537,39 +537,47 @@ class CO():
 
                 # update model
                 assert dynamic_state_dict is not None
-                for key, value in dynamic_state_dict.items():
-                    if 'model' in key or 'dynamic' in key:
-                        try:
-                            obj = getattr(self._impl, key)
-                            if isinstance(obj, (torch.nn.Module)) or isinstance(obj, (torch.optim.Optimizer)):
-                                obj = getattr(self._impl, key)
-                                for name, input_param in dynamic_state_dict[key].items():
-                                    try:
-                                        param = obj.state_dict()[name]
-                                    except:
-                                        continue
-                                    if len(input_param.shape) == 2:
-                                        if input_param.shape[0] == param.shape[0] and input_param.shape[1] != param.shape[1]:
-                                            input_param_append = torch.zeros(param.shape[0], param.shape[1] - input_param.shape[1]).to(param.dtype).to(param.device)
-                                            torch.nn.init.kaiming_normal_(input_param_append)
-                                            dynamic_state_dict[key][name] = torch.cat([input_param, input_param_append], dim=1)
-                                        if input_param.shape[0] != param.shape[0] and input_param.shape[1] == param.shape[1]:
-                                            input_param_append = torch.zeros(param.shape[0] - input_param.shape[0], param.shape[1]).to(param.dtype).to(param.device)
-                                            torch.nn.init.kaiming_normal_(input_param_append)
-                                            dynamic_state_dict[key][name] = torch.cat([input_param, input_param_append], dim=0)
-                                    elif len(input_param.shape) == 1:
-                                        if input_param.shape[0] != param.shape[0]:
-                                            input_param_append = torch.zeros(param.shape[0] - input_param.shape[0]).to(param.dtype).to(param.device)
-                                            dynamic_state_dict[key][name] = torch.cat([input_param, input_param_append], dim=0)
+                # print("Dict")
+                # for key, value in dynamic_state_dict.items():
+                #     print(f"{key}: {value.shape}")
+                # print("Net")
+                # for key, value in self._impl._dynamic.named_parameters():
+                #     print(f"{key}: {value.shape}")
+                # assert False
+                self._impl._dynamic.load_state_dict(dynamic_state_dict)
+                # for key, value in dynamic_state_dict.items():
+                #     if 'model' in key or 'dynamic' in key:
+                #         try:
+                #             obj = getattr(self._impl, key)
+                #             if isinstance(obj, (torch.nn.Module)) or isinstance(obj, (torch.optim.Optimizer)):
+                #                 obj = getattr(self._impl, key)
+                #                 for name, input_param in dynamic_state_dict[key].items():
+                #                     try:
+                #                         param = obj.state_dict()[name]
+                #                     except:
+                #                         continue
+                #                     if len(input_param.shape) == 2:
+                #                         if input_param.shape[0] == param.shape[0] and input_param.shape[1] != param.shape[1]:
+                #                             input_param_append = torch.zeros(param.shape[0], param.shape[1] - input_param.shape[1]).to(param.dtype).to(param.device)
+                #                             torch.nn.init.kaiming_normal_(input_param_append)
+                #                             dynamic_state_dict[key][name] = torch.cat([input_param, input_param_append], dim=1)
+                #                         if input_param.shape[0] != param.shape[0] and input_param.shape[1] == param.shape[1]:
+                #                             input_param_append = torch.zeros(param.shape[0] - input_param.shape[0], param.shape[1]).to(param.dtype).to(param.device)
+                #                             torch.nn.init.kaiming_normal_(input_param_append)
+                #                             dynamic_state_dict[key][name] = torch.cat([input_param, input_param_append], dim=0)
+                #                     elif len(input_param.shape) == 1:
+                #                         if input_param.shape[0] != param.shape[0]:
+                #                             input_param_append = torch.zeros(param.shape[0] - input_param.shape[0]).to(param.dtype).to(param.device)
+                #                             dynamic_state_dict[key][name] = torch.cat([input_param, input_param_append], dim=0)
 
-                                obj.load_state_dict(dynamic_state_dict[key])
-                                obj.requires_grad = True
-                        except:
-                            key = str(key)
-                            obj = getattr(self._impl, key)
-                            if isinstance(obj, (torch.nn.Module)):
-                                obj = getattr(self._impl, key)
-                                obj.load_state_dict(dynamic_state_dict[key])
+                #                 obj.load_state_dict(dynamic_state_dict[key])
+                #                 obj.requires_grad = True
+                #         except:
+                #             key = str(key)
+                #             obj = getattr(self._impl, key)
+                #             if isinstance(obj, (torch.nn.Module)):
+                #                 obj = getattr(self._impl, key)
+                #                 obj.load_state_dict(dynamic_state_dict[key])
 
             # if pretrain_state_dict is not None:
             #     for key, value in pretrain_state_dict.items():
@@ -639,7 +647,6 @@ class CO():
             else:
                 raise ValueError("Either of n_epochs or n_steps must be given.")
             total_step = 0
-            print(f'train policy')
             for epoch in range(1, n_epochs + 1):
                 if epoch > 1 and test:
                     break
@@ -725,12 +732,8 @@ class CO():
                     if vals:
                         self._loss_history[name].append(np.mean(vals))
 
-                if scorers and eval_episodes:
-                    try:
-                        self._evaluate(eval_episodes, scorers, logger)
-                    except:
-                        print(type(scorers))
-                        self._evaluate(eval_episodes, scorers, logger)
+                if not test and scorers and eval_episodes:
+                    self._evaluate(eval_episodes, scorers, logger)
 
                 # save metrics
                 metrics = logger.commit(epoch, total_step)

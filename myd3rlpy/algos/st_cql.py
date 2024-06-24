@@ -53,14 +53,15 @@ import gym
 from online.utils import ReplayBuffer
 from online.eval_policy import eval_policy
 
-from myd3rlpy.algos.st import ST
+from myd3rlpy.algos.st import STBase
 from myd3rlpy.algos.torch.state_vae_impl import StateVAEImpl as StateVAEImpl
 from myd3rlpy.models.vaes import VAEFactory, create_vae_factory
+from myd3rlpy.models.encoders import EnsembelDefaultEncoderFactory
 from utils.utils import Struct
 
 
 replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'terminals', 'policy_actions', 'qs', 'phis', 'psis']
-class ST(ST, CQL):
+class ST(STBase, CQL):
     r"""Twin Delayed Deep Deterministic Policy Gradients algorithm.
     TD3 is an improved DDPG-based algorithm.
     Major differences from DDPG are as follows.
@@ -153,6 +154,8 @@ class ST(ST, CQL):
     _select_time: int
     _model_noise: float
 
+    _task_id: str
+    _single_head: bool
     _merge: bool
 
     def __init__(
@@ -174,19 +177,20 @@ class ST(ST, CQL):
         log_prob_topk = 10,
         experience_type = 'random_transition',
         sample_type = 'retrain',
-
         match_prop_quantile = 0.5,
         match_epsilon = 0.1,
         random_sample_times = 10,
 
         critic_update_step = 100000,
 
-        clone_critic = True,
-        clone_actor = True,
+        clone_critic = False,
+        clone_actor = False,
         merge = False,
         coldstart_step = 5000,
 
         fine_tuned_step = 1,
+        std_time = 1,
+        std_type = 'clamp',
 
         use_vae = False,
         vae_learning_rate = 1e-3,
@@ -196,9 +200,7 @@ class ST(ST, CQL):
 
         **kwargs: Any
     ):
-        super().__init__(
-            **kwargs,
-        )
+        super(STBase, self).__init__(**kwargs)
         self._critic_replay_type = critic_replay_type
         self._critic_replay_lambda = critic_replay_lambda
         self._actor_replay_type = actor_replay_type
@@ -219,6 +221,8 @@ class ST(ST, CQL):
         self._experience_type = experience_type
         self._sample_type = sample_type
 
+        self._begin_grad_step = 0
+
         self._match_prop_quantile = match_prop_quantile
         self._match_epsilon = match_epsilon
         self._random_sample_times = random_sample_times
@@ -230,6 +234,8 @@ class ST(ST, CQL):
         self._coldstart_step = coldstart_step
         self._merge = merge
         self._fine_tuned_step = fine_tuned_step
+        self._std_time = std_time
+        self._std_type = std_type
 
         self._use_vae = use_vae
         self._vae_learning_rate = vae_learning_rate
@@ -241,8 +247,7 @@ class ST(ST, CQL):
         self._feature_size = feature_size
 
     def _create_impl(
-        self, observation_shape: Sequence[int], action_size: int
-    ) -> None:
+        self, observation_shape: Sequence[int], action_size: int) -> None:
         impl_dict = {
             'observation_shape':observation_shape,
             'action_size':action_size,
@@ -290,16 +295,18 @@ class ST(ST, CQL):
         }
         if self._impl_name == 'cql':
             from myd3rlpy.algos.torch.st_cql_impl import STImpl as STImpl
-        elif self._impl_name in ['mgcql', 'mqcql', 'mrcql']:
-            if self._impl_name == 'mgcql':
-                from myd3rlpy.algos.torch.st_mgcql_impl import STImpl as STImpl
-            if self._impl_name == 'mqcql':
-                from myd3rlpy.algos.torch.st_mqcql_impl import STImpl as STImpl
-            elif self._impl_name == 'mrcql':
-                from myd3rlpy.algos.torch.st_mrcql_impl import STImpl as STImpl
-                impl_dict['random_sample_times'] = self._random_sample_times
-            impl_dict['match_prop_quantile'] = self._match_prop_quantile
-            impl_dict['match_epsilon'] = self._match_epsilon
+            impl_dict["std_time"] = self._std_time
+            impl_dict["std_type"] = self._std_type
+        # elif self._impl_name in ['mgcql', 'mqcql', 'mrcql']:
+        #     if self._impl_name == 'mgcql':
+        #         from myd3rlpy.algos.torch.st_mgcql_impl import STImpl as STImpl
+        #     if self._impl_name == 'mqcql':
+        #         from myd3rlpy.algos.torch.st_mqcql_impl import STImpl as STImpl
+        #     elif self._impl_name == 'mrcql':
+        #         from myd3rlpy.algos.torch.st_mrcql_impl import STImpl as STImpl
+        #         impl_dict['random_sample_times'] = self._random_sample_times
+        #     impl_dict['match_prop_quantile'] = self._match_prop_quantile
+        #     impl_dict['match_epsilon'] = self._match_epsilon
         else:
             print(self._impl_name)
             raise NotImplementedError
@@ -316,7 +323,43 @@ class ST(ST, CQL):
         metrics = {}
         if not self._merge or total_step < coldstart_step:
             if self._temp_learning_rate > 0:
-                temp_loss, temp = self._impl.update_temp(batch)
+                if total_step % 1000 == 0:
+                    h = self._impl._policy._encoder(torch.from_numpy(batch.observations).to(self._impl.device))
+                    mu = self._impl._policy._mu(h)
+                    logstd = cast(torch.nn.Linear, self._impl._policy._logstd)(h)
+                    clipped_logstd = logstd.clamp(self._impl._policy._min_logstd, self._impl._policy._max_logstd)
+                    print(f"{torch.mean(h)=}")
+                    print(f"{torch.max(h)=}")
+                    print(f"{torch.min(h)=}")
+                    print(f"{torch.mean(mu)=}")
+                    print(f"{torch.max(mu)=}")
+                    print(f"{torch.min(mu)=}")
+                    print(f"{torch.mean(logstd)=}")
+                    print(f"{torch.max(logstd)=}")
+                    print(f"{torch.min(logstd)=}")
+                    print(f"{torch.mean(clipped_logstd)=}")
+                    print(f"{torch.max(clipped_logstd)=}")
+                    print(f"{torch.min(clipped_logstd)=}")
+                try:
+                    temp_loss, temp = self._impl.update_temp(batch)
+                except ValueError:
+                    h = self._impl._policy._encoder(torch.from_numpy(batch.observations).to(self._impl.device))
+                    mu = self._impl._policy._mu(h)
+                    logstd = cast(torch.nn.Linear, self._impl._policy._logstd)(h)
+                    clipped_logstd = logstd.clamp(self._impl._policy._min_logstd, self._impl._policy._max_logstd)
+                    print(f"{torch.mean(h)=}")
+                    print(f"{torch.max(h)=}")
+                    print(f"{torch.min(h)=}")
+                    print(f"{torch.mean(mu)=}")
+                    print(f"{torch.max(mu)=}")
+                    print(f"{torch.min(mu)=}")
+                    print(f"{torch.mean(logstd)=}")
+                    print(f"{torch.max(logstd)=}")
+                    print(f"{torch.min(logstd)=}")
+                    print(f"{torch.mean(clipped_logstd)=}")
+                    print(f"{torch.max(clipped_logstd)=}")
+                    print(f"{torch.min(clipped_logstd)=}")
+                    policy_sample, policy_logstd = self._impl._policy.sample_with_log_prob(torch.from_numpy(batch.observations).to(self._impl.device))
                 metrics.update({"temp_loss": temp_loss, "temp": temp})
             if self._alpha_learning_rate > 0:
                 alpha_loss, alpha = self._impl.update_alpha(batch)
@@ -326,7 +369,7 @@ class ST(ST, CQL):
             metrics.update({"critic_loss": critic_loss})
             metrics.update({"replay_critic_loss": replay_critic_loss})
 
-            if total_step > self._critic_update_step:
+            if (total_step > self._critic_update_step and total_step < coldstart_step) or self._impl._impl_id == 0:
                 actor_loss, replay_actor_loss = self._impl.update_actor(batch, replay_batch, clone_actor=self._clone_actor, online=online)
                 # actor_loss, replay_actor_loss = self._impl.update_actor(batch, replay_batch, online=online)
                 metrics.update({"actor_loss": actor_loss})

@@ -31,48 +31,45 @@ from utils.utils import Struct
 
 replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'terminals', 'policy_actions', 'qs', 'phis', 'psis']
 class STImpl(STImpl, CQLImpl):
-    def __init__(self, std_time=1, std_type='clamp', **kwargs):
-        super().__init__(
-            **kwargs
-        )
-        self._std_threshold = 0
-        self._std_time = std_time
-        self._std_type = std_type
-        if self._std_type != 'none':
-            self._qs_stds = []
 
     def compute_critic_loss(
-        self, batch: TorchMiniBatch, q_tpn: torch.Tensor, clone_critic: bool = False, online: bool = False, replay: bool=False, first_time = False
+            self, batch: TorchMiniBatch, q_tpn: torch.Tensor, clone_critic: bool = False, online: bool = False
     ) -> torch.Tensor:
         assert self._q_func is not None
-        loss = self._q_func.compute_error(
-            observations=batch.observations,
-            actions=batch.actions,
-            rewards=batch.rewards,
-            target=q_tpn,
-            terminals=batch.terminals,
-            gamma=self._gamma**batch.n_steps,
-        )
+        td_sum = 0
+        for q_func in self._q_func._q_funcs:
+            loss = q_func.compute_error(
+                observations=batch.observations,
+                actions=batch.actions,
+                rewards=batch.rewards,
+                target=q_tpn,
+                terminals=batch.terminals,
+                gamma=self._gamma ** batch.n_steps,
+                reduction="none",
+            )
+            td_sum += loss.mean(dim=1)
+        loss = td_sum
         if online:
             return loss.mean()
-        # if clone_critic:
-        #     action = self._policy(batch.observations)
-        #     q_t = self._q_func(batch.observations, action, "min")
-        #     clone_action = self._clone_policy.sample(batch.observations)
-        #     clone_q_t = self._clone_q_func(batch.observations, clone_action, "min")
-        #     conservative_loss = self._compute_conservative_loss(
-        #         batch.observations, batch.actions, batch.next_observations
-        #     )
-        #     loss += conservative_loss
-        #     loss = torch.where(q_t > clone_q_t, loss, torch.zeros_like(loss)).mean()
-        # else:
-        conservative_loss = self._compute_conservative_loss(
-            batch.observations, batch.actions, batch.next_observations
-        )
-        loss += conservative_loss.mean()
+        if clone_critic:
+            action = self._policy(batch.observations)
+            q_t = self._q_func(batch.observations, action, "min")
+            clone_action = self._clone_policy.sample(batch.observations)
+            clone_q_t = self._clone_q_func(batch.observations, clone_action, "min")
+            conservative_loss = self._compute_conservative_loss(
+                batch.observations, batch.actions, batch.next_observations
+            )
+            loss += conservative_loss
+            loss = torch.where(q_t > clone_q_t, loss, torch.zeros_like(loss)).mean()
+        else:
+            conservative_loss = self._compute_conservative_loss(
+                batch.observations, batch.actions, batch.next_observations
+            )
+            loss += conservative_loss
+            loss = loss.mean()
         return loss
 
-    def compute_actor_loss(self, batch: TorchMiniBatch, clone_actor=False, replay: bool=False, online: bool=False) -> torch.Tensor:
+    def compute_actor_loss(self, batch: TorchMiniBatch, clone_actor=False, online: bool=False) -> torch.Tensor:
     # def compute_actor_loss(self, batch: TorchMiniBatch, online: bool=False) -> torch.Tensor:
         assert self._policy is not None
         assert self._q_func is not None
@@ -80,7 +77,7 @@ class STImpl(STImpl, CQLImpl):
         entropy = self._log_temp().exp() * log_prob
         q_t = self._q_func(batch.observations, action, "min")
         new_q_t = self._q_func(batch.observations, batch.actions, "min")
-        if clone_actor and self._clone_policy is not None:
+        if clone_actor:
             clone_action, clone_log_prob = self._clone_policy.sample_with_log_prob(batch.observations)
             clone_q_t = self._clone_q_func(batch.observations, clone_action, "min")
             loss = (entropy - q_t)
@@ -97,9 +94,7 @@ class STImpl(STImpl, CQLImpl):
             self._observation_shape,
             self._action_size,
             self._actor_encoder_factory,
-            min_logstd=-20.0,
-            max_logstd=2.0,
-            use_std_parameter=False,
+            use_std_parameter=True
         )
 
     def _compute_conservative_loss(

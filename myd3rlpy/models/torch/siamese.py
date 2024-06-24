@@ -10,6 +10,7 @@ class Phi(nn.Module):
         super(Phi, self).__init__()
         self._encoder = encoder
         self._backbone = nn.Sequential(
+            nn.ReLU(),
             nn.Linear(encoder.get_feature_size(), hidden_dim),
             nn.ReLU(),
         )
@@ -25,6 +26,7 @@ class Psi(nn.Module):
         super(Psi, self).__init__()
         self._encoder = encoder
         self._backbone = nn.Sequential(
+            nn.ReLU(),
             nn.Linear(encoder.get_feature_size(), hidden_dim),
             nn.ReLU(),
         )

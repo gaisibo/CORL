@@ -8,7 +8,6 @@ from collections import namedtuple
 import pickle
 import time
 from functools import partial
-from envs import HalfCheetahDirEnv
 import numpy as np
 import gym
 from mygym.envs.halfcheetah_block import HalfCheetahBlockEnv
@@ -29,10 +28,12 @@ from d3rlpy.online.buffers import ReplayBuffer
 # from myd3rlpy.datasets import get_d4rl
 
 from utils.k_means import kmeans
-from myd3rlpy.metrics.scorer import evaluate_on_environment_help
-from dataset.load_d4rl import get_d4rl_local, get_antmaze_local, get_dataset
+# from myd3rlpy.metrics.scorer import evaluate_on_environment_help, single_evaluate_on_environment, q_dataset_scorer, q_play_scorer, q_online_diff_scorer, q_offline_diff_scorer, q_id_diff_scorer, q_ood_diff_scorer, policy_replay_scorer, policy_dataset_scorer, policy_online_diff_scorer, policy_offline_diff_scorer, policy_id_diff_scorer, policy_ood_diff_scorer
+from dataset.load_d4rl import get_d4rl_local, get_antmaze_local, get_dataset, get_macaw_local
 from rlkit.torch import pytorch_util as ptu
 from config.single_config import get_st_dict
+
+from mygym.envs.envs import HalfCheetahDirEnv, HalfCheetahVelEnv, AntDirEnv, AntGoalEnv, HumanoidDirEnv, WalkerRandParamsWrappedEnv, ML45Env
 
 
 RESET = R = 'r'  # Reset position.
@@ -174,57 +175,179 @@ def read_dict(state_dict, prename):
                 print(f"{prename}.{str(key)}: {value}")
         else:
             read_dict(value, prename + '.' + str(key))
+
+def update(args, step_dict, experiment_name, algos_name, dataset_name, dataset_num, env, i, fs, fs_dict):
+
+    # h5_path = 'dataset/d4rl/' + args.dataset + '/' + dataset_num + '.hdf5'
+    h5_path = f'dataset/macaw/{dataset_name}/buffers_{dataset_name}_train_{dataset_num}_sub_task_0.hdf5'
+    dataset = get_macaw_local(h5_path)
+    env.reset_task(i)
+
+    # training
+    replay_dataset = None
+    learned_datasets = []
+    if not args.test:
+        pretrain_path_eval = "pretrained_network/" + f"ST_{args.algo}_" + args.dataset + '_d4rl.pt'
+
+    if args.clear_network:
+        fs = FS(**fs_dict)
+
+    learned_datasets.append(dataset)
+    add_one_learned_datasets = [None] + learned_datasets
+
+    # if env is not None:
+    #     # scorers_list = [{'environment': d3rlpy.metrics.evaluate_on_environment(env), 'fune_tuned_environment': single_evaluate_on_environment(env)}]
+    #     scorers_env = {'environment_{dataset_name}_{i}': d3rlpy.metrics.evaluate_on_environment(env)}
+    #     scorers_list.append(scorers_env)
+    # else:
+    #     raise NotImplementedError
+
+    eval_env = env
+
+    start_time = time.perf_counter()
+    print(f'Start Training {dataset_num}')
+    if dataset_num <= args.read_policy:
+        iterator, replay_iterator, n_epochs = fs.make_iterator(dataset, replay_dataset, step_dict['merge_n_steps'], step_dict['n_steps_per_epoch'], None, True)
+        if args.read_policy == 0:
+            pretrain_path = "pretrained_network/" + "ST_" + args.algo_kind + '_0.9_' + args.dataset + '_' + args.dataset_nums[0] + '.pt'
+            if not os.path.exists(pretrain_path):
+                pretrain_path = "pretrained_network/" + "ST_" + args.algo_kind + '_' + args.dataset + '_' + args.dataset_nums[0] + '.pt'
+                assert os.path.exists(pretrain_path)
+        else:
+            pretrain_path = args.model_path + algos_name + '_' + str(dataset_num) + '.pt'
+
+        fs.build_with_dataset(dataset, dataset_num)
+        fs._impl.save_clone_data()
+        fs.load_model(pretrain_path)
+        fs._impl.save_clone_data()
+        # if (args.critic_replay_type not in ['ewc', 'si', 'rwalk'] or args.actor_replay_type not in ['ewc', 'si', 'rwalk']) and args.read_policy != 0:
+        #     try:
+        #         replay_dataset = torch.load(f=args.model_path + algos_name + '_' + str(dataset_num) + '_datasets.pt')
+        #     except BaseException as e:
+        #         print(f'Don\' have replay_dataset')
+        #         raise e
+    # elif args.merge and dataset_num == args.read_merge_policy:
+    #     iterator, replay_iterator, n_epochs = fs.make_iterator(dataset, replay_dataset, step_dict['merge_n_steps'], step_dict['n_steps_per_epoch'], None, True)
+    #     pretrain_path = "pretrained_network/" + "ST_" + args.algo_kind + '_' + args.dataset + '_' + args.dataset_nums[0] + '.pt'
+    #     fs.build_with_dataset(dataset, dataset_num)
+    #     fs.load_model(pretrain_path)
+    #     for param_group in fs._impl._actor_optim.param_groups:
+    #         param_group["lr"] = fs_dict['actor_learning_rate']
+    #     if args.algo in ['iql', 'iqln']:
+    #         scheduler = CosineAnnealingLR(fs._impl._actor_optim, step_dict['n_steps'])
+
+    #         def callback(algo, epoch, total_step):
+    #             scheduler.step()
+    #     else:
+    #         callback = None
+    #     fs.fit(
+    #         dataset_num,
+    #         dataset=dataset,
+    #         iterator=iterator,
+    #         replay_dataset=replay_dataset,
+    #         replay_iterator=replay_iterator,
+    #         eval_episodes_list=add_one_learned_datasets,
+    #         # n_epochs=args.n_epochs if not args.test else 1,
+    #         n_epochs=n_epochs,
+    #         coldstart_steps=step_dict['coldstart_steps'],
+    #         save_interval=args.save_interval,
+    #         experiment_name=experiment_name + algos_name + '_' + str(dataset_num),
+    #         scorers_list = scorers_list,
+    #         callback=callback,
+    #         test=args.test,
+    #     )
+    elif dataset_num > args.read_policy:
+        # train
+        print(f'fitting dataset {dataset_num}')
+        # if args.merge and args.read_merge_policy >= 0 and dataset_num > 0:
+        #     iterator, replay_iterator, n_epochs = fs.make_iterator(dataset, replay_dataset, step_dict['n_steps'] + step_dict['merge_n_steps'], step_dict['n_steps_per_epoch'], None, True)
+        # else:
+        iterator, n_epochs = fs.make_iterator(dataset, step_dict['n_steps'], step_dict['n_steps_per_epoch'], None, True)
+        fs.build_with_dataset(dataset, dataset_num)
+        for param_group in fs._impl._actor_optim.param_groups:
+            param_group["lr"] = fs_dict['actor_learning_rate']
+        for param_group in fs._impl._critic_optim.param_groups:
+            param_group["lr"] = fs_dict['critic_learning_rate']
+        if args.use_vae:
+            for param_group in fs._impl._vae_optim.param_groups:
+                param_group["lr"] = fs_dict['vae_learning_rate']
+        if args.algo in ['iql', 'iqln', 'iqln2', 'iqln3', 'iqln4', 'sql', 'sqln']:
+            scheduler = CosineAnnealingLR(fs._impl._actor_optim, 1000000)
+
+            def callback(algo, epoch, total_step):
+                scheduler.step()
+            # fs_dict['expectile'] = 1
+        else:
+            callback = None
+
+        fs.fit(
+            dataset_num,
+            dataset=dataset,
+            iterator=iterator,
+            eval_episodes_list=add_one_learned_datasets,
+            # n_epochs=args.n_epochs if not args.test else 1,
+            n_epochs=n_epochs,
+            coldstart_steps=step_dict['coldstart_steps'],
+            save_interval=args.save_interval,
+            experiment_name=experiment_name + algos_name + '_' + str(dataset_num),
+            # scorers_list = scorers_list,
+            score = False,
+            callback=callback,
+            test=args.test,
+        )
+    # fs.after_learn(iterator, experiment_name + algos_name + '_' + str(dataset_num), scorers_list, add_one_learned_datasets)
+    print(f'Training task {dataset_num} time: {time.perf_counter() - start_time}')
+    fs.save_model(args.model_path + algos_name + '_' + str(dataset_num) + '.pt')
+    # if args.test and i >= 2:
+    #     break
+
 replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'terminals', 'means', 'std_logs', 'qs', 'phis', 'psis']
 def main(args, device):
     np.set_printoptions(precision=1, suppress=True)
     ask_indexes = False
-    if args.dataset_kind in ['d4rl', 'antmaze']:
-        env = gym.make(args.dataset)
-        eval_env = gym.make(args.dataset)
-    elif args.dataset_kind == 'block':
-        env = gym.make(args.dataset)
-        eval_env = gym.make(args.dataset)
-    else:
-        raise NotImplementedError
 
     # prepare algorithm
     if args.algo in ['td3_plus_bc', 'td3']:
-        from myd3rlpy.algos.st_td3_plus_bc import ST
+        from myd3rlpy.algos.fs_td3_plus_bc import FS
     elif args.algo_kind == 'cql':
-        from myd3rlpy.algos.st_cql import ST
+        from myd3rlpy.algos.fs_cql import FS
     elif args.algo in ['iql', 'iqln', 'iqln2', 'iqln3', 'iqln4', 'sql', 'sqln']:
-        from myd3rlpy.algos.st_iql import ST
+        from myd3rlpy.algos.fs_iql import FS
     elif args.algo in ['sacn', 'edac']:
-        from myd3rlpy.algos.st_sacn import ST
+        from myd3rlpy.algos.fs_sacn import FS
     else:
         raise NotImplementedError
-    st_dict, online_st_dict, step_dict = get_st_dict(args, args.dataset_kind, args.algo)
-    print(f"{st_dict['actor_learning_rate']=}")
+    fs_dict, online_fs_dict, step_dict = get_st_dict(args, 'd4rl', args.algo)
     if args.n_steps is not None:
         step_dict['n_steps'] = args.n_steps
     if args.algo in ['iql', 'sql', 'iqln', 'iqln2', 'iqln3', 'iqln4', 'sqln']:
-        st_dict['weight_temp'] = args.weight_temp
-        st_dict['expectile'] = args.expectile
-        st_dict['expectile_min'] = args.expectile_min
-        st_dict['expectile_max'] = args.expectile_max
+        fs_dict['weight_temp'] = args.weight_temp
+        fs_dict['expectile'] = args.expectile
+        fs_dict['expectile_min'] = args.expectile_min
+        fs_dict['expectile_max'] = args.expectile_max
         if args.algo in ['sql', 'sqln']:
-            st_dict['alpha'] = args.alpha
+            fs_dict['alpha'] = args.alpha
         if args.algo in ['iqln', 'iqln2', 'iqln3', 'iqln4', 'sqln']:
-            st_dict['n_ensemble'] = args.n_ensemble
-            st_dict['std_time'] = args.std_time
-            st_dict['std_type'] = args.std_type
-            st_dict['entropy_time'] = args.entropy_time
+            fs_dict['n_ensemble'] = args.n_ensemble
+            fs_dict['std_time'] = args.std_time
+            fs_dict['std_type'] = args.std_type
+            fs_dict['entropy_time'] = args.entropy_time
     elif args.algo == 'cql':
-        st_dict['std_time'] = args.std_time
-        st_dict['std_type'] = args.std_type
-        st_dict['entropy_time'] = args.entropy_time
+        fs_dict['std_time'] = args.std_time
+        fs_dict['std_type'] = args.std_type
+        fs_dict['entropy_time'] = args.entropy_time
     elif args.algo in ['sacn', 'edac']:
-        st_dict['n_ensemble'] = args.n_ensemble
+        fs_dict['n_ensemble'] = args.n_ensemble
         if args.algo == 'edac':
-            st_dict['eta'] = args.eta
-    st = ST(**st_dict)
+            fs_dict['eta'] = args.eta
+    fs_dict['embed'] = args.embed
 
-    experiment_name = "ST" + '_'
+    fs_dict['actor_learning_rate'] = args.actor_learning_rate
+    fs_dict['critic_learning_rate'] = args.critic_learning_rate
+
+    fs = FS(**fs_dict)
+
+    experiment_name = "FS" + '_'
     algos_name = args.algo
     algos_name += '_' + str(args.weight_temp)
     algos_name += '_' + str(args.expectile)
@@ -232,10 +355,10 @@ def main(args, device):
     algos_name += '_' + str(args.expectile_max)
     algos_name += '_' + args.actor_replay_type
     algos_name += '_' + str(args.actor_replay_lambda)
+    algos_name += '_' + str(args.actor_learning_rate)
     algos_name += '_' + args.critic_replay_type
     algos_name += '_' + str(args.critic_replay_lambda)
-    algos_name += '_' + args.dataset
-    algos_name += '_' + args.dataset_nums_str
+    algos_name += '_' + str(args.critic_learning_rate)
     algos_name += '_' + str(args.max_save_num)
     if args.add_name != '':
         algos_name += '_' + args.add_name
@@ -248,175 +371,87 @@ def main(args, device):
         task_datasets = []
         eval_envs = []
         dataset_num_counter = dict()
-        for i, dataset_num in enumerate(args.dataset_nums):
+        scorers_list = []
+        learned_dataset_names = {}
+        if args.actor_replay_type == 'orl':
+            replay_datasets = []
+        for env_num, (dataset_name, dataset_nums) in enumerate(args.dataset_kinds.items()):
+            print(f"Start dataset {dataset_name}")
+            tasks = []
+            for dataset_num in dataset_nums:
+                env_path = f'dataset/macaw/{dataset_name}/env_{dataset_name}_train_task{dataset_num}.pkl'
+                with open(env_path, 'rb') as f:
+                    task_info = pickle.load(f)
+                    assert len(task_info) == 1, f'Unexpected task info: {task_info}'
+                    tasks.append(task_info[0])
 
-            if dataset_num not in dataset_num_counter.keys():
-                dataset_num_counter[dataset_num] = 0
+            if dataset_name == 'ant_dir':
+                env = AntDirEnv(tasks, 50, include_goal = False)
+            elif dataset_name == 'cheetah_dir':
+                env = HalfCheetahDirEnv(tasks, include_goal = False)
+            elif dataset_name == 'cheetah_vel':
+                env = HalfCheetahVelEnv(tasks, include_goal = False, one_hot_goal=False)
+            elif dataset_name == 'walker_dir':
+                env = WalkerRandParamsWrappedEnv(tasks, 50, include_goal = False)
             else:
-                dataset_num_counter[dataset_num] += 1
-            if args.dataset_kind == 'antmaze':
-                # h5_path = 'dataset/d4rl/' + args.dataset + '/' + dataset_num + '.hdf5'
-                h5_path = 'dataset/d4rl/origin/' + args.dataset + '.hdf5'
-                print(f"h5_path: {h5_path}")
-                dataset = get_antmaze_local(get_dataset(h5_path), epoch_num=dataset_num, epoch_sum=len(args.dataset_nums))
-                # eval_envs.append(eval_env)
-            elif args.dataset_kind == 'd4rl':
-                epoch_sum = 3
-                h5_path = 'dataset/d4rl/' + args.dataset + '/' + dataset_num + '.hdf5'
-                print(f"h5_path: {h5_path}")
-                dataset = get_d4rl_local(get_dataset(h5_path), epoch_num=(dataset_num_counter[dataset_num]) % epoch_sum, epoch_sum=epoch_sum)
-            task_datasets.append((dataset_num, dataset))
-        if args.dataset_kind == 'antmaze':
-            for i in range(args.dataset_sum):
-                # 每一段都要至少学过才行。
-                assert i in dataset_num_counter.keys()
-        replay_dataset = None
-        learned_id = []
-        learned_datasets = []
-        if not args.test:
-            pretrain_path_eval = "pretrained_network/" + f"ST_{args.algo}_" + args.dataset + '_d4rl.pt'
-
-        for dataset_num, (dataset_id, dataset) in enumerate(task_datasets):
-            if args.clear_network:
-                st = ST(**st_dict)
-            learned_id.append((dataset_num, dataset_id))
-
-            learned_datasets.append(dataset)
-            add_one_learned_datasets = [None] + learned_datasets
-
-            if env is not None:
-                # scorers_list = [{'environment': d3rlpy.metrics.evaluate_on_environment(env), 'fune_tuned_environment': single_evaluate_on_environment(env)}]
-                scorers_env = {'environment': d3rlpy.metrics.evaluate_on_environment(env)}
-                if len(eval_envs) > 0:
-                    scorers_part = dict(zip(['environment_part' + str(n) for n in learned_id], [evaluate_on_environment_help(eval_envs[num], mazes_start[args.maze][args.part_times_num][int(id_)]) for num, id_ in learned_id]))
-                    scorers_env.update(scorers_part)
-                scorers_list = [scorers_env]
+                raise RuntimeError(f'Invalid env name {dataset_name}')
+            eval_envs.append(env)
+            if dataset_name == 'ant_dir':
+                test_env = AntDirEnv(tasks, 50, include_goal = False)
+            elif dataset_name == 'cheetah_dir':
+                test_env = HalfCheetahDirEnv(tasks, include_goal = False)
+            elif dataset_name == 'cheetah_vel':
+                test_env = HalfCheetahVelEnv(tasks, include_goal = False, one_hot_goal=False)
+            elif dataset_name == 'walker_dir':
+                test_env = WalkerRandParamsWrappedEnv(tasks, 50, include_goal = False)
             else:
-                raise NotImplementedError
+                raise RuntimeError(f'Invalid env name {dataset_name}')
 
-            start_time = time.perf_counter()
-            print(f'Start Training {dataset_num}')
-            if dataset_num <= args.read_policy:
-                iterator, replay_iterator, n_epochs = st.make_iterator(dataset, replay_dataset, step_dict['merge_n_steps'], step_dict['n_steps_per_epoch'], None, True)
-                if args.read_policy == 0:
-                    pretrain_path = "pretrained_network/" + "ST_" + args.algo_kind + '_0.9_' + args.dataset + '_' + args.dataset_nums[0] + '.pt'
-                    if not os.path.exists(pretrain_path):
-                        pretrain_path = "pretrained_network/" + "ST_" + args.algo_kind + '_' + args.dataset + '_' + args.dataset_nums[0] + '.pt'
-                        assert os.path.exists(pretrain_path)
-                else:
-                    pretrain_path = args.model_path + algos_name + '_' + str(dataset_num) + '.pt'
+            learned_dataset_names.update({dataset_name: (dataset_nums, test_env)})
 
-                st.build_with_dataset(dataset, dataset_num)
-                st._impl.save_clone_data()
-                st.load_model(pretrain_path)
-                st._impl.save_clone_data()
-                # if (args.critic_replay_type not in ['ewc', 'si', 'rwalk'] or args.actor_replay_type not in ['ewc', 'si', 'rwalk']) and args.read_policy != 0:
-                #     try:
-                #         replay_dataset = torch.load(f=args.model_path + algos_name + '_' + str(dataset_num) + '_datasets.pt')
-                #     except BaseException as e:
-                #         print(f'Don\' have replay_dataset')
-                #         raise e
-            # elif args.merge and dataset_num == args.read_merge_policy:
-            #     iterator, replay_iterator, n_epochs = st.make_iterator(dataset, replay_dataset, step_dict['merge_n_steps'], step_dict['n_steps_per_epoch'], None, True)
-            #     pretrain_path = "pretrained_network/" + "ST_" + args.algo_kind + '_' + args.dataset + '_' + args.dataset_nums[0] + '.pt'
-            #     st.build_with_dataset(dataset, dataset_num)
-            #     st.load_model(pretrain_path)
-            #     for param_group in st._impl._actor_optim.param_groups:
-            #         param_group["lr"] = st_dict['actor_learning_rate']
-            #     if args.algo in ['iql', 'iqln']:
-            #         scheduler = CosineAnnealingLR(st._impl._actor_optim, step_dict['n_steps'])
+            if len(args.dataset_kinds.items()) == env_num + 1:
+                print(f"Testing after {dataset_name}")
+                for test_dataset_name, (test_dataset_nums, test_env) in learned_dataset_names.items():
+                    for j, dataset_num in enumerate(test_dataset_nums[-1:] if not args.test else test_dataset_nums[-1:]):
+                        print(f"Testing {test_dataset_name}, {dataset_num}")
 
-            #         def callback(algo, epoch, total_step):
-            #             scheduler.step()
-            #     else:
-            #         callback = None
-            #     st.fit(
-            #         dataset_num,
-            #         dataset=dataset,
-            #         iterator=iterator,
-            #         replay_dataset=replay_dataset,
-            #         replay_iterator=replay_iterator,
-            #         eval_episodes_list=add_one_learned_datasets,
-            #         # n_epochs=args.n_epochs if not args.test else 1,
-            #         n_epochs=n_epochs,
-            #         coldstart_steps=step_dict['coldstart_steps'],
-            #         save_interval=args.save_interval,
-            #         experiment_name=experiment_name + algos_name + '_' + str(dataset_num),
-            #         scorers_list = scorers_list,
-            #         callback=callback,
-            #         test=args.test,
-            #     )
-            elif dataset_num > args.read_policy:
-                # train
-                print(f'fitting dataset {dataset_num}')
-                # if args.merge and args.read_merge_policy >= 0 and dataset_num > 0:
-                #     iterator, replay_iterator, n_epochs = st.make_iterator(dataset, replay_dataset, step_dict['n_steps'] + step_dict['merge_n_steps'], step_dict['n_steps_per_epoch'], None, True)
-                # else:
-                iterator, replay_iterator, n_epochs = st.make_iterator(dataset, replay_dataset, step_dict['n_steps'], step_dict['n_steps_per_epoch'], None, True)
-                st.build_with_dataset(dataset, dataset_num)
-                for param_group in st._impl._actor_optim.param_groups:
-                    param_group["lr"] = st_dict['actor_learning_rate']
-                for param_group in st._impl._critic_optim.param_groups:
-                    param_group["lr"] = st_dict['critic_learning_rate']
-                if args.use_vae:
-                    for param_group in st._impl._vae_optim.param_groups:
-                        param_group["lr"] = st_dict['vae_learning_rate']
-                if args.algo in ['iql', 'iqln', 'iqln2', 'iqln3', 'iqln4', 'sql', 'sqln']:
-                    scheduler = CosineAnnealingLR(st._impl._actor_optim, 1000000)
+                        h5_path = f'dataset/macaw/{test_dataset_name}/buffers_{test_dataset_name}_train_{dataset_num}_sub_task_0.hdf5'
+                        dataset, _, _ = get_macaw_local(h5_path)
+                        fs.build_with_dataset(dataset, dataset_num)
+                        fs.load_model(args.pretrain_path)
+                        replay_dataset = None
+                        iterator, n_epochs = fs.make_iterator(dataset, step_dict['n_steps'], step_dict['n_steps_per_epoch'], None, True)
+                        test_env.reset_task(j)
+                        fs.fit(
+                            dataset_num,
+                            dataset=dataset,
+                            iterator=iterator,
+                            # eval_episodes_list=add_one_learned_datasets,
+                            # n_epochs=args.n_epochs if not args.test else 1,
+                            n_epochs=n_epochs,
+                            coldstart_steps=step_dict['coldstart_steps'],
+                            save_interval=args.save_interval,
+                            experiment_name=experiment_name + algos_name + '_' + str(dataset_num),
+                            # scorers_list = scorers_list,
+                            score = True,
+                            # callback=callback,
+                            test=args.test,
+                        )
 
-                    def callback(algo, epoch, total_step):
-                        scheduler.step()
-                    # st_dict['expectile'] = 1
-                else:
-                    callback = None
-
-                st.fit(
-                    dataset_num,
-                    dataset=dataset,
-                    iterator=iterator,
-                    replay_dataset=replay_dataset,
-                    replay_iterator=replay_iterator,
-                    eval_episodes_list=add_one_learned_datasets,
-                    # n_epochs=args.n_epochs if not args.test else 1,
-                    n_epochs=n_epochs,
-                    coldstart_steps=step_dict['coldstart_steps'],
-                    save_interval=args.save_interval,
-                    experiment_name=experiment_name + algos_name + '_' + str(dataset_num),
-                    scorers_list = scorers_list,
-                    callback=callback,
-                    test=args.test,
-                )
-            st.after_learn(iterator, experiment_name + algos_name + '_' + str(dataset_num), scorers_list, add_one_learned_datasets)
-            print(f'Training task {dataset_num} time: {time.perf_counter() - start_time}')
-            # st.save_model(args.model_path + algos_name + '_' + str(dataset_num) + '.pt')
-            if args.critic_replay_type in ['bc', 'orl', 'gem', 'agem'] or args.actor_replay_type in ['bc', 'orl', 'gem', 'agem'] or (args.use_vae and args.vae_replay_type in ['bc', 'orl', 'gem', 'agem']):
-                # if args.mix_type == 'random':
-                #     slide_dataset_length = args.max_save_num // (dataset_num + 1)
-                # elif args.mix_type in ['q', 'vq_diff']:
-                #     slide_dataset_length = args.max_save_num
-                # else:
-                #     raise NotImplementedError
-                # new_replay_dataset = st.generate_replay(dataset_num, dataset, env, args.critic_replay_type, args.actor_replay_type, args.experience_type, slide_dataset_length, args.max_export_step, args.test)
-                # if replay_dataset is not None:
-                replay_dataset = st.select_replay(dataset, replay_dataset, dataset_num, args.max_save_num, args.mix_type)
-                # else:
-                #     replay_dataset = new_replay_dataset
-            else:
-                replay_dataset = None
-            if args.test and dataset_num >= 2:
-                break
+            # eval
+            # scorers = dict(zip(['real_env' + str(n) for n in datasets.keys()], [evaluate_on_environment(eval_envs[n], test_id=str(n), mix='mix' in args.dataset and n == '0', add_on=args.add_on, clone_actor=args.clone_actor) for n in learned_tasks]))
 
             # 比较的测试没必要对新的数据集做。
-        if online_st_dict['n_steps'] > 0:
-            for param_group in st._impl._actor_optim.param_groups:
-                param_group["lr"] = st_dict['actor_learning_rate']
-            for param_group in st._impl._critic_optim.param_groups:
-                param_group["lr"] = st_dict['critic_learning_rate']
-            if args.use_vae:
-                for param_group in st._impl._vae_optim.param_groups:
-                    param_group["lr"] = st_dict['vae_learning_rate']
-            buffer_ = ReplayBuffer(maxlen=online_st_dict['buffer_size'], env=env)
-            st.online_fit(env, eval_env, buffer_, n_steps=online_st_dict['n_steps'], n_steps_per_epoch=online_st_dict['n_steps_per_epoch'], experiment_name = experiment_name + algos_name, test=args.test)
+        # if online_st_dict['n_steps'] > 0:
+        #     for param_group in fs._impl._actor_optim.param_groups:
+        #         param_group["lr"] = fs_dict['actor_learning_rate']
+        #     for param_group in fs._impl._critic_optim.param_groups:
+        #         param_group["lr"] = fs_dict['critic_learning_rate']
+        #     if args.use_vae:
+        #         for param_group in fs._impl._vae_optim.param_groups:
+        #             param_group["lr"] = fs_dict['vae_learning_rate']
+        #     buffer_ = ReplayBuffer(maxlen=online_st_dict['buffer_size'], env=env)
+        #     fs.online_fit(env, eval_env, buffer_, n_steps=online_st_dict['n_steps'], n_steps_per_epoch=online_st_dict['n_steps_per_epoch'], experiment_name = experiment_name + algos_name, test=args.test)
     print('finish')
 
 if __name__ == '__main__':
@@ -427,6 +462,7 @@ if __name__ == '__main__':
     parser.add_argument('--dataset_nums', default="0", type=str)
     parser.add_argument('--inner_path', default='', type=str)
     parser.add_argument('--env_path', default=None, type=str)
+    parser.add_argument('--pretrain_path', default=None, type=str)
     parser.add_argument('--inner_buffer_size', default=-1, type=int)
     parser.add_argument('--task_config', default='task_config/cheetah_dir.json', type=str)
     parser.add_argument('--siamese_hidden_size', default=100, type=int)
@@ -456,8 +492,10 @@ if __name__ == '__main__':
 
     parser.add_argument('--critic_replay_type', default='bc', type=str, choices=['orl', 'bc', 'generate', 'generate_orl', 'lwf', 'ewc', 'gem', 'agem', 'rwalk', 'si', 'none'])
     parser.add_argument('--critic_replay_lambda', default=100, type=float)
+    parser.add_argument('--critic_learning_rate', default=3e-4, type=float)
     parser.add_argument('--actor_replay_type', default='orl', type=str, choices=['orl', 'bc', 'generate', 'generate_orl', 'lwf', 'lwf_orl', 'ewc', 'gem', 'agem', 'rwalk', 'si', 'none'])
     parser.add_argument('--actor_replay_lambda', default=1, type=float)
+    parser.add_argument('--actor_learning_rate', default=1e-5, type=float)
 
     parser.add_argument('--n_ensemble', default=2, type=int)
     parser.add_argument('--eta', default=1.0, type=int)
@@ -484,29 +522,16 @@ if __name__ == '__main__':
     parser.add_argument('--read_merge_policy', type=int, default=-1)
     # 作为对照实验，证明er算法不是重新学习了重放缓存而是具备持续学习能力
     parser.add_argument('--clear_network', action='store_true')
+    parser.add_argument('--embed', action='store_true')
     # parser.add_argument('--merge', action='store_true')
     args = parser.parse_args()
 
     args.algo_kind = args.algo
     if args.algo_kind in ['cql', 'mrcql', 'mgcql']:
         args.algo_kind = 'cql'
-    args.dataset_nums_str = args.dataset_nums
-    args.dataset_nums = [x for x in args.dataset_nums.split('_')]
-    if args.dataset in ['halfcheetah-random-v0', 'hopper-random-v0', 'walker2d-random-v0', 'ant-random-v0']:
-        args.dataset_kind = 'd4rl'
-        args.dataset_nums = ['itr_' + dataset_num for dataset_num in args.dataset_nums]
-    elif args.dataset in ['HalfCheetahBlock-v2', 'Walker2dBlock-v4', 'HopperBlock-v4']:
-        args.dataset_kind = 'block'
-        args.dataset_nums = ['itr_' + dataset_num for dataset_num in args.dataset_nums]
-    elif 'antmaze' in args.dataset:
-        args.dataset_kind = 'antmaze'
-        args.dataset_sum = int(args.dataset_nums[0])
-        args.dataset_nums = [int(dataset_num) for dataset_num in args.dataset_nums[1:]]
-        # args.maze = args.dataset.split('-')[1]
-        # assert args.maze in ['umaze', 'medium', 'large']
-        # args.part_times_num = 0 if len(args.dataset_nums) == 2 else 1
-    else:
-        raise NotImplementedError
+
+    # ant_dir, cheetah_vel, walker_dir
+    args.dataset_kinds = {'ant_dir': np.random.permutation(5), 'cheetah_vel': np.random.permutation(5), 'walker_dir': np.random.permutation(5)}
 
     args.model_path = 'd3rlpy' + '_' + args.dataset
     if not os.path.exists(args.model_path):

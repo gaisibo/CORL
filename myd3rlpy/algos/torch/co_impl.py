@@ -90,14 +90,13 @@ class COImpl():
         assert self._policy is not None
         self._actor_grad_save_dims = []
         for name, pp in self._policy.named_parameters():
-            print(f"name: {name}; param: {pp.shape}")
-            if not name.startswith("_fc"):
+            if '_fc' not in name or '_fcs' in name:
                 self._actor_grad_save_dims.append(pp.data.numel())
         self._actor_grad_save = torch.zeros(np.sum(self._actor_grad_save_dims)).to(self.device)
         if self._clone_actor and self._replay_type == 'bc':
             self._clone_actor_grad_save_dims = []
             for name, pp in self._clone_policy.named_parameters():
-                if not name.startswith("_fc"):
+                if '_fc' not in name or '_fcs' in name:
                     self._clone_actor_grad_save_dims.append(pp.data.numel())
             self._clone_actor_grad_save = torch.zeros(np.sum(self._clone_actor_grad_save_dims)).to(self.device)
         else:
@@ -106,39 +105,39 @@ class COImpl():
         if self._replay_type in ['ewc', 'rwalk', 'si']:
             if self._replay_critic:
                 # Store current parameters for the next task
-                self._critic_older_params = {n: p.clone().detach() for n, p in self._q_func.named_parameters() if p.requires_grad}
+                self._critic_older_params = {n: p.clone().detach() for n, p in self._q_func.named_parameters() if p.requires_grad and '_fc' not in n}
             # Store current parameters for the next task
-            self._actor_older_params = {n: p.clone().detach() for n, p in self._policy.named_parameters() if p.requires_grad}
+            self._actor_older_params = {n: p.clone().detach() for n, p in self._policy.named_parameters() if p.requires_grad and '_fc' not in n}
             if self._use_model and self._replay_model:
                 # Store current parameters for the next task
                 self._model_older_params = {n: p.clone().detach() for n, p in self._dynamic.named_parameters() if p.requires_grad}
             if self._replay_type in ['ewc', 'rwalk']:
                 if self._replay_critic:
                     # Store fisher information weight importance
-                    self._critic_fisher = {n: torch.zeros(p.shape).to(self.device) for n, p in self._q_func.named_parameters() if p.requires_grad}
+                    self._critic_fisher = {n: torch.zeros(p.shape).to(self.device) for n, p in self._q_func.named_parameters() if p.requires_grad and '_fc' not in n}
                 # Store fisher information weight importance
-                self._actor_fisher = {n: torch.zeros(p.shape).to(self.device) for n, p in self._policy.named_parameters() if p.requires_grad}
+                self._actor_fisher = {n: torch.zeros(p.shape).to(self.device) for n, p in self._policy.named_parameters() if p.requires_grad and '_fc' not in n}
                 if self._use_model and self._replay_model:
                     # Store fisher information weight importance
                     self._model_fisher = {n: torch.zeros(p.shape).to(self.device) for n, p in self._dynamic.named_parameters() if p.requires_grad}
                 if self._replay_type == 'rwalk':
                     if self._replay_critic:
                         # Page 7: "task-specific parameter importance over the entire training trajectory."
-                        self._critic_w = {n: torch.zeros(p.shape).to(self.device) for n, p in self._q_func.named_parameters() if p.requires_grad}
-                        self._critic_scores = {n: torch.zeros(p.shape).to(self.device) for n, p in self._q_func.named_parameters() if p.requires_grad}
+                        self._critic_w = {n: torch.zeros(p.shape).to(self.device) for n, p in self._q_func.named_parameters() if p.requires_grad and '_fc' not in n}
+                        self._critic_scores = {n: torch.zeros(p.shape).to(self.device) for n, p in self._q_func.named_parameters() if p.requires_grad and '_fc' not in n}
                     # Page 7: "task-specific parameter importance over the entire training trajectory."
-                    self._actor_w = {n: torch.zeros(p.shape).to(self.device) for n, p in self._policy.named_parameters() if p.requires_grad}
-                    self._actor_scores = {n: torch.zeros(p.shape).to(self.device) for n, p in self._policy.named_parameters() if p.requires_grad}
+                    self._actor_w = {n: torch.zeros(p.shape).to(self.device) for n, p in self._policy.named_parameters() if p.requires_grad and '_fc' not in n}
+                    self._actor_scores = {n: torch.zeros(p.shape).to(self.device) for n, p in self._policy.named_parameters() if p.requires_grad and '_fc' not in n}
                     if self._use_model and self._replay_model:
                         # Page 7: "task-specific parameter importance over the entire training trajectory."
                         self._model_w = {n: torch.zeros(p.shape).to(self.device) for n, p in self._dynamic.named_parameters() if p.requires_grad}
                         self._model_scores = {n: torch.zeros(p.shape).to(self.device) for n, p in self._dynamic.named_parameters() if p.requires_grad}
                 elif self._replay_type == 'si':
                     if self._replay_critic:
-                        self._critic_W = {n: p.clone().detach().zero_() for n, p in self._q_func.named_parameters() if p.requires_grad}
-                        self._critic_omega = {n: p.clone().detach().zero_() for n, p in self._q_func.named_parameters() if p.requires_grad}
-                    self._actor_W = {n: p.clone().detach().zero_() for n, p in self._policy.named_parameters() if p.requires_grad}
-                    self._actor_omega = {n: p.clone().detach().zero_() for n, p in self._policy.named_parameters() if p.requires_grad}
+                        self._critic_W = {n: p.clone().detach().zero_() for n, p in self._q_func.named_parameters() if p.requires_grad and '_fc' not in n}
+                        self._critic_omega = {n: p.clone().detach().zero_() for n, p in self._q_func.named_parameters() if p.requires_grad and '_fc' not in n}
+                    self._actor_W = {n: p.clone().detach().zero_() for n, p in self._policy.named_parameters() if p.requires_grad and '_fc' not in n}
+                    self._actor_omega = {n: p.clone().detach().zero_() for n, p in self._policy.named_parameters() if p.requires_grad and '_fc' not in n}
                     if self._use_model and self._replay_model:
                         self._model_W = {n: p.clone().detach().zero_() for n, p in self._dynamic.named_parameters() if p.requires_grad}
                         self._model_omega = {n: p.clone().detach().zero_() for n, p in self._dynamic.named_parameters() if p.requires_grad}
@@ -146,14 +145,16 @@ class COImpl():
             if self._replay_critic:
                 # Allocate temporary synaptic memory
                 self._critic_grad_dims = []
-                for pp in self._q_func.parameters():
-                    self._critic_grad_dims.append(pp.data.numel())
+                for name, pp in self._q_func.named_parameters():
+                    if '_fc' not in name or '_fcs' in name:
+                        self._critic_grad_dims.append(pp.data.numel())
                 self._critic_grad_cs = {}
                 self._critic_grad_da = torch.zeros(np.sum(self._critic_grad_dims)).to(self.device)
 
             self._actor_grad_dims = []
-            for pp in self._policy.parameters():
-                self._actor_grad_dims.append(pp.data.numel())
+            for name, pp in self._policy.named_parameters():
+                if '_fc' not in name or '_fcs' in name:
+                    self._actor_grad_dims.append(pp.data.numel())
             self._actor_grad_cs = {}
             self._actor_grad_da = torch.zeros(np.sum(self._actor_grad_dims)).to(self.device)
 
@@ -166,13 +167,15 @@ class COImpl():
         elif self._replay_type == 'agem':
             if self._replay_critic:
                 self._critic_grad_dims = []
-                for param in self._q_func.parameters():
-                    self._critic_grad_dims.append(param.data.numel())
+                for name, param in self._q_func.named_parameters():
+                    if '_fc' not in name or '_fcs' in name:
+                        self._critic_grad_dims.append(param.data.numel())
                 self._critic_grad_xy = torch.Tensor(np.sum(self._critic_grad_dims)).to(self.device)
                 self._critic_grad_er = torch.Tensor(np.sum(self._critic_grad_dims)).to(self.device)
             self._actor_grad_dims = []
-            for param in self._policy.parameters():
-                self._actor_grad_dims.append(param.data.numel())
+            for name, param in self._policy.named_parameters():
+                if '_fc' not in name or '_fcs' in name:
+                    self._actor_grad_dims.append(param.data.numel())
             self._actor_grad_xy = torch.Tensor(np.sum(self._actor_grad_dims)).to(self.device)
             self._actor_grad_er = torch.Tensor(np.sum(self._actor_grad_dims)).to(self.device)
             if self._use_model and self._replay_model:
@@ -279,15 +282,15 @@ class COImpl():
                     replay_loss_ = 0
                     for n, p in self._q_func.named_parameters():
                         if n in self._critic_fisher.keys():
-                            replay_loss = replay_loss + torch.mean(self._critic_fisher[n] * (p - self._critic_older_params[n]).pow(2)) / 2
+                            replay_loss_ = replay_loss_ + torch.mean(self._critic_fisher[n] * (p - self._critic_older_params[n]).pow(2)) / 2
                     replay_losses.append(replay_loss_.cpu().detach().numpy())
                     replay_loss = replay_loss + replay_loss_
                     break
                 elif self._replay_type == 'rwalk':
-                    curr_feat_ext = {n: p.clone().detach() for n, p in self._q_func.named_parameters() if p.requires_grad}
+                    curr_feat_ext = {n: p.clone().detach() for n, p in self._q_func.named_parameters() if p.requires_grad and ('_fc' not in n or '_fcs' in n)}
                     # store gradients without regularization term
                     unreg_grad = {n: p.grad.clone().detach() for n, p in self._q_func.named_parameters()
-                                   if p.grad is not None}
+                                   if p.grad is not None and ('_fc' not in n or '_fcs' in n)}
 
                     self._critic_optim.zero_grad()
                     # Eq. 3: elastic weight consolidation quadratic penalty
@@ -305,7 +308,7 @@ class COImpl():
                         self._critic_older_params[n] = p.detach().clone()
                     replay_loss_ = 0
                     for n, p in self.q_func.named_parameters():
-                        if p.requires_grad:
+                        if p.requires_grad and n in self._critic_fisher.keys():
                             replay_loss_ = replay_loss_ + torch.mean(self._critic_omega[n] * (p - self._critic_older_params[n]) ** 2)
                     replay_losses.append(replay_loss_.cpu().detach().numpy())
                     replay_loss = replay_loss + replay_loss_
@@ -317,9 +320,9 @@ class COImpl():
                     replay_loss = replay_loss_
                     replay_losses.append(replay_loss_.cpu().detach().numpy())
                     replay_loss.backward()
-                    store_grad(self._q_func.parameters(), self._critic_grad_cs[i], self._critic_grad_dims)
+                    store_grad([p for n, p in self._q_func.named_parameters() if p.requires_grad and ('_fc' not in n or '_fcs' in n)], self._critic_grad_cs[i], self._critic_grad_dims)
                 elif self._replay_type == "agem":
-                    store_grad(self._q_func.parameters(), self._critic_grad_xy, self._critic_grad_dims)
+                    store_grad([p for n, p in self._q_func.named_parameters() if p.requires_grad and ('_fc' not in n or '_fcs' in n)], self._critic_grad_xy, self._critic_grad_dims)
                     replay_batch.n_steps = 1
                     replay_batch.masks = None
                     replay_batch = cast(TorchMiniBatch, replay_batch)
@@ -344,25 +347,25 @@ class COImpl():
         loss.backward()
         if replay_batches is not None and len(replay_batches) != 0:
             if self._replay_type == 'agem':
-                assert self._single_head
+                self._critic_optim.zero_grad()
                 replay_loss.backward()
-                store_grad(self._q_func.parameters(), self._critic_grad_er, self._critic_grad_dims)
+                store_grad([p for n, p in self._q_func.named_parameters() if p.requires_grad and ('_fc' not in n or '_fcs' in n)], self._critic_grad_er, self._critic_grad_dims)
                 dot_prod = torch.dot(self._critic_grad_xy, self._critic_grad_er)
                 if dot_prod.item() < 0:
                     g_tilde = project(gxy=self._critic_grad_xy, ger=self._critic_grad_er)
-                    overwrite_grad(self._q_func.parameters, g_tilde, self._critic_grad_dims)
+                    overwrite_grad([(n, p) for n, p in self._q_func.named_parameters() if p.requires_grad and ('_fc' not in n or '_fcs' in n)], g_tilde, self._critic_grad_dims)
                 else:
-                    overwrite_grad(self._q_func.parameters, self._critic_grad_xy, self._critic_grad_dims)
+                    overwrite_grad([(n, p) for n, p in self._q_func.named_parameters() if p.requires_grad and ('_fc' not in n or '_fcs' in n)], self._critic_grad_xy, self._critic_grad_dims)
             elif self._replay_type == 'gem':
                 # copy gradient
-                store_grad(self._q_func.parameters(), self._critic_grad_da, self._critic_grad_dims)
+                store_grad([p for n, p in self._q_func.named_parameters() if p.requires_grad and ('_fc' not in n or '_fcs' in n)], self._critic_grad_da, self._critic_grad_dims)
                 dot_prod = torch.mm(self._critic_grad_da.unsqueeze(0),
                                 torch.stack(list(self._critic_grad_cs).values()).T)
                 if (dot_prod < 0).sum() != 0:
                     project2cone2(self._critic_grad_da.unsqueeze(1),
                                   torch.stack(list(self._critic_grad_cs).values()).T, margin=self._gem_alpha)
                     # copy gradients back
-                    overwrite_grad(self._q_func.parameters, self._critic_grad_da,
+                    overwrite_grad(self._q_func.named_parameters(), self._critic_grad_da,
                                    self._critic_grad_dims)
         self._critic_optim.step()
 
@@ -476,6 +479,8 @@ class COImpl():
         replay_losses = []
         save_id = self._impl_id
         if replay_batches is not None and len(replay_batches) != 0:
+            time_replay_loss = 0
+            append = 0
             for i, replay_batch in replay_batches.items():
                 replay_loss = 0
                 replay_batch = [x.to(self.device) for x in replay_batch]
@@ -507,10 +512,10 @@ class COImpl():
                     replay_loss = replay_loss + replay_loss_
                     break
                 elif self._replay_type == 'rwalk':
-                    curr_feat_ext = {n: p.clone().detach() for n, p in self._policy.named_parameters() if p.requires_grad}
+                    curr_feat_ext = {n: p.clone().detach() for n, p in self._policy.named_parameters() if p.requires_grad and ('_fc' not in n or '_fcs' in n)}
                     # store gradients without regularization term
                     unreg_grad = {n: p.grad.clone().detach() for n, p in self._policy.named_parameters()
-                                   if p.grad is not None}
+                                   if p.grad is not None and ('_fc' not in n or '_fcs' in n)}
 
                     self._actor_optim.zero_grad()
                     # Eq. 3: elastic weight consolidation quadratic penalty
@@ -527,8 +532,8 @@ class COImpl():
                             self._actor_W[n].add_(-p.grad * (p.detach() - self._actor_older_params[n]))
                         self._actor_older_params[n] = p.detach().clone()
                     replay_loss_ = 0
-                    for n, p in self.named_parameters():
-                        if p.requires_grad:
+                    for n, p in self._policy.named_parameters():
+                        if p.requires_grad and n in self._actor_fisher.keys():
                             replay_loss_ = replay_loss_ + torch.mean(self._actor_omega[n] * (p - self._actor_older_params[n]) ** 2)
                     replay_losses.append(replay_loss_)
                     replay_loss = replay_loss + replay_loss_
@@ -538,57 +543,77 @@ class COImpl():
                     replay_loss_ = self.compute_actor_loss(replay_batch) / len(replay_batches)
                     replay_loss = replay_loss_
                     replay_loss.backward()
-                    store_grad(self._policy.parameters(), self._actor_grad_cs[i], self._actor_grad_dims)
+                    store_grad([p for n, p in self._policy.named_parameters() if p.requires_grad and ('_fc' not in n or '_fcs' in n)], self._actor_grad_cs[i], self._actor_grad_dims)
                 elif self._replay_type == "agem":
-                    store_grad(self._policy.parameters(), self._actor_grad_xy, self._actor_grad_dims)
+                    store_grad([p for n, p in self._policy.named_parameters() if p.requires_grad and ('_fc' not in n or '_fcs' in n)], self._actor_grad_xy, self._actor_grad_dims)
                     replay_batch = cast(TorchMiniBatch, replay_batch)
                     replay_loss_ = self.compute_actor_loss(replay_batch) / len(replay_batches)
                     replay_loss = replay_loss + replay_loss_
                     replay_losses.append(replay_loss_)
-                if self._replay_type in ['orl', 'ewc', 'rwalk', 'si'] or (not self._clone_actor and self._replay_type == 'bc'):
+                if self._replay_type == 'orl' or (not self._clone_actor and self._replay_type == 'bc'):
                     time_replay_loss = self._replay_alpha * replay_loss / len(replay_batches)
                     self._actor_optim.zero_grad()
                     time_replay_loss.backward()
+                    #store_grad([p for n, p in self._policy.named_parameters() if p.requires_grad and ('_fc' not in n or '_fcs' in n)], self._actor_grad_save, self._actor_grad_save_dims, append=append)
+                    #append += 1
+                    #for n, p in self._policy.named_parameters():
+                    #    if p.requires_grad and ('_fc' not in n or '_fcs' in n):
+                    #        p.grad = torch.zeros_like(p)
+                    #    elif '_fc' in n and '_fcs' not in n:
+                    #        p.grad = p.grad / (len(replay_batches) + 1)
                     self._actor_optim.step()
-                    replay_loss = replay_loss
-                elif self._clone_actor and self._replay_type == 'bc':
-                    time_replay_loss = self._replay_alpha * replay_loss / len(replay_batches)
+                if self._clone_actor and self._replay_type == 'bc':
+                    time_replay_loss = self._replay_alpha * replay_loss_
                     self._clone_actor_optim.zero_grad()
                     time_replay_loss.backward()
+                    #store_grad([p for n, p in self._clone_policy.named_parameters() if p.requires_grad and ('_fc' not in n or '_fcs' in n)], self._clone_actor_grad_save, self._clone_actor_grad_save_dims, append=append)
+                    #append += 1
+                    #for n, p in self._clone_policy.named_parameters():
+                    #    if p.requires_grad and ('_fc' not in n or '_fcs' in n):
+                    #        p.grad = torch.zeros_like(p)
+                    #    elif '_fc' in n and '_fcs' not in n:
+                    #        p.grad = p.grad / (len(replay_batches) + 1)
                     self._clone_actor_optim.step()
-                    replay_loss = replay_loss
 
         self.change_task(save_id)
         self._actor_optim.zero_grad()
         loss += self.compute_actor_loss(batch)
-        if self._replay_type in ['orl', 'ewc', 'rwalk', 'si'] or (not self._clone_actor and self._replay_type == 'bc'):
+        if self._replay_type in ['ewc', 'rwalk', 'si']:
             loss = loss + self._replay_alpha * replay_loss
         loss.backward()
+        #if self._replay_type == 'orl' or (not self._clone_actor and self._replay_type == 'bc'):
+            #store_grad([p for n, p in self._policy.named_parameters() if p.requires_grad and ('_fc' not in n or '_fcs' in n)], self._actor_grad_save, self._actor_grad_save_dims, append=1)
+            #overwrite_grad([(n, p) for n, p in self._policy.named_parameters() if p.requires_grad and ('_fc' not in n or '_fcs' in n)], self._actor_grad_save, self._actor_grad_save_dims)
+            #for n, p in self._policy.named_parameters():
+            #    if p.requires_grad and '_fc' in n and '_fcs' not in n:
+            #        p.grad = p.grad / (len(replay_batches) + 1)
 
         if replay_batches is not None and len(replay_batches) != 0:
             if self._replay_type == 'agem':
-                assert self._single_head
+                self._actor_optim.zero_grad()
                 replay_loss.backward()
-                store_grad(self._policy.parameters(), self._actor_grad_er, self._actor_grad_dims)
+                store_grad([p for n, p in self._policy.named_parameters() if p.requires_grad and ('_fc' not in n or '_fcs' in n)], self._actor_grad_er, self._actor_grad_dims)
+                replay_loss.backward()
+                store_grad([p for n, p in self._policy.named_parameters() if p.requires_grad and ('_fc' not in n or '_fcs' in n)], self._actor_grad_er, self._actor_grad_dims)
                 dot_prod = torch.dot(self._actor_grad_xy, self._actor_grad_er)
                 if dot_prod.item() < 0:
                     g_tilde = project(gxy=self._actor_grad_xy, ger=self._actor_grad_er)
-                    overwrite_grad(self._policy.parameters, g_tilde, self._actor_grad_dims)
+                    overwrite_grad([(n, p) for n, p in self._policy.named_parameters() if p.requires_grad and ('_fc' not in n or '_fcs' in n)], g_tilde, self._actor_grad_dims)
                 else:
-                    overwrite_grad(self._policy.parameters, self._actor_grad_xy, self._actor_grad_dims)
+                    overwrite_grad([(n, p) for n, p in self._policy.named_parameters() if p.requires_grad and ('_fc' not in n or '_fcs' in n)], self._actor_grad_xy, self._actor_grad_dims)
             elif self._replay_type == 'gem':
                 # copy gradient
-                store_grad(self._policy.parameters(), self._actor_grad_da, self._actor_grad_dims)
+                store_grad([p for n, p in self._policy.named_parameters() if p.requires_grad and ('_fc' not in n or '_fcs' in n)], self._actor_grad_da, self._actor_grad_dims)
                 dot_prod = torch.mm(self._actor_grad_da.unsqueeze(0),
                                 torch.stack(list(self._actor_grad_cs).values()).T)
                 if (dot_prod < 0).sum() != 0:
                     project2cone2(self._actor_grad_da.unsqueeze(1),
                                   torch.stack(list(self._actor_grad_cs).values()).T, margin=self._gem_alpha)
                     # copy gradients back
-                    overwrite_grad(self._policy.parameters, self._actor_grad_da,
+                    overwrite_grad([(n, p) for n, p in self._policy.named_parameters() if p.requires_grad and ('_fc' not in n or '_fcs' in n)], self._actor_grad_da,
                                    self._actor_grad_dims)
 
-        store_grad([p for n, p in self._policy.named_parameters() if not n.startswith("_fc")], self._actor_grad_save, self._actor_grad_save_dims)
+        # store_grad([p for n, p in self._policy.named_parameters() if p.requires_grad and ('_fc' not in n or '_fcs' in n)], self._actor_grad_save, self._actor_grad_save_dims)
         self._actor_optim.step()
 
         clone_loss = 0
@@ -608,8 +633,12 @@ class COImpl():
                 clone_loss = torch.mean((actions - clone_actions) ** 2)
                 self._clone_actor_optim.zero_grad()
                 clone_loss.backward()
+                #store_grad([p for n, p in self._clone_policy.named_parameters() if p.requires_grad and ('_fc' not in n or '_fcs' in n)], self._clone_actor_grad_save, self._clone_actor_grad_save_dims, append=append)
+                #overwrite_grad([(n, p) for n, p in self._clone_policy.named_parameters() if p.requires_grad and ('_fc' not in n or '_fcs' in n)], self._clone_actor_grad_save, self._clone_actor_grad_save_dims)
+                #for n, p in self._clone_policy.named_parameters():
+                #    if p.requires_grad and '_fc' in n and '_fcs' not in n:
+                #        p.grad = p.grad / (len(replay_batches) + 1)
                 self._clone_actor_optim.step()
-                store_grad([p for n, p in self._policy.named_parameters() if not n.startswith("_fc")], self._clone_actor_grad_save, self._clone_actor_grad_save_dims)
                 clone_loss = clone_loss.cpu().detach().numpy()
 
         loss = loss.cpu().detach().numpy()
@@ -823,15 +852,15 @@ class COImpl():
 
         if replay_batches is not None and len(replay_batches) != 0:
             if self._replay_type == 'agem':
-                assert self._single_head
+                self._model_optim.zero_grad()
                 replay_loss.backward()
-                store_grad(self._dynamic.parameters(), self._model_grad_er, self._model_grad_dims)
+                store_grad(self._dynamic.parameters(), self._model_grad_cs[i], self._model_grad_dims)
                 dot_prod = torch.dot(self._model_grad_xy, self._model_grad_er)
                 if dot_prod.item() < 0:
                     g_tilde = project(gxy=self._model_grad_xy, ger=self._model_grad_er)
-                    overwrite_grad(self._dynamic.parameters, g_tilde, self._model_grad_dims)
+                    overwrite_grad(self._dynamic.named_parameters(), g_tilde, self._model_grad_dims)
                 else:
-                    overwrite_grad(self._dynamic.parameters, self._model_grad_xy, self._model_grad_dims)
+                    overwrite_grad(self._dynamic.named_parameters(), self._model_grad_xy, self._model_grad_dims)
             elif self._replay_type == 'gem':
                 # copy gradient
                 store_grad(self._dynamic.parameters(), self._model_grad_da, self._model_grad_dims)
@@ -841,7 +870,7 @@ class COImpl():
                     project2cone2(self._model_grad_da.unsqueeze(1),
                                   torch.stack(list(self._model_grad_cs).values()).T, margin=self._gem_gamma)
                     # copy gradients back
-                    overwrite_grad(self._dynamic.parameters, self._model_grad_da,
+                    overwrite_grad(self._dynamic.named_parameters(), self._model_grad_da,
                                    self._model_grad_dims)
         self._model_optim.step()
 
@@ -998,7 +1027,7 @@ class COImpl():
     def compute_fisher_matrix_diag(self, iterator, network, optim, update):
         # Store Fisher Information
         fisher = {n: torch.zeros(p.shape).to(self.device) for n, p in network.named_parameters()
-                  if p.requires_grad}
+                  if p.requires_grad and ('_fc' not in n or '_fcs' in n)}
         # Do forward and backward pass to compute the fisher information
         network.train()
         replay_loss = 0
@@ -1009,24 +1038,31 @@ class COImpl():
             update(batch)
             # Accumulate all gradients from loss with regularization
             for n, p in network.named_parameters():
-                if p.grad is not None:
+                if p.grad is not None and ('_fc' not in n or '_fcs' in n):
                     fisher[n] += p.grad.pow(2)
         # Apply mean across all samples
         fisher = {n: (p / len(iterator)) for n, p in fisher.items()}
         return fisher
 
     def fix_post_train_process(self):
-        for name, param in self._policy.named_parameters():
-            if not name.startswith("_fc"):
+        for n, param in self._policy.named_parameters():
+            if param.requires_grad and ('_fc' not in n or '_fcs' in n):
                 param.requires_grad_(False)
 
     def bc_post_train_process(self):
-        self._policy.load_state_dict(copy.deepcopy(self._clone_policy.state_dict()))
+        self._build_actor()
+        self._build_actor_optim()
+        if self._use_gpu:
+            self.to_gpu(self._use_gpu)
+        else:
+            self.to_cpu()
+        #self._policy.load_state_dict(copy.deepcopy(self._clone_policy.state_dict()))
 
     def gem_post_train_process(self):
-        self._critic_grad_cs[self._impl_id] = torch.zeros(np.sum(self._critic_grad_dims)).to(self.device)
+        if self._replay_critic:
+            self._critic_grad_cs[self._impl_id] = torch.zeros(np.sum(self._critic_grad_dims)).to(self.device)
         self._actor_grad_cs[self._impl_id] = torch.zeros(np.sum(self._actor_grad_dims)).to(self.device)
-        if self._use_model:
+        if self._use_model and self._replay_model:
             self._model_grad_cs[self._impl_id] = torch.zeros(np.sum(self._model_grad_dims)).to(self.device)
 
     def ewc_rwalk_post_train_process(self, iterator):
@@ -1042,7 +1078,7 @@ class COImpl():
                 )
                 q_tpn = self.compute_target(batch)
                 loss = self.compute_critic_loss(batch, q_tpn)
-                loss.backward
+                loss.backward()
             curr_fisher = self.compute_fisher_matrix_diag(iterator, self._q_func, self._critic_optim, update)
             # merge fisher information, we do not want to keep fisher information for each task in memory
             for n in self._critic_fisher.keys():
@@ -1093,9 +1129,9 @@ class COImpl():
             if self._replay_critic:
                 # Page 7: Optimization Path-based Parameter Importance: importance scores computation
                 curr_score = {n: torch.zeros(p.shape).to(self.device) for n, p in self._q_func.named_parameters()
-                              if p.requires_grad}
+                              if p.requires_grad and ('_fc' not in n or '_fcs' in n)}
                 with torch.no_grad():
-                    curr_params = {n: p for n, p in self._q_func.named_parameters() if p.requires_grad}
+                    curr_params = {n: p for n, p in self._q_func.named_parameters() if p.requires_grad and ('_fc' not in n or '_fcs' in n)}
                     for n, p in self._critic_scores.items():
                         curr_score[n] = self._critic_w[n] / (
                                 self._critic_fisher[n] * ((curr_params[n] - self._critic_older_params[n]) ** 2) + self._damping)
@@ -1108,9 +1144,9 @@ class COImpl():
 
             # Page 7: Optimization Path-based Parameter Importance: importance scores computation
             curr_score = {n: torch.zeros(p.shape).to(self.device) for n, p in self._policy.named_parameters()
-                          if p.requires_grad}
+                          if p.requires_grad and ('_fc' not in n or '_fcs' in n)}
             with torch.no_grad():
-                curr_params = {n: p for n, p in self._policy.named_parameters() if p.requires_grad}
+                curr_params = {n: p for n, p in self._policy.named_parameters() if p.requires_grad and ('_fc' not in n or '_fcs' in n)}
                 for n, p in self._actor_scores.items():
                     curr_score[n] = self._actor_w[n] / (
                             self._actor_fisher[n] * ((curr_params[n] - self._actor_older_params[n]) ** 2) + self._damping)
@@ -1124,9 +1160,9 @@ class COImpl():
             if self._use_model and self._replay_model:
                 # Page 7: Optimization Path-based Parameter Importance: importance scores computation
                 curr_score = {n: torch.zeros(p.shape).to(self.device) for n, p in self._dynamic.named_parameters()
-                              if p.requires_grad}
+                              if p.requires_grad and ('_fc' not in n or '_fcs' in n)}
                 with torch.no_grad():
-                    curr_params = {n: p for n, p in self._dynamic.named_parameters() if p.requires_grad}
+                    curr_params = {n: p for n, p in self._dynamic.named_parameters() if p.requires_grad and ('_fc' not in n or '_fcs' in n)}
                     for n, p in self._model_scores.items():
                         curr_score[n] = self._model_w[n] / (
                                 self._model_fisher[n] * ((curr_params[n] - self._model_older_params[n]) ** 2) + self._damping)
@@ -1140,7 +1176,7 @@ class COImpl():
     def si_post_train_process(self):
         if self._replay_critic:
             for n, p in self._q_func.named_parameters():
-                if p.requires_grad:
+                if p.requires_grad and ('_fc' not in n or '_fcs' in n):
                     p_change = p.detach().clone() - self._critic_older_params[n]
                     omega_add = self._critic_W[n] / (p_change ** 2 + self._epsilon)
                     omega = self._critic_omega[n]
@@ -1148,7 +1184,7 @@ class COImpl():
                     self._critic_older_params[n] = p.detach().clone()
                     self._critic_omega[n] = omega_new
         for n, p in self._policy.named_parameters():
-            if p.requires_grad:
+            if p.requires_grad and ('_fc' not in n or '_fcs' in n):
                 p_change = p.detach().clone() - self._actor_older_params[n]
                 omega_add = self._actor_W[n] / (p_change ** 2 + self._epsilon)
                 omega = self._actor_omega[n]

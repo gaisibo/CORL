@@ -214,7 +214,7 @@ class CO(CO, TD3PlusBC):
         replay_model = False,
         # generate_step = 100,
         model_noise = 0.3,
-        variance_lambda = 2,
+        variance_lambda = 1,
         retrain_time = 1,
         orl_alpha = 1,
         replay_alpha = 1,
