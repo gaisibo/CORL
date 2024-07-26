@@ -538,10 +538,6 @@ class STBase():
                         rename_scorers[str(scorer_num) + '_' + name] = scorer
                     #print("test predict: {self._impl.predict_best_action()}")
                     self._evaluate(eval_episodes, rename_scorers, logger)
-            else:
-                print(f"scorers_list: {scorers_list}")
-                print(f"eval_episodes_list: {eval_episodes_list}")
-                assert False
 
             # save metrics
             metrics = logger.commit(epoch, total_step)

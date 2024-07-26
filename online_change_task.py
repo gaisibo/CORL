@@ -213,10 +213,6 @@ if __name__ == '__main__':
     parser.add_argument('--topk', default=4, type=int)
     parser.add_argument('--max_save_num', default=1, type=int)
     parser.add_argument('--task_split_type', default='undirected', type=str)
-<<<<<<< HEAD
-=======
-    parser.add_argument('--algo', default='iql', type=str, choices=['combo', 'td3_plus_bc', 'cql', 'mgcql', 'mrcql', 'iql', 'iqln', 'iqln2', 'iqln3', 'iqln4', 'sql', 'sqln', 'sacn', 'edac'])
->>>>>>> f51a337 (init)
     parser.add_argument('--weight_temp', default=3.0, type=float)
     parser.add_argument('--expectile', default=0.7, type=float)
     parser.add_argument('--expectile_min', default=0.7, type=float)
@@ -226,7 +222,6 @@ if __name__ == '__main__':
     parser.add_argument('--test', action='store_true')
 
 
-<<<<<<< HEAD
     parser.add_argument("--n_buffer", default=1000000, type=int)
     parser.add_argument("--first_n_steps", default=2000000, type=int)
     parser.add_argument("--second_n_steps", default=2000000, type=int)
@@ -234,13 +229,6 @@ if __name__ == '__main__':
     parser.add_argument("--online_maxlen", default=1000000, type=int)
 
     parser.add_argument("--save_interval", default=1, type=int)
-=======
-    parser.add_argument("--n_steps", default=None, type=int)
-    parser.add_argument("--online_n_steps", default=2000000, type=int)
-    parser.add_argument("--online_maxlen", default=1000000, type=int)
-
-    parser.add_argument("--save_interval", default=10, type=int)
->>>>>>> f51a337 (init)
     parser.add_argument("--n_action_samples", default=10, type=int)
     parser.add_argument('--top_euclid', default=64, type=int)
 

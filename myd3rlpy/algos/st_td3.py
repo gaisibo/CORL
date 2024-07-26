@@ -222,13 +222,3 @@ class STTD3(STBase, TD3):
         self, transitions: List[Transition], real_observation_size, real_action_size, batch_size = 64,
     ) -> Optional[List[Transition]]:
         return None
-
-    def copy_from_sac(self, sac_impl: STSACImpl, copy_optim: bool) -> None:
-        assert self._impl is not None
-        assert sac_impl is not None
-        self._impl.copy_from_sac(sac_impl, copy_optim)
-
-    def copy_from_iql(self, iql_impl: STIQLImpl, copy_optim: bool) -> None:
-        assert self._impl is not None
-        assert iql_impl is not None
-        self._impl.copy_from_iql(iql_impl, copy_optim)
