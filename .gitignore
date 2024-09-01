@@ -1,8 +1,6 @@
 *.pyc
-__pycache__
 *.swp
 offline
-d3rlpy_logs
 datasets
 out_*.txt
 MUJOCO_LOG.TXT
@@ -19,8 +17,6 @@ d3rlpy_*
 dataset/antmaze
 dataset/d4rl
 dataset/gym_back
-dataset/macaw/dataset
-dataset/macaw/walker_dir
 draw.txt
 offline_tasks
 output_files
@@ -31,3 +27,16 @@ single_run_files
 toy.*
 rlkit
 *gpu_mem_track.txt
+d3rlpy
+d3rlpy_logs
+mujoco_py
+d4rl
+dataset/macaw
+__pycache__
+cython
+logs
+logs_save
+mujoco-py
+*.err
+pics
+results
