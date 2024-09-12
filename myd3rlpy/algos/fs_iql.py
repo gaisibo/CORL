@@ -1,66 +1,20 @@
-import os
-import copy
-from copy import deepcopy
-import sys
-import time
-import math
-import random
-from typing import Any, Dict, Optional, Sequence, List, Union, Callable, Tuple, Generator, Iterator, cast
-import types
-from collections import defaultdict
-from tqdm.auto import tqdm
-import numpy as np
-from functools import partial
-import torch
-from torch import Tensor
-from torch.utils.data import TensorDataset, DataLoader, DataLoader
-from torch.distributions.normal import Normal
+from typing import Any, Dict, Optional, Sequence, List
 
-from d3rlpy.argument_utility import (
-    ActionScalerArg,
-    EncoderArg,
-    QFuncArg,
-    RewardScalerArg,
-    ScalerArg,
-    UseGPUArg,
-    check_encoder,
-    check_q_func,
-    check_use_gpu,
-)
-from d3rlpy.torch_utility import TorchMiniBatch, _get_attributes
-from d3rlpy.dataset import MDPDataset, Episode, TransitionMiniBatch, Transition
+from d3rlpy.dataset import TransitionMiniBatch, Transition
 from d3rlpy.gpu import Device
-from d3rlpy.models.optimizers import AdamFactory, OptimizerFactory
+from d3rlpy.models.optimizers import OptimizerFactory
 from d3rlpy.models.q_functions import QFunctionFactory
-from d3rlpy.algos.base import AlgoBase
 from d3rlpy.algos.iql import IQL
 from d3rlpy.constants import (
-    CONTINUOUS_ACTION_SPACE_MISMATCH_ERROR,
-    DISCRETE_ACTION_SPACE_MISMATCH_ERROR,
     IMPL_NOT_INITIALIZED_ERROR,
-    DYNAMICS_NOT_GIVEN_ERROR,
-    ActionSpace,
 )
-from d3rlpy.base import LearnableBase
-from d3rlpy.iterators import TransitionIterator
 from d3rlpy.models.encoders import EncoderFactory
-from d3rlpy.metrics.scorer import dynamics_observation_prediction_error_scorer, dynamics_reward_prediction_error_scorer, dynamics_prediction_variance_scorer
-from d3rlpy.iterators.random_iterator import RandomIterator
-from d3rlpy.iterators.round_iterator import RoundIterator
-from d3rlpy.logger import LOG, D3RLPyLogger
-import gym
-
-from online.utils import ReplayBuffer
-from online.eval_policy import eval_policy
 
 from myd3rlpy.algos.fs import FSBase
 from myd3rlpy.algos.torch.state_vae_impl import StateVAEImpl as StateVAEImpl
-from myd3rlpy.models.vaes import VAEFactory, create_vae_factory
-from myd3rlpy.models.encoders import EnsembelDefaultEncoderFactory
-from utils.utils import Struct
 
 
-replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'terminals', 'policy_actions', 'qs', 'phis', 'psis']
+replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'terminals', 'policy_actions', 'qs']
 class FS(FSBase, IQL):
     r"""Twin Delayed Deep Deterministic Policy Gradients algorithm.
     TD3 is an improved DDPG-based algorithm.
@@ -148,10 +102,8 @@ class FS(FSBase, IQL):
     _critic_replay_lambda: float
     _actor_replay_type: bool
     _actor_replay_lambda: float
-    _replay_model: bool
     _generate_step: int
     _select_time: int
-    _model_noise: float
 
     _task_id: str
     _single_head: bool
@@ -198,12 +150,6 @@ class FS(FSBase, IQL):
         entropy_time = 0.2,
         update_ratio = 0.3,
         alpha = 2,
-
-        use_vae = False,
-        vae_learning_rate = 1e-3,
-        vae_optim_factory = AdamFactory(),
-        vae_factory = 'vector',
-        feature_size = 256,
 
         embed = False,
 
@@ -252,15 +198,6 @@ class FS(FSBase, IQL):
         self._alpha = alpha
         self._update_ratio = update_ratio
 
-        self._use_vae = use_vae
-        self._vae_learning_rate = vae_learning_rate
-        self._vae_optim_factory = vae_optim_factory
-        if isinstance(vae_factory, str):
-            self._vae_factory = create_vae_factory(vae_factory)
-        else:
-            self._vae_factory = vae_factory
-        self._feature_size = feature_size
-
         self._embed = embed
 
     def _create_impl(
@@ -278,7 +215,6 @@ class FS(FSBase, IQL):
             'critic_encoder_factory':self._critic_encoder_factory,
             'value_encoder_factory':self._value_encoder_factory,
             'vae_factory': self._vae_factory,
-            'use_vae': self._use_vae,
             'feature_size': self._feature_size,
             'critic_replay_type':self._critic_replay_type,
             'critic_replay_lambda':self._critic_replay_lambda,
@@ -343,8 +279,7 @@ class FS(FSBase, IQL):
         else:
             feature = None
         loss1 = self._update_inner(batch_inner, online, batch_num, total_step, coldstart_step)
-        # loss2 = self._update_outer(batch_outer, online, batch_num, total_step, coldstart_step, score)
-        loss2 = self._update_outer(batch_inner, online, batch_num, total_step, coldstart_step, score)
+        loss2 = self._update_outer(batch_outer, online, batch_num, total_step, coldstart_step, score)
         loss1.update(loss2)
         return feature, loss1
 
@@ -370,26 +305,12 @@ class FS(FSBase, IQL):
             # metrics.update({"outer_replay_actor_loss": replay_actor_loss})
             del self._impl._actor_state_dict
 
-        for key in self._impl.__dict__:
-            if "state_dict" in key:
-                assert key == "_critic_state_dict" or key == "_targ_critic_state_dict" or key == "_value_state_dict" or key == '_actor_state_dict' or key == '_targ_actor_state_dict'
         if hasattr(self._impl, "_critic_state_dict"):
             del self._impl._critic_state_dict
         if hasattr(self._impl, "_targ_critic_state_dict"):
             del self._impl._targ_critic_state_dict
         if hasattr(self._impl, "_value_state_dict"):
             del self._impl._value_state_dict
-        if hasattr(self._impl, "_actor_state_dict"):
-            del self._impl._actor_state_dict
-        if hasattr(self._impl, "_targ_actor_state_dict"):
-            del self._impl._targ_actor_state_dict
-
-        if self._use_vae and not online:
-            vae_loss = self._impl.outer_update_vae(batch)
-            metrics.update({"outer_vae_loss": vae_loss})
-
-            critic_loss = self._impl.outer_update_vae_critic(batch)
-            metrics.update({"outer_critic_loss": critic_loss})
 
         self._impl.update_critic_target()
 
@@ -401,12 +322,12 @@ class FS(FSBase, IQL):
             coldstart_step = self._coldstart_step
         assert self._impl is not None, IMPL_NOT_INITIALIZED_ERROR
         metrics = {}
-        critic_loss, value_loss, value, y, diff = self._impl.inner_update_critic(batch, clone_critic=self._clone_critic, online=online)
-        metrics.update({"inner_critic_loss": critic_loss})
-        metrics.update({"inner_value_loss": value_loss})
-        metrics.update({"inner_value": value})
-        metrics.update({"inner_y": y})
-        metrics.update({"inner_diff": diff})
+        # critic_loss, value_loss, value, y, diff = self._impl.inner_update_critic(batch, clone_critic=self._clone_critic, online=online)
+        # metrics.update({"inner_critic_loss": critic_loss})
+        # metrics.update({"inner_value_loss": value_loss})
+        # metrics.update({"inner_value": value})
+        # metrics.update({"inner_y": y})
+        # metrics.update({"inner_diff": diff})
 
         if (total_step > self._critic_update_step and total_step < coldstart_step) or self._impl._impl_id == 0:
             actor_loss, weight, log_prob = self._impl.inner_update_actor(batch, clone_actor=self._clone_actor, online=online)
@@ -414,12 +335,8 @@ class FS(FSBase, IQL):
             metrics.update({"inner_weight": weight})
             metrics.update({"inner_log_prob": log_prob})
 
-        # if self._use_vae and not online:
-        #     vae_loss = self._impl.inner_update_vae(batch)
-        #     metrics.update({"inner_vae_loss": vae_loss})
-
-        #     critic_loss = self._impl.inner_update_vae_critic(batch)
-        #     metrics.update({"inner_critic_loss": critic_loss})
+        critic_loss = self._impl.inner_update_vae_critic(batch)
+        metrics.update({"inner_critic_loss": critic_loss})
 
         return metrics
 

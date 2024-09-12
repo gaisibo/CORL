@@ -270,101 +270,6 @@ def match_on_environment(
 
     return scorer
 
-def evaluate_on_environment_noclone(
-    env: gym.Env, test_id: str=None, clone_actor: bool = False, n_trials: int = 100, epsilon: float = 0.0, render: bool = False, mix: bool = False, obs_pad_dim: int = 0, add_on: bool = False, task_id_dim: int = 0,
-) -> Callable[..., float]:
-    """Returns scorer function of evaluation on environment.
-    This function returns scorer function, which is suitable to the standard
-    scikit-learn scorer function style.
-    The metrics of the scorer function is ideal metrics to evaluate the
-    resulted policies.
-    .. code-block:: python
-        import gym
-        from d3rlpy.algos import DQN
-        from d3rlpy.metrics.scorer import evaluate_on_environment
-        env = gym.make('CartPole-v0')
-        scorer = evaluate_on_environment(env)
-        cql = CQL()
-        mean_episode_return = scorer(cql)
-    Args:
-        env: gym-styled environment.
-        n_trials: the number of trials.
-        epsilon: noise factor for epsilon-greedy policy.
-        render: flag to render environment.
-    Returns:
-        scoerer function.
-    """
-
-    # for image observation
-    observation_shape = env.observation_space.shape
-    is_image = len(observation_shape) == 3
-
-    def scorer(algo: AlgoProtocol, *args: Any) -> float:
-        if test_id is not None:
-            try:
-                env.reset_task(int(test_id))
-            except:
-                pass
-            save_id = algo._impl._impl_id
-            algo._impl.change_task(test_id)
-        if is_image:
-            stacked_observation = StackedObservation(
-                observation_shape, algo.n_frames
-            )
-
-        episode_rewards = []
-        for _ in range(n_trials):
-            observation = env.reset()
-            observation = torch.from_numpy(observation).to(algo._impl.device).unsqueeze(dim=0).to(torch.float32)
-            if mix:
-                observation = torch.cat([observation, torch.zeros([observation.shape[0], obs_pad_dim - observation.shape[1]], dtype=observation.dtype, device=observation.device)], dim=1)
-            episode_reward = 0.0
-
-            # frame stacking
-            if is_image:
-                stacked_observation.clear()
-                stacked_observation.append(observation)
-
-            i = 0
-            while True:
-                if test_id is not None and task_id_dim != 0:
-                    task_id_tensor = torch.zeros(observation.shape[0], task_id_dim).to(observation.device).to(torch.float32)
-                    task_id_tensor[:, test_id] = 1
-                    observation = torch.cat([observation, task_id_tensor])
-                # take action
-                if np.random.random() < epsilon:
-                    action = env.action_space.sample()
-                else:
-                    action = algo._impl._policy(observation)
-                    action = action.squeeze().cpu().detach().numpy()
-                    if mix:
-                        action = action[:env.action_space.sample().shape[0]]
-
-                observation, reward, done, pos = env.step(action)
-                episode_reward += reward
-                observation = torch.from_numpy(observation).to(algo._impl.device).unsqueeze(dim=0).to(torch.float32)
-                if mix:
-                    observation = torch.cat([observation, torch.zeros([observation.shape[0], obs_pad_dim - observation.shape[1]], dtype=observation.dtype, device=observation.device)], dim=1)
-
-                if render:
-                    env.render()
-
-                if done:
-                    break
-                if i > 1000:
-                    break
-
-                i += 1
-            episode_rewards.append(episode_reward)
-        if test_id is not None:
-            algo._impl.change_task(save_id)
-        if add_on:
-            return float(np.mean(episode_rewards))
-        else:
-            return float(np.max(episode_rewards))
-
-    return scorer
-
 def evaluate_on_environment(
     env: gym.Env, test_id: str=None, clone_actor: bool = False, n_trials: int = 100, epsilon: float = 0.0, render: bool = False, mix: bool = False, obs_pad_dim: int = 0, add_on: bool = False, task_id_dim: int = 0,
 ) -> Callable[..., float]:
@@ -410,9 +315,9 @@ def evaluate_on_environment(
         episode_rewards = []
         for _ in range(n_trials):
             observation = env.reset()
-            observation = torch.from_numpy(observation).to(algo._impl.device).unsqueeze(dim=0).to(torch.float32)
             if mix:
-                observation = torch.cat([observation, torch.zeros([observation.shape[0], obs_pad_dim - observation.shape[1]], dtype=observation.dtype, device=observation.device)], dim=1)
+                observation = np.concatenate([observation, np.zeros([observation.shape[0], obs_pad_dim - observation.shape[1]], dtype=np.float32)], axis=1)
+            observation = torch.from_numpy(observation).to(algo._impl.device).unsqueeze(dim=0).to(torch.float32)
             episode_reward = 0.0
 
             # frame stacking
@@ -432,17 +337,16 @@ def evaluate_on_environment(
                 else:
                     if test_id is not None and clone_actor and int(save_id) != 0:
                         action = algo._impl._clone_policy(observation)
+                        action = action.squeeze().cpu().detach().numpy()
                     else:
                         action = algo._impl._policy(observation)
-                    action = action.squeeze().cpu().detach().numpy()
-                    if mix:
-                        action = action[:env.action_space.sample().shape[0]]
+                        action = action.squeeze().cpu().detach().numpy()
+                        if mix:
+                            action = action[:env.action_space.sample.shape[0]]
 
                 observation, reward, done, pos = env.step(action)
                 episode_reward += reward
                 observation = torch.from_numpy(observation).to(algo._impl.device).unsqueeze(dim=0).to(torch.float32)
-                if mix:
-                    observation = torch.cat([observation, torch.zeros([observation.shape[0], obs_pad_dim - observation.shape[1]], dtype=observation.dtype, device=observation.device)], dim=1)
 
                 if render:
                     env.render()

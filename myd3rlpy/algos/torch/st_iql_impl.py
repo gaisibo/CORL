@@ -1,34 +1,15 @@
-from copy import deepcopy
-import inspect
-import types
-import time
-import math
-import copy
-from typing import Optional, Sequence, List, Any, Tuple, Dict, Union, cast
-
-import numpy as np
 import torch
-from torch import nn
-import torch.nn.functional as F
 
-from d3rlpy.argument_utility import check_encoder
-from d3rlpy.gpu import Device
 from d3rlpy.models.builders import create_non_squashed_normal_policy, create_value_function
-from d3rlpy.models.encoders import EncoderFactory
-from d3rlpy.models.optimizers import OptimizerFactory
-from d3rlpy.models.q_functions import QFunctionFactory
-from d3rlpy.models.torch.policies import squash_action
-from d3rlpy.preprocessing import ActionScaler, RewardScaler, Scaler
-from d3rlpy.torch_utility import TorchMiniBatch, soft_sync, train_api, torch_api
-from d3rlpy.dataset import TransitionMiniBatch
+from d3rlpy.torch_utility import TorchMiniBatch
 from d3rlpy.algos.torch.iql_impl import IQLImpl
 
 from myd3rlpy.algos.torch.st_impl import STImpl
-from utils.utils import Struct
+from myd3rlpy.models.builders import create_parallel_continuous_q_function
 
 
-replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'terminals', 'policy_actions', 'qs', 'phis', 'psis']
-class STImpl(STImpl, IQLImpl):
+replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'terminals', 'policy_actions', 'qs']
+class STIQLImpl(STImpl, IQLImpl):
 
     def __init__(
         self,
@@ -49,7 +30,12 @@ class STImpl(STImpl, IQLImpl):
         )
 
     def _build_critic(self) -> None:
-        super()._build_critic()
+        self._q_func = create_parallel_continuous_q_function(
+            self._observation_shape,
+            self._action_size,
+            n_ensembles=self._n_critics,
+            reduction='min',
+        )
         self._value_func = create_value_function(self._observation_shape, self._value_encoder_factory)
 
     def _build_critic_optim(self) -> None:

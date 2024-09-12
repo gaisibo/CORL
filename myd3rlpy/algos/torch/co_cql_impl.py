@@ -23,7 +23,6 @@ from d3rlpy.dataset import TransitionMiniBatch
 from d3rlpy.algos.torch.cql_impl import CQLImpl
 from d3rlpy.models.builders import create_probabilistic_ensemble_dynamics_model
 
-from myd3rlpy.models.builders import create_phi, create_psi
 from myd3rlpy.algos.torch.gem import overwrite_grad, store_grad, project2cone2
 from myd3rlpy.algos.torch.agem import project
 from myd3rlpy.algos.torch.co_probabilistic_impl import COProbabilisticImpl
@@ -40,19 +39,12 @@ class COCQLImpl(COProbabilisticImpl, CQLImpl):
         critic_learning_rate: float,
         temp_learning_rate: float,
         alpha_learning_rate: float,
-        phi_learning_rate: float,
-        psi_learning_rate: float,
-        model_learning_rate: float,
         actor_optim_factory: OptimizerFactory,
         critic_optim_factory: OptimizerFactory,
         temp_optim_factory: OptimizerFactory,
         alpha_optim_factory: OptimizerFactory,
-        phi_optim_factory: OptimizerFactory,
-        psi_optim_factory: OptimizerFactory,
-        model_optim_factory: OptimizerFactory,
         actor_encoder_factory: EncoderFactory,
         critic_encoder_factory: EncoderFactory,
-        model_encoder_factory: EncoderFactory,
         q_func_factory: QFunctionFactory,
         replay_type: str,
         gamma: float,
@@ -73,14 +65,10 @@ class COCQLImpl(COProbabilisticImpl, CQLImpl):
         scaler: Optional[Scaler],
         action_scaler: Optional[ActionScaler],
         reward_scaler: Optional[RewardScaler],
-        model_n_ensembles: int,
-        use_phi: bool,
-        use_model: bool,
         clone_actor: bool,
         replay_model: bool,
         replay_critic: bool,
         replay_alpha: float,
-        retrain_model_alpha: float,
         single_head: bool,
     ):
         super().__init__(
@@ -119,22 +107,10 @@ class COCQLImpl(COProbabilisticImpl, CQLImpl):
         self._damping = damping
         self._epsilon = epsilon
 
-        self._use_phi = use_phi
-        self._use_model = use_model
         self._clone_actor = clone_actor
         self._replay_alpha = replay_alpha
         self._replay_critic = replay_critic
         self._replay_model = replay_model
-        self._phi_learning_rate = phi_learning_rate
-        self._psi_learning_rate = psi_learning_rate
-        self._phi_optim_factory = phi_optim_factory
-        self._psi_optim_factory = psi_optim_factory
-
-        self._model_learning_rate = model_learning_rate
-        self._model_optim_factory = model_optim_factory
-        self._model_encoder_factory = model_encoder_factory
-        self._model_n_ensembles = model_n_ensembles
-        self._retrain_model_alpha = retrain_model_alpha
 
         self._single_head = single_head
         if single_head:

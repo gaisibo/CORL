@@ -24,7 +24,6 @@ from d3rlpy.dataset import TransitionMiniBatch
 from d3rlpy.algos.torch.td3_plus_bc_impl import TD3PlusBCImpl
 from d3rlpy.models.builders import create_probabilistic_ensemble_dynamics_model
 
-from myd3rlpy.models.builders import create_phi, create_psi
 from myd3rlpy.algos.torch.gem import overwrite_grad, store_grad, project2cone2
 from myd3rlpy.algos.torch.agem import project
 # from myd3rlpy.algos.torch.co_deterministic_impl import CODeterministicImpl
@@ -32,7 +31,7 @@ from myd3rlpy.algos.torch.fs_impl import FSImpl
 from utils.utils import Struct
 
 
-replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'terminals', 'policy_actions', 'qs', 'phis', 'psis']
+replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'terminals', 'policy_actions', 'qs']
 class FSTD3PlusBCImpl(FSImpl, TD3PlusBCImpl):
 
     def __init__(

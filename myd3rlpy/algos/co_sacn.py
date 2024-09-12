@@ -1,20 +1,5 @@
-import os
-import copy
-from copy import deepcopy
-import sys
-import time
-import math
-import random
-from typing import Any, Dict, Optional, Sequence, List, Union, Callable, Tuple, Generator, Iterator, cast
-import types
-from collections import defaultdict
-from tqdm.auto import tqdm
-import numpy as np
-from functools import partial
-import torch
+from typing import Any, Dict, Optional, Sequence, List
 from torch import Tensor
-from torch.utils.data import TensorDataset, DataLoader, DataLoader
-from torch.distributions.normal import Normal
 
 from d3rlpy.argument_utility import (
     ActionScalerArg,
@@ -24,43 +9,21 @@ from d3rlpy.argument_utility import (
     ScalerArg,
     UseGPUArg,
     check_encoder,
-    check_q_func,
-    check_use_gpu,
 )
-from d3rlpy.torch_utility import TorchMiniBatch, _get_attributes
-from d3rlpy.dataset import MDPDataset, Episode, TransitionMiniBatch, Transition
+from d3rlpy.dataset import TransitionMiniBatch, Transition
 from d3rlpy.gpu import Device
 from d3rlpy.models.optimizers import AdamFactory, OptimizerFactory
 from d3rlpy.models.q_functions import QFunctionFactory
-from d3rlpy.algos.base import AlgoBase
 from d3rlpy.algos.sac import SAC
 from d3rlpy.constants import (
-    CONTINUOUS_ACTION_SPACE_MISMATCH_ERROR,
-    DISCRETE_ACTION_SPACE_MISMATCH_ERROR,
     IMPL_NOT_INITIALIZED_ERROR,
-    DYNAMICS_NOT_GIVEN_ERROR,
-    ActionSpace,
 )
-from d3rlpy.base import LearnableBase
-from d3rlpy.iterators import TransitionIterator
 from d3rlpy.models.encoders import EncoderFactory
-from d3rlpy.metrics.scorer import dynamics_observation_prediction_error_scorer, dynamics_reward_prediction_error_scorer, dynamics_prediction_variance_scorer
-from d3rlpy.iterators.random_iterator import RandomIterator
-from d3rlpy.iterators.round_iterator import RoundIterator
-from d3rlpy.logger import LOG, D3RLPyLogger
-import gym
-
-from online.utils import ReplayBuffer
-from online.eval_policy import eval_policy
-
-from myd3rlpy.siamese_similar import similar_mb, similar_phi, similar_psi
-# from myd3rlpy.dynamics.probabilistic_ensemble_dynamics import ProbabilisticEnsembleDynamics
 from myd3rlpy.algos.co import CO
 from myd3rlpy.algos.torch.co_sacn_impl import COSACNImpl as COImpl
-from utils.utils import Struct
 
 
-replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'terminals', 'policy_actions', 'qs', 'phis', 'psis']
+replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'terminals', 'policy_actions', 'qs']
 class CO(CO, SAC):
     r"""Twin Delayed Deep Deterministic Policy Gradients algorithm.
     TD3 is an improved DDPG-based algorithm.
@@ -124,20 +87,13 @@ class CO(CO, SAC):
     _actor_learning_rate: float
     _critic_learning_rate: float
     _temp_learning_rate: float
-    _phi_learning_rate: float
-    _psi_learning_rate: float
     _actor_optim_factory: OptimizerFactory
     _critic_optim_factory: OptimizerFactory
     _temp_optim_factory: OptimizerFactory
-    _phi_optim_factory: OptimizerFactory
-    _psi_optim_factory: OptimizerFactory
     _actor_encoder_factory: EncoderFactory
     _critic_encoder_factory: EncoderFactory
-    _model_encoder_factory: EncoderFactory
     _q_func_factory: QFunctionFactory
     # actor必须被重放，没用选择。
-    _replay_phi: bool
-    _replay_psi: bool
     _tau: float
     _n_critics: int
     _initial_temperature: float
@@ -150,10 +106,8 @@ class CO(CO, SAC):
     _use_gpu: Optional[Device]
     _reduce_replay: str
     _replay_critic: bool
-    _replay_model: bool
     _generate_step: int
     _select_time: int
-    _model_noise: float
 
     _task_id: str
     _single_head: bool
@@ -163,24 +117,12 @@ class CO(CO, SAC):
         *,
         actor_learning_rate: float = 3e-4,
         critic_learning_rate: float = 3e-4,
-        temp_learning_rate: float = 3e-4,
-        phi_learning_rate: float = 1e-4,
-        psi_learning_rate: float = 1e-4,
-        model_learning_rate: float = 1e-4,
         actor_optim_factory: OptimizerFactory = AdamFactory(),
         critic_optim_factory : OptimizerFactory = AdamFactory(),
-        temp_optim_factory : OptimizerFactory = AdamFactory(),
-        phi_optim_factory: OptimizerFactory = AdamFactory(),
-        psi_optim_factory: OptimizerFactory = AdamFactory(),
-        model_optim_factory: OptimizerFactory = AdamFactory(),
         actor_encoder_factory: EncoderArg = "default",
         critic_encoder_factory: EncoderArg = "default",
-        model_encoder_factory: EncoderArg = "default",
         q_func_factory: QFuncArg = "mean",
         replay_type='orl',
-        phi_bc_loss=True,
-        psi_bc_loss=True,
-        train_phi=True,
         id_size: int = 7,
         batch_size: int = 256,
         n_frames: int = 1,
@@ -193,7 +135,6 @@ class CO(CO, SAC):
         epsilon: float = 0.1,
         tau: float = 0.005,
         n_critics: int = 2,
-        initial_temperature: float = 1.0,
         use_gpu: UseGPUArg = False,
         scaler: ScalerArg = None,
         action_scaler: ActionScalerArg = None,
@@ -203,22 +144,16 @@ class CO(CO, SAC):
         # n_train_dynamics = 1,
         retrain_topk = 4,
         log_prob_topk = 10,
-        model_n_ensembles = 5,
         experience_type = 'random_transition',
         sample_type = 'retrain',
         reduce_replay = 'retrain',
-        use_phi = False,
-        use_model = False,
         clone_actor = True,
         clone_finish = True,
         replay_critic = False,
-        replay_model = False,
         generate_step = 100,
-        model_noise = 0.3,
         retrain_time = 1,
         orl_alpha = 1,
         replay_alpha = 1,
-        retrain_model_alpha = 1,
         select_time = 100,
 
         task_id = 0,
@@ -257,14 +192,6 @@ class CO(CO, SAC):
         self._damping = damping
         self._epsilon = epsilon
 
-        self._phi_optim_factory = phi_optim_factory
-        self._psi_optim_factory = psi_optim_factory
-        self._phi_learning_rate = phi_learning_rate
-        self._psi_learning_rate = psi_learning_rate
-        self._phi_bc_loss = phi_bc_loss
-        self._psi_bc_loss = psi_bc_loss
-        self._train_phi = train_phi
-
         self._impl_name = impl_name
         # self._n_train_dynamics = n_train_dynamics
         self._retrain_topk = retrain_topk
@@ -277,21 +204,11 @@ class CO(CO, SAC):
 
         self._begin_grad_step = 0
 
-        self._dynamics = None
-        self._model_learning_rate = model_learning_rate
-        self._model_optim_factory = model_optim_factory
-        self._model_encoder_factory = check_encoder(model_encoder_factory)
-        self._model_n_ensembles = model_n_ensembles
-        self._retrain_model_alpha = retrain_model_alpha
-        self._use_phi = use_phi
-        self._use_model = use_model
         self._clone_actor = clone_actor
         self._clone_finish = clone_finish
         self._replay_critic = replay_critic
-        self._replay_model = replay_model
         self._generate_step = generate_step
         self._select_time = select_time
-        self._model_noise = model_noise
         self._orl_alpha = orl_alpha
         self._retrain_time = retrain_time
         self._replay_alpha = replay_alpha
@@ -306,18 +223,11 @@ class CO(CO, SAC):
             actor_learning_rate=self._actor_learning_rate,
             critic_learning_rate=self._critic_learning_rate,
             temp_learning_rate=self._temp_learning_rate,
-            phi_learning_rate=self._phi_learning_rate,
-            psi_learning_rate=self._psi_learning_rate,
-            model_learning_rate=self._model_learning_rate,
             actor_optim_factory=self._actor_optim_factory,
             critic_optim_factory=self._critic_optim_factory,
             temp_optim_factory=self._temp_optim_factory,
-            phi_optim_factory=self._phi_optim_factory,
-            psi_optim_factory=self._psi_optim_factory,
-            model_optim_factory=self._model_optim_factory,
             actor_encoder_factory=self._actor_encoder_factory,
             critic_encoder_factory=self._critic_encoder_factory,
-            model_encoder_factory=self._model_encoder_factory,
             q_func_factory=self._q_func_factory,
             replay_type=self._replay_type,
             gamma=self._gamma,
@@ -333,14 +243,9 @@ class CO(CO, SAC):
             scaler=self._scaler,
             action_scaler=self._action_scaler,
             reward_scaler=self._reward_scaler,
-            model_n_ensembles=self._model_n_ensembles,
-            use_phi=self._use_phi,
-            use_model=self._use_model,
             clone_actor=self._clone_actor,
             replay_critic=self._replay_critic,
-            replay_model=self._replay_model,
             replay_alpha=self._replay_alpha,
-            retrain_model_alpha=self._retrain_model_alpha,
             single_head=self._single_head,
         )
         self._impl.build(task_id)

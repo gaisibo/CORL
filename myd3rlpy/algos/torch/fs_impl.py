@@ -38,15 +38,6 @@ class FSImpl():
         critic_replay_lambda: float,
         actor_replay_type: str,
         actor_replay_lambda: float,
-        # embed_replay_type: str,
-        # embed_replay_lambda: float,
-        use_vae: bool,
-        vae_replay_type: str,
-        vae_replay_lambda: float,
-        vae_factory: VAEFactory,
-        vae_optim_factory: OptimizerFactory,
-        vae_learning_rate: float,
-        feature_size: int,
         gem_alpha: float,
         agem_alpha: float,
         ewc_rwalk_alpha: float,
@@ -66,14 +57,6 @@ class FSImpl():
         self._actor_replay_lambda = actor_replay_lambda
         # self._embed_replay_type = embed_replay_type
         # self._embed_replay_lambda = embed_replay_lambda
-
-        self._use_vae = use_vae
-        self._vae_replay_type = vae_replay_type
-        self._vae_replay_lambda = vae_replay_lambda
-        self._feature_size = feature_size
-        self._vae_factory = vae_factory
-        self._vae_optim_factory = vae_optim_factory
-        self._vae_learning_rate = vae_learning_rate
 
         self._gem_alpha = gem_alpha
         self._agem_alpha = agem_alpha
@@ -792,12 +775,7 @@ class FSImpl():
     def save_clone_data(self):
         assert self._q_func is not None
         assert self._policy is not None
-        # self._clone_q_func = copy.deepcopy(self._q_func)
         self._clone_policy = copy.deepcopy(self._policy)
-        # if self._use_vae:
-        #     self._clone_vae = copy.deepcopy(self._vae)
-        # if "_value_funcs" in self.__dict__.keys():
-        #     self._clone_value_funcs = copy.deepcopy(self._value_funcs)
 
     def save_clone_policy(self):
         assert self._policy is not None

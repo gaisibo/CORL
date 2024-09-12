@@ -1,36 +1,15 @@
-from copy import deepcopy
-import inspect
-import types
-import time
-import math
-import copy
-from typing import Optional, Sequence, List, Any, Tuple, Dict, Union, cast
-
-import numpy as np
 import torch
-from torch import nn
-import torch.nn.functional as F
 
-from d3rlpy.argument_utility import check_encoder
-from d3rlpy.gpu import Device
-from d3rlpy.models.builders import create_squashed_normal_policy, create_parameter, create_continuous_q_function
-from d3rlpy.models.encoders import EncoderFactory
-from d3rlpy.models.optimizers import OptimizerFactory
-from d3rlpy.models.q_functions import QFunctionFactory
-from d3rlpy.models.torch.policies import squash_action
-from d3rlpy.preprocessing import ActionScaler, RewardScaler, Scaler
-from d3rlpy.torch_utility import TorchMiniBatch, soft_sync, train_api, torch_api
-from d3rlpy.dataset import TransitionMiniBatch
+from d3rlpy.models.builders import create_non_squashed_normal_policy
+from d3rlpy.torch_utility import TorchMiniBatch
 from d3rlpy.algos.torch.cql_impl import CQLImpl
 
 from myd3rlpy.algos.torch.st_impl import STImpl
-from myd3rlpy.algos.torch.gem import overwrite_grad, store_grad, project2cone2
-from myd3rlpy.algos.torch.agem import project
-from utils.utils import Struct
+from myd3rlpy.models.builders import create_parallel_continuous_q_function
 
 
-replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'terminals', 'policy_actions', 'qs', 'phis', 'psis']
-class STImpl(STImpl, CQLImpl):
+replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'terminals', 'policy_actions', 'qs']
+class STCQLImpl(STImpl, CQLImpl):
     def __init__(self, std_time=1, std_type='clamp', **kwargs):
         super().__init__(
             **kwargs
@@ -40,6 +19,14 @@ class STImpl(STImpl, CQLImpl):
         self._std_type = std_type
         if self._std_type != 'none':
             self._qs_stds = []
+
+    def _build_critic(self) -> None:
+        self._q_func = create_parallel_continuous_q_function(
+            self._observation_shape,
+            self._action_size,
+            n_ensembles=self._n_critics,
+            reduction='min',
+        )
 
     def compute_critic_loss(
         self, batch: TorchMiniBatch, q_tpn: torch.Tensor, clone_critic: bool = False, online: bool = False, replay: bool=False, first_time = False
@@ -93,13 +80,13 @@ class STImpl(STImpl, CQLImpl):
         return loss
 
     def _build_actor(self) -> None:
-        self._policy = create_squashed_normal_policy(
+        self._policy = create_non_squashed_normal_policy(
             self._observation_shape,
             self._action_size,
             self._actor_encoder_factory,
-            min_logstd=-20.0,
+            min_logstd=-5.0,
             max_logstd=2.0,
-            use_std_parameter=False,
+            use_std_parameter=True,
         )
 
     def _compute_conservative_loss(
@@ -123,7 +110,7 @@ class STImpl(STImpl, CQLImpl):
         # estimate action-values for data actions
         data_values = self._q_func(obs_t, act_t, "none")
 
-        loss = logsumexp.mean(dim=0).mean(dim=-1) - data_values.mean(dim=0).mean(dim=-1)
+        loss = logsumexp.mean(dim=0).mean() - data_values.mean(dim=0).mean()
         scaled_loss = self._conservative_weight * loss
 
         # clip for stability

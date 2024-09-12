@@ -1,67 +1,21 @@
-import os
-import copy
-from copy import deepcopy
-import sys
 import time
-import math
-import random
-from typing import Any, Dict, Optional, Sequence, List, Union, Callable, Tuple, Generator, Iterator, cast
-import types
-from collections import defaultdict
-from tqdm.auto import tqdm
-import numpy as np
-from functools import partial
+from typing import Any, Dict, Optional, Sequence, List
 import torch
 from torch import Tensor
 from torch.utils.data import TensorDataset, DataLoader, DataLoader
-from torch.distributions.normal import Normal
-
-from d3rlpy.argument_utility import (
-    ActionScalerArg,
-    EncoderArg,
-    QFuncArg,
-    RewardScalerArg,
-    ScalerArg,
-    UseGPUArg,
-    check_encoder,
-    check_q_func,
-    check_use_gpu,
-)
-from d3rlpy.torch_utility import TorchMiniBatch, _get_attributes
-from d3rlpy.dataset import MDPDataset, Episode, TransitionMiniBatch, Transition
+from d3rlpy.dataset import TransitionMiniBatch, Transition
 from d3rlpy.gpu import Device
-from d3rlpy.models.optimizers import AdamFactory, OptimizerFactory
+from d3rlpy.models.optimizers import OptimizerFactory
 from d3rlpy.models.q_functions import QFunctionFactory
-from d3rlpy.algos.base import AlgoBase
 from d3rlpy.algos.iql import IQL
-from d3rlpy.constants import (
-    CONTINUOUS_ACTION_SPACE_MISMATCH_ERROR,
-    DISCRETE_ACTION_SPACE_MISMATCH_ERROR,
-    IMPL_NOT_INITIALIZED_ERROR,
-    DYNAMICS_NOT_GIVEN_ERROR,
-    ActionSpace,
-)
-from d3rlpy.base import LearnableBase
-from d3rlpy.iterators import TransitionIterator
+from d3rlpy.constants import IMPL_NOT_INITIALIZED_ERROR
 from d3rlpy.models.encoders import EncoderFactory
-from d3rlpy.metrics.scorer import dynamics_observation_prediction_error_scorer, dynamics_reward_prediction_error_scorer, dynamics_prediction_variance_scorer
-from d3rlpy.iterators.random_iterator import RandomIterator
-from d3rlpy.iterators.round_iterator import RoundIterator
-from d3rlpy.logger import LOG, D3RLPyLogger
-import gym
-
-from online.utils import ReplayBuffer
-from online.eval_policy import eval_policy
 
 from myd3rlpy.algos.st import STBase
-from myd3rlpy.algos.torch.state_vae_impl import StateVAEImpl as StateVAEImpl
-from myd3rlpy.models.vaes import VAEFactory, create_vae_factory
-from myd3rlpy.models.encoders import EnsembelDefaultEncoderFactory
-from utils.utils import Struct
 
 
-replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'terminals', 'policy_actions', 'qs', 'phis', 'psis']
-class ST(STBase, IQL):
+replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'terminals', 'policy_actions', 'qs']
+class STIQL(STBase, IQL):
     r"""Twin Delayed Deep Deterministic Policy Gradients algorithm.
     TD3 is an improved DDPG-based algorithm.
     Major differences from DDPG are as follows.
@@ -121,17 +75,12 @@ class ST(STBase, IQL):
 
     _actor_learning_rate: float
     _critic_learning_rate: float
-    _vae_learning_rate: float
     _actor_optim_factory: OptimizerFactory
     _critic_optim_factory: OptimizerFactory
-    _vae_optim_factory: OptimizerFactory
     _actor_encoder_factory: EncoderFactory
     _critic_encoder_factory: EncoderFactory
     _value_encoder_factory: EncoderFactory
-    _vae_encoder_factory: EncoderFactory
     _q_func_factory: QFunctionFactory
-    _vae_factory: VAEFactory
-    _feature_size: int
     # actor必须被重放，没用选择。
     _tau: float
     _n_critics: int
@@ -148,10 +97,8 @@ class ST(STBase, IQL):
     _critic_replay_lambda: float
     _actor_replay_type: bool
     _actor_replay_lambda: float
-    _replay_model: bool
     _generate_step: int
     _select_time: int
-    _model_noise: float
 
     _task_id: str
     _single_head: bool
@@ -163,8 +110,6 @@ class ST(STBase, IQL):
         critic_replay_lambda=1,
         actor_replay_type='rl',
         actor_replay_lambda=1,
-        vae_replay_type = 'bc',
-        vae_replay_lambda = 1,
         gem_alpha: float = 1,
         agem_alpha: float = 1,
         ewc_rwalk_alpha: float = 0.5,
@@ -185,7 +130,7 @@ class ST(STBase, IQL):
         clone_critic = False,
         clone_actor = False,
         merge = False,
-        coldstart_step = 5000,
+        coldstart_step = 0,
 
         fine_tuned_step = 1,
         n_ensemble = 10,
@@ -197,12 +142,6 @@ class ST(STBase, IQL):
         update_ratio = 0.3,
         alpha = 2,
 
-        use_vae = False,
-        vae_learning_rate = 1e-3,
-        vae_optim_factory = AdamFactory(),
-        vae_factory = 'vector',
-        feature_size = 256,
-
         **kwargs: Any
     ):
         super(STBase, self).__init__(**kwargs)
@@ -210,8 +149,6 @@ class ST(STBase, IQL):
         self._critic_replay_lambda = critic_replay_lambda
         self._actor_replay_type = actor_replay_type
         self._actor_replay_lambda = actor_replay_lambda
-        self._vae_replay_type = vae_replay_type
-        self._vae_replay_lambda = vae_replay_lambda
 
         self._gem_alpha = gem_alpha
         self._agem_alpha = agem_alpha
@@ -248,15 +185,6 @@ class ST(STBase, IQL):
         self._alpha = alpha
         self._update_ratio = update_ratio
 
-        self._use_vae = use_vae
-        self._vae_learning_rate = vae_learning_rate
-        self._vae_optim_factory = vae_optim_factory
-        if isinstance(vae_factory, str):
-            self._vae_factory = create_vae_factory(vae_factory)
-        else:
-            self._vae_factory = vae_factory
-        self._feature_size = feature_size
-
     def _create_impl(
         self, observation_shape: Sequence[int], action_size: int) -> None:
         impl_dict = {
@@ -264,22 +192,15 @@ class ST(STBase, IQL):
             'action_size':action_size,
             'actor_learning_rate':self._actor_learning_rate,
             'critic_learning_rate':self._critic_learning_rate,
-            'vae_learning_rate':self._vae_learning_rate,
             'actor_optim_factory':self._actor_optim_factory,
             'critic_optim_factory':self._critic_optim_factory,
-            'vae_optim_factory':self._vae_optim_factory,
             'actor_encoder_factory':self._actor_encoder_factory,
             'critic_encoder_factory':self._critic_encoder_factory,
             'value_encoder_factory':self._value_encoder_factory,
-            'vae_factory': self._vae_factory,
-            'use_vae': self._use_vae,
-            'feature_size': self._feature_size,
             'critic_replay_type':self._critic_replay_type,
             'critic_replay_lambda':self._critic_replay_lambda,
             'actor_replay_type':self._actor_replay_type,
             'actor_replay_lambda':self._actor_replay_lambda,
-            'vae_replay_type':self._vae_replay_type,
-            'vae_replay_lambda':self._vae_replay_lambda,
             'gamma':self._gamma,
             'gem_alpha':self._gem_alpha,
             'agem_alpha':self._agem_alpha,
@@ -298,22 +219,15 @@ class ST(STBase, IQL):
             'fine_tuned_step': self._fine_tuned_step,
         }
         if self._impl_name == 'iql':
-            from myd3rlpy.algos.torch.st_iql_impl import STImpl as STImpl
+            from myd3rlpy.algos.torch.st_iql_impl import STIQLImpl as STImpl
         elif self._impl_name == 'sql':
-            from myd3rlpy.algos.torch.st_sql_impl import STImpl as STImpl
+            from myd3rlpy.algos.torch.st_sql_impl import STSQLImpl as STImpl
             impl_dict["alpha"] = self._alpha
         elif self._impl_name in ['iqln', 'iqln2', 'iqln3', 'iqln4', 'sqln']:
             if self._impl_name == 'iqln':
-                from myd3rlpy.algos.torch.st_iqln_impl import STImpl as STImpl
-            elif self._impl_name == 'iqln2':
-                from myd3rlpy.algos.torch.st_iqln2_impl import STImpl as STImpl
-                impl_dict["update_ratio"] = self._update_ratio
-            elif self._impl_name == 'iqln3':
-                from myd3rlpy.algos.torch.st_iqln3_impl import STImpl as STImpl
-            elif self._impl_name == 'iqln4':
-                from myd3rlpy.algos.torch.st_iqln4_impl import STImpl as STImpl
+                from myd3rlpy.algos.torch.st_iqln_impl import STIQLNImpl as STImpl
             else:
-                from myd3rlpy.algos.torch.st_sqln_impl import STImpl as STImpl
+                from myd3rlpy.algos.torch.st_sqln_impl import STSQLNImpl as STImpl
                 impl_dict["alpha"] = self._alpha
             impl_dict["entropy_time"] = self._entropy_time
             impl_dict["expectile_max"] = self._expectile_max
@@ -345,15 +259,6 @@ class ST(STBase, IQL):
                 # actor_loss, replay_actor_loss = self._impl.update_actor(batch, replay_batch, online=online)
                 metrics.update({"actor_loss": actor_loss})
                 metrics.update({"replay_actor_loss": replay_actor_loss})
-
-            if self._use_vae and not online:
-                vae_loss, replay_vae_loss = self._impl.update_vae(batch, replay_batch)
-                # actor_loss, replay_actor_loss = self._impl.update_actor(batch, replay_batch, online=online)
-                metrics.update({"vae_loss": vae_loss})
-                metrics.update({"replay_vae_loss": replay_vae_loss})
-
-                critic_loss = self._impl.update_vae_critic(batch)
-                metrics.update({"critic_loss": critic_loss})
 
             self._impl.update_critic_target()
         elif not online:

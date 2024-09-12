@@ -1,71 +1,31 @@
-import os
 import copy
-from copy import deepcopy
-import sys
 import time
-import math
 import random
-from typing import Any, Dict, Optional, Sequence, List, Union, Callable, Tuple, Generator, Iterator, cast
-import types
+from typing import Any, Dict, Optional, List, Union, Callable, Tuple, Generator, Iterator, cast
 from collections import defaultdict
-from numpy.matrixlib.defmatrix import N
 from tqdm.auto import tqdm
 from tqdm.auto import trange
 import numpy as np
-from functools import partial
 import torch
-from torch import Tensor
-from torch.utils.data import Dataset, TensorDataset, DataLoader
+from torch.utils.data import TensorDataset, DataLoader
 from torch.distributions.normal import Normal
-from d3rlpy.online.buffers import Buffer
-from d3rlpy.metrics.scorer import evaluate_on_environment
 
-from d3rlpy.argument_utility import (
-    ActionScalerArg,
-    EncoderArg,
-    QFuncArg,
-    RewardScalerArg,
-    ScalerArg,
-    UseGPUArg,
-    check_encoder,
-    check_q_func,
-    check_use_gpu,
-)
-from d3rlpy.torch_utility import TorchMiniBatch, _get_attributes, hard_sync, map_location, get_state_dict
+from d3rlpy.metrics.scorer import evaluate_on_environment
+from d3rlpy.online.buffers import Buffer, ReplayBuffer
+from d3rlpy.torch_utility import _get_attributes
 from d3rlpy.dataset import MDPDataset, Episode, TransitionMiniBatch, Transition
-from d3rlpy.gpu import Device
-from d3rlpy.models.optimizers import AdamFactory, OptimizerFactory
-from d3rlpy.models.q_functions import QFunctionFactory
-from d3rlpy.algos.base import AlgoBase, AlgoImplBase
-from d3rlpy.algos.torch.base import TorchImplBase
-from d3rlpy.algos.combo import COMBO
-from d3rlpy.constants import (
-    CONTINUOUS_ACTION_SPACE_MISMATCH_ERROR,
-    DISCRETE_ACTION_SPACE_MISMATCH_ERROR,
-    IMPL_NOT_INITIALIZED_ERROR,
-    DYNAMICS_NOT_GIVEN_ERROR,
-    ActionSpace,
-)
+from d3rlpy.constants import IMPL_NOT_INITIALIZED_ERROR
 from d3rlpy.base import LearnableBase
 from d3rlpy.iterators import TransitionIterator
-from d3rlpy.models.encoders import EncoderFactory
-from d3rlpy.metrics.scorer import dynamics_observation_prediction_error_scorer, dynamics_reward_prediction_error_scorer, dynamics_prediction_variance_scorer
 from d3rlpy.iterators.random_iterator import RandomIterator
 from d3rlpy.iterators.round_iterator import RoundIterator
 from d3rlpy.logger import LOG, D3RLPyLogger
 import gym
 
-from online.utils import ReplayBuffer
-from online.eval_policy import eval_policy
-
 # from myd3rlpy.dynamics.probabilistic_ensemble_dynamics import ProbabilisticEnsembleDynamics
-from myd3rlpy.algos.torch.state_vae_impl import StateVAEImpl
-from myd3rlpy.metrics.scorer import q_mean_scorer, q_replay_scorer
-from myd3rlpy.models.vaes import create_vae_factory
-from utils.utils import Struct
 
 
-replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'terminals', 'policy_actions', 'qs', 'phis', 'psis']
+replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'terminals', 'policy_actions', 'qs']
 class STBase():
     r"""Twin Delayed Deep Deterministic Policy Gradients algorithm.
     TD3 is an improved DDPG-based algorithm.
@@ -127,7 +87,7 @@ class STBase():
     """
     _sample_type: str
 
-    def update(self, batch: TransitionMiniBatch, online: bool = False, batch_num: int=0, total_step: int=0, coldstart_steps: Optional[int] = None, replay_batch: TransitionMiniBatch=None) -> Dict[int, float]:
+    def update(self, batch: TransitionMiniBatch, online: bool = False, batch_num: int=0, total_step: int=0, replay_batch: TransitionMiniBatch=None) -> Dict[int, float]:
     # def update(self, batch: TransitionMiniBatch, online: bool = False, batch_num: int=0, total_step: int=0, replay_batch: Optional[List[Tensor]]=None) -> Dict[int, float]:
         """Update parameters with mini-batch of data.
         Args:
@@ -135,7 +95,7 @@ class STBase():
         Returns:
             dictionary of metrics.
         """
-        loss = self._update(batch, online, batch_num, total_step, coldstart_steps, replay_batch)
+        loss = self._update(batch, online, batch_num, total_step, replay_batch)
         self._grad_step += 1
         return loss
 
@@ -148,10 +108,6 @@ class STBase():
 
         actor_loss = self._impl.merge_update_actor(batch, replay_batch)
         metrics.update({"actor_loss": actor_loss})
-
-        if self._use_vae:
-            vae_loss = self._impl.merge_update_vae(batch, replay_batch)
-            metrics.update({"vae_loss": vae_loss})
 
         return metrics
 
@@ -290,7 +246,6 @@ class STBase():
         replay_dataset: Optional[Union[TensorDataset, List[Transition]]] = None,
         replay_iterator: Optional[Iterator] = None,
         n_epochs: Optional[int] = None,
-        coldstart_steps: Optional[int] = None,
         save_metrics: bool = True,
         experiment_name: Optional[str] = None,
         with_timestamp: bool = True,
@@ -304,9 +259,9 @@ class STBase():
         start_timesteps : int = int(25e3),
         expl_noise: float = 1,
         eval_freq: int = 50,
-	scorers_list: Optional[
-            List[Dict[str, Callable[[Any, List[Episode]], float]]]
-        ] = None,
+        scorers_list: Optional[
+                List[Dict[str, Callable[[Any, List[Episode]], float]]]
+            ] = None,
         shuffle: bool = True,
         callback: Optional[Callable[[LearnableBase, int, int], None]] = None,
         test: bool = False,
@@ -352,7 +307,6 @@ class STBase():
                 replay_dataset,
                 replay_iterator,
                 n_epochs,
-                coldstart_steps,
                 save_metrics,
                 experiment_name,
                 with_timestamp,
@@ -384,7 +338,6 @@ class STBase():
         replay_dataset: Optional[Union[TensorDataset, List[Transition]]] = None,
         replay_iterator: Optional[TransitionIterator] = None,
         n_epochs: Optional[int] = None,
-        coldstart_steps: Optional[int] = None,
         save_metrics: bool = True,
         experiment_name: Optional[str] = None,
         with_timestamp: bool = True,
@@ -520,7 +473,7 @@ class STBase():
 
                     # update parameters
                     with logger.measure_time("algorithm_update"):
-                        loss = self.update(batch, batch_num=batch_num, total_step=total_step, coldstart_steps=coldstart_steps, replay_batch=replay_batch)
+                        loss = self.update(batch, batch_num=batch_num, total_step=total_step, replay_batch=replay_batch)
                         # self._impl.increase_siamese_alpha(epoch - n_epochs, itr / len(iterator))
 
                     # record metrics
@@ -578,7 +531,12 @@ class STBase():
                     rename_scorers = dict()
                     for name, scorer in scorers.items():
                         rename_scorers[str(scorer_num) + '_' + name] = scorer
+                    #print("test predict: {self._impl.predict_best_action()}")
                     self._evaluate(eval_episodes, rename_scorers, logger)
+            else:
+                print(f"scorers_list: {scorers_list}")
+                print(f"eval_episodes_list: {eval_episodes_list}")
+                assert False
 
             # save metrics
             metrics = logger.commit(epoch, total_step)
@@ -633,16 +591,17 @@ class STBase():
                 self._evaluate(eval_episodes, rename_scorers, logger)
                 metrics = logger.commit(0, 0)
 
-    def online_fit(
+    def fit_online(
         self,
         env: gym.envs,
         eval_env: gym.envs,
-        buffer: Buffer,
-        n_steps: int = 10000000,
+        buffer: Optional[Buffer],
+        n_steps: int = 1000000,
         n_steps_per_epoch: int = 10000,
+        start_epoch: int = 0,
         update_interval: int = 1,
         update_start_step: int = 0,
-        random_steps: int = 0,
+        random_step: int = 100000,
         eval_epsilon: float = 0.0,
         save_metrics: bool = True,
         save_interval: int = 1,
@@ -701,6 +660,9 @@ class STBase():
             with_timestamp=with_timestamp,
         )
 
+        if buffer is None:
+            buffer = ReplayBuffer(n_steps, env)
+
         if self._impl is None:
             LOG.debug("Building models...")
             observation_shape = env.observation_space.shape
@@ -712,6 +674,7 @@ class STBase():
             LOG.debug("Models have been built.")
         else:
             # self._impl.rebuild_critic()
+            self._impl._impl_id = 0
             LOG.warning("Skip building models since they're already built.")
 
         # save hyperparameters
@@ -727,34 +690,43 @@ class STBase():
         else:
             eval_scorer = None
         # start training loop
-        observation = env.reset()
+        observation, _ = env.reset()
         rollout_return = 0.0
 
 
         for total_step in xrange(1, n_steps + 1):
-            if total_step > 1000 and test:
+            if total_step > 2000 and test:
                 break
             with logger.measure_time("step"):
-                observation = observation.astype("f4")
-                fed_observation = observation
+                #observation = observation.astype("f4")
+                #fed_observation = observation
 
                 # sample exploration action
                 with logger.measure_time("inference"):
-                    if total_step < random_steps:
+                    if total_step < random_step:
                         action = env.action_space.sample()
                     else:
-                        action = self.sample_action([fed_observation])[0]
+                        #action = self.sample_action([fed_observation])[0]
+                        action = self.sample_action(observation[np.newaxis, :])
+                        action = action[0]
 
                 # step environment
+                episode_length = 0
                 with logger.measure_time("environment_step"):
-                    next_observation, reward, terminal, info = env.step(action)
+                    next_observation, reward, terminal, truncated, info = env.step(action)
                     rollout_return += reward
+                    episode_length += 1
 
                 # special case for TimeLimit wrapper
-                if timelimit_aware and "TimeLimit.truncated" in info:
+                if truncated:
                     clip_episode = True
                     terminal = False
+                    episode_length = 0
                 else:
+                    episode_length += 1
+                    if episode_length == 1000 - 1:
+                        terminal = True
+                        episode_length = 0
                     clip_episode = terminal
 
                 # store observation
@@ -768,7 +740,7 @@ class STBase():
 
                 # reset if terminated
                 if clip_episode:
-                    observation = env.reset()
+                    observation, _ = env.reset()
                     logger.add_metric("rollout_return", rollout_return)
                     rollout_return = 0.0
                     # for image observation
@@ -776,7 +748,7 @@ class STBase():
                     observation = next_observation
 
                 # psuedo epoch count
-                epoch = total_step // n_steps_per_epoch
+                epoch = total_step // n_steps_per_epoch + start_epoch
 
                 if total_step > update_start_step and len(buffer) > self._batch_size:
                     if total_step % update_interval == 0:
@@ -801,10 +773,10 @@ class STBase():
                 if callback:
                     callback(self, epoch, total_step)
 
-            if epoch > 0 and total_step % n_steps_per_epoch == 0:
+            if epoch > start_epoch and total_step % n_steps_per_epoch == 0:
                 # evaluation
-                if eval_scorer:
-                    logger.add_metric("evaluation", eval_scorer(self))
+                #if eval_scorer:
+                #    logger.add_metric("evaluation", np.mean(reward))
 
                 if epoch % save_interval == 0:
                     logger.save_model(total_step, self)

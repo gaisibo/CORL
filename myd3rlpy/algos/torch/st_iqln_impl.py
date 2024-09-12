@@ -26,12 +26,13 @@ from d3rlpy.algos.torch.iql_impl import IQLImpl
 from myd3rlpy.algos.torch.st_impl import STImpl
 from myd3rlpy.algos.torch.gem import overwrite_grad, store_grad, project2cone2
 from myd3rlpy.algos.torch.agem import project
+from myd3rlpy.models.builders import create_parallel_continuous_q_function
 from utils.utils import Struct
 from utils.networks import ParallelizedEnsembleFlattenMLP
 
 
-replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'terminals', 'policy_actions', 'qs', 'phis', 'psis']
-class STImpl(STImpl, IQLImpl):
+replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'terminals', 'policy_actions', 'qs']
+class STIQLNImpl(STImpl, IQLImpl):
     def __init__(
         self,
         n_ensemble = 10,
@@ -65,8 +66,13 @@ class STImpl(STImpl, IQLImpl):
         )
 
     def _build_critic(self) -> None:
-        super()._build_critic()
         # self._value_func = nn.ModuleList([create_value_function(self._observation_shape, self._value_encoder_factory) for _ in range(self._n_ensemble)])
+        self._q_func = create_parallel_continuous_q_function(
+            self._observation_shape,
+            self._action_size,
+            n_ensembles=self._n_critics,
+            reduction='min',
+        )
         self._value_func = ParallelizedEnsembleFlattenMLP(self._n_ensemble, [256, 256], self._observation_shape[0], 1, device=self.device)
 
     def _build_critic_optim(self) -> None:

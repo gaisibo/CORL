@@ -29,7 +29,7 @@ from myd3rlpy.algos.torch.agem import project
 from utils.utils import Struct
 
 
-replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'terminals', 'policy_actions', 'qs', 'phis', 'psis']
+replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'terminals', 'policy_actions', 'qs']
 class STImpl(STImpl, CQLImpl):
 
     def compute_critic_loss(

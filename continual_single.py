@@ -1,14 +1,9 @@
-import copy
 import os
-import sys
 import argparse
-import json
 import random
 from collections import namedtuple
-import pickle
 import time
 from functools import partial
-from envs import HalfCheetahDirEnv
 import numpy as np
 import gym
 from mygym.envs.halfcheetah_block import HalfCheetahBlockEnv
@@ -16,19 +11,9 @@ from mygym.envs.halfcheetah_block import HalfCheetahBlockEnv
 import torch
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
-from d4rl.locomotion import maze_env, ant
-from d4rl.locomotion.wrappers import NormalizedBoxEnv
-
 import d3rlpy
-from d3rlpy.ope import FQE
-from d3rlpy.dataset import MDPDataset
-from d3rlpy.torch_utility import get_state_dict, set_state_dict
-from d3rlpy.online.iterators import train_single_env
-from d3rlpy.models.optimizers import AdamFactory
 from d3rlpy.online.buffers import ReplayBuffer
-# from myd3rlpy.datasets import get_d4rl
 
-from utils.k_means import kmeans
 from myd3rlpy.metrics.scorer import evaluate_on_environment_help
 from dataset.load_d4rl import get_d4rl_local, get_antmaze_local, get_dataset
 from rlkit.torch import pytorch_util as ptu
@@ -174,7 +159,7 @@ def read_dict(state_dict, prename):
                 print(f"{prename}.{str(key)}: {value}")
         else:
             read_dict(value, prename + '.' + str(key))
-replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'terminals', 'means', 'std_logs', 'qs', 'phis', 'psis']
+replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'terminals', 'means', 'std_logs', 'qs']
 def main(args, device):
     np.set_printoptions(precision=1, suppress=True)
     ask_indexes = False
@@ -189,13 +174,13 @@ def main(args, device):
 
     # prepare algorithm
     if args.algo in ['td3_plus_bc', 'td3']:
-        from myd3rlpy.algos.st_td3_plus_bc import ST
+        from myd3rlpy.algos.st_td3 import ST
     elif args.algo_kind == 'cql':
         from myd3rlpy.algos.st_cql import ST
     elif args.algo in ['iql', 'iqln', 'iqln2', 'iqln3', 'iqln4', 'sql', 'sqln']:
         from myd3rlpy.algos.st_iql import ST
     elif args.algo in ['sacn', 'edac']:
-        from myd3rlpy.algos.st_sacn import ST
+        from myd3rlpy.algos.st_sac import ST
     else:
         raise NotImplementedError
     st_dict, online_st_dict, step_dict = get_st_dict(args, args.dataset_kind, args.algo)
@@ -210,7 +195,7 @@ def main(args, device):
         if args.algo in ['sql', 'sqln']:
             st_dict['alpha'] = args.alpha
         if args.algo in ['iqln', 'iqln2', 'iqln3', 'iqln4', 'sqln']:
-            st_dict['n_ensemble'] = args.n_ensemble
+            st_dict['n_critics'] = args.n_critics
             st_dict['std_time'] = args.std_time
             st_dict['std_type'] = args.std_type
             st_dict['entropy_time'] = args.entropy_time
@@ -219,7 +204,7 @@ def main(args, device):
         st_dict['std_type'] = args.std_type
         st_dict['entropy_time'] = args.entropy_time
     elif args.algo in ['sacn', 'edac']:
-        st_dict['n_ensemble'] = args.n_ensemble
+        st_dict['n_critics'] = args.n_critics
         if args.algo == 'edac':
             st_dict['eta'] = args.eta
     st = ST(**st_dict)
@@ -297,7 +282,7 @@ def main(args, device):
             start_time = time.perf_counter()
             print(f'Start Training {dataset_num}')
             if dataset_num <= args.read_policy:
-                iterator, replay_iterator, n_epochs = st.make_iterator(dataset, replay_dataset, step_dict['merge_n_steps'], step_dict['n_steps_per_epoch'], None, True)
+                iterator, replay_iterator, n_epochs = st.make_iterator(dataset, replay_dataset, step_dict['n_steps_per_epoch'], None, True)
                 if args.read_policy == 0:
                     pretrain_path = "pretrained_network/" + "ST_" + args.algo_kind + '_0.9_' + args.dataset + '_' + args.dataset_nums[0] + '.pt'
                     if not os.path.exists(pretrain_path):
@@ -316,51 +301,15 @@ def main(args, device):
                 #     except BaseException as e:
                 #         print(f'Don\' have replay_dataset')
                 #         raise e
-            # elif args.merge and dataset_num == args.read_merge_policy:
-            #     iterator, replay_iterator, n_epochs = st.make_iterator(dataset, replay_dataset, step_dict['merge_n_steps'], step_dict['n_steps_per_epoch'], None, True)
-            #     pretrain_path = "pretrained_network/" + "ST_" + args.algo_kind + '_' + args.dataset + '_' + args.dataset_nums[0] + '.pt'
-            #     st.build_with_dataset(dataset, dataset_num)
-            #     st.load_model(pretrain_path)
-            #     for param_group in st._impl._actor_optim.param_groups:
-            #         param_group["lr"] = st_dict['actor_learning_rate']
-            #     if args.algo in ['iql', 'iqln']:
-            #         scheduler = CosineAnnealingLR(st._impl._actor_optim, step_dict['n_steps'])
-
-            #         def callback(algo, epoch, total_step):
-            #             scheduler.step()
-            #     else:
-            #         callback = None
-            #     st.fit(
-            #         dataset_num,
-            #         dataset=dataset,
-            #         iterator=iterator,
-            #         replay_dataset=replay_dataset,
-            #         replay_iterator=replay_iterator,
-            #         eval_episodes_list=add_one_learned_datasets,
-            #         # n_epochs=args.n_epochs if not args.test else 1,
-            #         n_epochs=n_epochs,
-            #         coldstart_steps=step_dict['coldstart_steps'],
-            #         save_interval=args.save_interval,
-            #         experiment_name=experiment_name + algos_name + '_' + str(dataset_num),
-            #         scorers_list = scorers_list,
-            #         callback=callback,
-            #         test=args.test,
-            #     )
             elif dataset_num > args.read_policy:
                 # train
                 print(f'fitting dataset {dataset_num}')
-                # if args.merge and args.read_merge_policy >= 0 and dataset_num > 0:
-                #     iterator, replay_iterator, n_epochs = st.make_iterator(dataset, replay_dataset, step_dict['n_steps'] + step_dict['merge_n_steps'], step_dict['n_steps_per_epoch'], None, True)
-                # else:
                 iterator, replay_iterator, n_epochs = st.make_iterator(dataset, replay_dataset, step_dict['n_steps'], step_dict['n_steps_per_epoch'], None, True)
                 st.build_with_dataset(dataset, dataset_num)
                 for param_group in st._impl._actor_optim.param_groups:
                     param_group["lr"] = st_dict['actor_learning_rate']
                 for param_group in st._impl._critic_optim.param_groups:
                     param_group["lr"] = st_dict['critic_learning_rate']
-                if args.use_vae:
-                    for param_group in st._impl._vae_optim.param_groups:
-                        param_group["lr"] = st_dict['vae_learning_rate']
                 if args.algo in ['iql', 'iqln', 'iqln2', 'iqln3', 'iqln4', 'sql', 'sqln']:
                     scheduler = CosineAnnealingLR(st._impl._actor_optim, 1000000)
 
@@ -369,38 +318,33 @@ def main(args, device):
                     # st_dict['expectile'] = 1
                 else:
                     callback = None
-
-                st.fit(
-                    dataset_num,
-                    dataset=dataset,
-                    iterator=iterator,
-                    replay_dataset=replay_dataset,
-                    replay_iterator=replay_iterator,
-                    eval_episodes_list=add_one_learned_datasets,
-                    # n_epochs=args.n_epochs if not args.test else 1,
-                    n_epochs=n_epochs,
-                    coldstart_steps=step_dict['coldstart_steps'],
-                    save_interval=args.save_interval,
-                    experiment_name=experiment_name + algos_name + '_' + str(dataset_num),
-                    scorers_list = scorers_list,
-                    callback=callback,
-                    test=args.test,
-                )
+                if args.offline:
+                    st.fit(
+                        dataset_num,
+                        dataset=dataset,
+                        iterator=iterator,
+                        replay_dataset=replay_dataset,
+                        replay_iterator=replay_iterator,
+                        eval_episodes_list=add_one_learned_datasets,
+                        # n_epochs=args.n_epochs if not args.test else 1,
+                        n_epochs=n_epochs,
+                        save_interval=args.save_interval,
+                        experiment_name=experiment_name + algos_name + '_' + str(dataset_num),
+                        scorers_list = scorers_list,
+                        callback=callback,
+                        test=args.test,
+                    )
+                else:
+                    st.online_fit(
+                        env,
+                        eval_env,
+                        dataset_num,
+                    )
             st.after_learn(iterator, experiment_name + algos_name + '_' + str(dataset_num), scorers_list, add_one_learned_datasets)
             print(f'Training task {dataset_num} time: {time.perf_counter() - start_time}')
             # st.save_model(args.model_path + algos_name + '_' + str(dataset_num) + '.pt')
-            if args.critic_replay_type in ['bc', 'orl', 'gem', 'agem'] or args.actor_replay_type in ['bc', 'orl', 'gem', 'agem'] or (args.use_vae and args.vae_replay_type in ['bc', 'orl', 'gem', 'agem']):
-                # if args.mix_type == 'random':
-                #     slide_dataset_length = args.max_save_num // (dataset_num + 1)
-                # elif args.mix_type in ['q', 'vq_diff']:
-                #     slide_dataset_length = args.max_save_num
-                # else:
-                #     raise NotImplementedError
-                # new_replay_dataset = st.generate_replay(dataset_num, dataset, env, args.critic_replay_type, args.actor_replay_type, args.experience_type, slide_dataset_length, args.max_export_step, args.test)
-                # if replay_dataset is not None:
+            if args.critic_replay_type in ['bc', 'orl', 'gem', 'agem'] or args.actor_replay_type in ['bc', 'orl', 'gem', 'agem']:
                 replay_dataset = st.select_replay(dataset, replay_dataset, dataset_num, args.max_save_num, args.mix_type)
-                # else:
-                #     replay_dataset = new_replay_dataset
             else:
                 replay_dataset = None
             if args.test and dataset_num >= 2:
@@ -412,9 +356,6 @@ def main(args, device):
                 param_group["lr"] = st_dict['actor_learning_rate']
             for param_group in st._impl._critic_optim.param_groups:
                 param_group["lr"] = st_dict['critic_learning_rate']
-            if args.use_vae:
-                for param_group in st._impl._vae_optim.param_groups:
-                    param_group["lr"] = st_dict['vae_learning_rate']
             buffer_ = ReplayBuffer(maxlen=online_st_dict['buffer_size'], env=env)
             st.online_fit(env, eval_env, buffer_, n_steps=online_st_dict['n_steps'], n_steps_per_epoch=online_st_dict['n_steps_per_epoch'], experiment_name = experiment_name + algos_name, test=args.test)
     print('finish')
@@ -454,12 +395,12 @@ if __name__ == '__main__':
     parser.add_argument("--n_action_samples", default=10, type=int)
     parser.add_argument('--top_euclid', default=64, type=int)
 
-    parser.add_argument('--critic_replay_type', default='bc', type=str, choices=['orl', 'bc', 'generate', 'generate_orl', 'lwf', 'ewc', 'gem', 'agem', 'rwalk', 'si', 'none'])
+    parser.add_argument('--critic_replay_type', default='bc', type=str, choices=['orl', 'bc', 'lwf', 'ewc', 'gem', 'agem', 'rwalk', 'si', 'none'])
     parser.add_argument('--critic_replay_lambda', default=100, type=float)
-    parser.add_argument('--actor_replay_type', default='orl', type=str, choices=['orl', 'bc', 'generate', 'generate_orl', 'lwf', 'lwf_orl', 'ewc', 'gem', 'agem', 'rwalk', 'si', 'none'])
+    parser.add_argument('--actor_replay_type', default='orl', type=str, choices=['orl', 'bc', 'lwf', 'lwf_orl', 'ewc', 'gem', 'agem', 'rwalk', 'si', 'none'])
     parser.add_argument('--actor_replay_lambda', default=1, type=float)
 
-    parser.add_argument('--n_ensemble', default=2, type=int)
+    parser.add_argument('--n_critics', default=2, type=int)
     parser.add_argument('--eta', default=1.0, type=int)
     parser.add_argument('--std_time', default=1, type=float)
     parser.add_argument('--std_type', default='none', type=str, choices=['clamp', 'none', 'linear', 'entropy'])
@@ -468,11 +409,9 @@ if __name__ == '__main__':
 
     parser.add_argument('--fine_tuned_step', default=1, type=int)
     parser.add_argument('--clone_actor', action='store_true')
-    parser.add_argument('--vae_replay_type', default='generate', type=str, choices=['orl', 'bc', 'generate', 'ewc', 'gem', 'agem', 'rwalk', 'si', 'none'])
-    parser.add_argument('--vae_replay_lambda', default=1, type=float)
     parser.add_argument('--mix_type', default='q', type=str, choices=['q', 'v', 'random', 'vq_diff', 'all'])
 
-    parser.add_argument('--experience_type', default='random_episode', type=str, choices=['all', 'none', 'single', 'online', 'generate', 'model_prob', 'model_next', 'model', 'model_this', 'coverage', 'random_transition', 'random_episode', 'max_reward', 'max_match', 'max_supervise', 'max_model', 'max_reward_end', 'max_reward_mean', 'max_match_end', 'max_match_mean', 'max_supervise_end', 'max_supervise_mean', 'max_model_end', 'max_model_mean', 'min_reward', 'min_match', 'min_supervise', 'min_model', 'min_reward_end', 'min_reward_mean', 'min_match_end', 'min_match_mean', 'min_supervise_end', 'min_supervise_mean', 'min_model_end', 'min_model_mean'])
+    parser.add_argument('--experience_type', default='random_episode', type=str, choices=['all', 'none', 'single', 'online', 'model_prob', 'model_next', 'model', 'model_this', 'coverage', 'random_transition', 'random_episode', 'max_reward', 'max_match', 'max_supervise', 'max_model', 'max_reward_end', 'max_reward_mean', 'max_match_end', 'max_match_mean', 'max_supervise_end', 'max_supervise_mean', 'max_model_end', 'max_model_mean', 'min_reward', 'min_match', 'min_supervise', 'min_model', 'min_reward_end', 'min_reward_mean', 'min_match_end', 'min_match_mean', 'min_supervise_end', 'min_supervise_mean', 'min_model_end', 'min_model_mean'])
     parser.add_argument('--max_export_step', default=1000, type=int)
     parser.add_argument('--dense', default='dense', type=str)
     parser.add_argument('--sum', default='no_sum', type=str)
@@ -481,10 +420,8 @@ if __name__ == '__main__':
     parser.add_argument('--gpu', type=str, default='0')
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--read_policy', type=int, default=-1)
-    parser.add_argument('--read_merge_policy', type=int, default=-1)
     # 作为对照实验，证明er算法不是重新学习了重放缓存而是具备持续学习能力
     parser.add_argument('--clear_network', action='store_true')
-    # parser.add_argument('--merge', action='store_true')
     args = parser.parse_args()
 
     args.algo_kind = args.algo
@@ -514,11 +451,6 @@ if __name__ == '__main__':
     args.model_path += '/model_'
     # if args.experience_type == 'model':
     #     args.experience_type = 'model_next'
-
-    if args.critic_replay_type in ['generate', 'generate_orl'] or args.actor_replay_type in ['generate', 'generate_orl']:
-        args.use_vae = True
-    else:
-        args.use_vae = False
 
     global DATASET_PATH
     DATASET_PATH = './.d4rl/datasets/'

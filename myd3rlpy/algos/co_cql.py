@@ -149,10 +149,8 @@ class CO(CO, CQL):
     _use_gpu: Optional[Device]
     _reduce_replay: str
     _replay_critic: bool
-    _replay_model: bool
     _generate_step: int
     _select_time: int
-    _model_noise: float
 
     _task_id: str
     _single_head: bool
@@ -164,24 +162,14 @@ class CO(CO, CQL):
         critic_learning_rate: float = 3e-4,
         temp_learning_rate: float = 1e-4,
         alpha_learning_rate: float = 1e-4,
-        phi_learning_rate: float = 1e-4,
-        psi_learning_rate: float = 1e-4,
-        model_learning_rate: float = 1e-4,
         actor_optim_factory: OptimizerFactory = AdamFactory(),
         critic_optim_factory : OptimizerFactory = AdamFactory(),
         temp_optim_factory: OptimizerFactory = AdamFactory(),
         alpha_optim_factory: OptimizerFactory = AdamFactory(),
-        phi_optim_factory: OptimizerFactory = AdamFactory(),
-        psi_optim_factory: OptimizerFactory = AdamFactory(),
-        model_optim_factory: OptimizerFactory = AdamFactory(),
         actor_encoder_factory: EncoderArg = "default",
         critic_encoder_factory: EncoderArg = "default",
-        model_encoder_factory: EncoderArg = "default",
         q_func_factory: QFuncArg = "mean",
         replay_type='orl',
-        phi_bc_loss=True,
-        psi_bc_loss=True,
-        train_phi=True,
         id_size: int = 7,
         batch_size: int = 256,
         n_frames: int = 1,
@@ -209,22 +197,16 @@ class CO(CO, CQL):
         # n_train_dynamics = 1,
         retrain_topk = 4,
         log_prob_topk = 10,
-        model_n_ensembles = 5,
         experience_type = 'random_transition',
         sample_type = 'retrain',
         reduce_replay = 'retrain',
-        use_phi = False,
-        use_model = False,
         clone_actor = True,
         clone_finish = True,
         replay_critic = False,
-        replay_model = False,
         generate_step = 100,
-        model_noise = 0.3,
         retrain_time = 1,
         orl_alpha = 1,
         replay_alpha = 1,
-        retrain_model_alpha = 1,
         select_time = 100,
 
         task_id = 0,
@@ -291,20 +273,11 @@ class CO(CO, CQL):
         self._begin_grad_step = 0
 
         self._dynamics = None
-        self._model_learning_rate = model_learning_rate
-        self._model_optim_factory = model_optim_factory
-        self._model_encoder_factory = model_encoder_factory
-        self._model_n_ensembles = model_n_ensembles
-        self._retrain_model_alpha = retrain_model_alpha
-        self._use_phi = use_phi
-        self._use_model = use_model
         self._clone_actor = clone_actor
         self._clone_finish = clone_finish
         self._replay_critic = replay_critic
-        self._replay_model = replay_model
         self._generate_step = generate_step
         self._select_time = select_time
-        self._model_noise = model_noise
         self._orl_alpha = orl_alpha
         self._retrain_time = retrain_time
         self._replay_alpha = replay_alpha
@@ -320,19 +293,12 @@ class CO(CO, CQL):
             critic_learning_rate=self._critic_learning_rate,
             temp_learning_rate=self._temp_learning_rate,
             alpha_learning_rate=self._alpha_learning_rate,
-            phi_learning_rate=self._phi_learning_rate,
-            psi_learning_rate=self._psi_learning_rate,
-            model_learning_rate=self._model_learning_rate,
             actor_optim_factory=self._actor_optim_factory,
             critic_optim_factory=self._critic_optim_factory,
             temp_optim_factory=self._temp_optim_factory,
             alpha_optim_factory=self._alpha_optim_factory,
-            phi_optim_factory=self._phi_optim_factory,
-            psi_optim_factory=self._psi_optim_factory,
-            model_optim_factory=self._model_optim_factory,
             actor_encoder_factory=self._actor_encoder_factory,
             critic_encoder_factory=self._critic_encoder_factory,
-            model_encoder_factory=self._model_encoder_factory,
             q_func_factory=self._q_func_factory,
             replay_type=self._replay_type,
             gamma=self._gamma,
@@ -353,14 +319,10 @@ class CO(CO, CQL):
             scaler=self._scaler,
             action_scaler=self._action_scaler,
             reward_scaler=self._reward_scaler,
-            model_n_ensembles=self._model_n_ensembles,
             use_phi=self._use_phi,
-            use_model=self._use_model,
             clone_actor=self._clone_actor,
             replay_critic=self._replay_critic,
-            replay_model=self._replay_model,
             replay_alpha=self._replay_alpha,
-            retrain_model_alpha=self._retrain_model_alpha,
             single_head=self._single_head,
         )
         self._impl.build(task_id)

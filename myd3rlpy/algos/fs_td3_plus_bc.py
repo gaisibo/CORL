@@ -59,7 +59,7 @@ from myd3rlpy.models.vaes import VAEFactory, create_vae_factory
 from utils.utils import Struct
 
 
-replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'terminals', 'policy_actions', 'qs', 'phis', 'psis']
+replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'terminals', 'policy_actions', 'qs']
 class FS(FSBase, TD3PlusBC):
     r"""Twin Delayed Deep Deterministic Policy Gradients algorithm.
     TD3 is an improved DDPG-based algorithm.
@@ -170,12 +170,6 @@ class FS(FSBase, TD3PlusBC):
 
         fine_tuned_step = 1,
 
-        use_vae = False,
-        vae_learning_rate = 1e-3,
-        vae_optim_factory = AdamFactory(),
-        vae_factory = 'vector',
-        feature_size = 256,
-
         embed = False,
 
         **kwargs: Any
@@ -211,14 +205,6 @@ class FS(FSBase, TD3PlusBC):
         self._merge = merge
         self._fine_tuned_step = fine_tuned_step
 
-        self._use_vae = use_vae
-        self._vae_learning_rate = vae_learning_rate
-        self._vae_optim_factory = vae_optim_factory
-        if isinstance(vae_factory, str):
-            self._vae_factory = create_vae_factory(vae_factory)
-        else:
-            self._vae_factory = vae_factory
-        self._feature_size = feature_size
         self._embed = embed
 
     def _create_impl(
@@ -243,7 +229,6 @@ class FS(FSBase, TD3PlusBC):
             actor_encoder_factory=self._actor_encoder_factory,
             critic_encoder_factory=self._critic_encoder_factory,
             vae_factory = self._vae_factory,
-            use_vae = self._use_vae,
             feature_size = self._feature_size,
             q_func_factory=self._q_func_factory,
             critic_replay_type=self._critic_replay_type,

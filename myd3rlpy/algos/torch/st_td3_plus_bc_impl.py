@@ -27,20 +27,12 @@ from myd3rlpy.models.builders import create_phi, create_psi
 from myd3rlpy.algos.torch.gem import overwrite_grad, store_grad, project2cone2
 from myd3rlpy.algos.torch.agem import project
 # from myd3rlpy.algos.torch.co_deterministic_impl import CODeterministicImpl
-from myd3rlpy.algos.torch.st_impl import STImpl
+from myd3rlpy.algos.torch.st_td3_impl import STTD3Impl
 from utils.utils import Struct
 
 
-replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'terminals', 'policy_actions', 'qs', 'phis', 'psis']
-class STTD3PlusBCImpl(STImpl, TD3PlusBCImpl):
-
-    def __init__(
-        self,
-        **kwargs
-    ):
-        super().__init__(
-            **kwargs
-        )
+replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'terminals', 'policy_actions', 'qs']
+class STTD3PlusBCImpl(STTD3Impl, TD3PlusBCImpl):
 
     def _compute_actor_loss(self, batch: TorchMiniBatch, clone_actor: bool=False, online: bool=False) -> torch.Tensor:
         assert self._policy is not None
@@ -63,13 +55,3 @@ class STTD3PlusBCImpl(STImpl, TD3PlusBCImpl):
         select_batch_action = batch.actions
         lam = self._alpha / (select_q_t.abs().mean()).detach()
         return lam * -q_t.mean() + ((select_batch_action - select_action) ** 2).mean()
-
-    def compute_critic_loss(
-        self, batch: TorchMiniBatch, q_tpn: torch.Tensor, clone_critic: bool=False, online: bool=False, replay: bool=False, first_time: bool=False
-    ) -> torch.Tensor:
-        loss = super().compute_critic_loss(batch, q_tpn)
-        return loss
-
-    def compute_actor_loss(self, batch, clone_actor: bool = False, online: bool = False, replay: bool = False):
-        loss = self._compute_actor_loss(batch, clone_actor=clone_actor, online=online)
-        return loss

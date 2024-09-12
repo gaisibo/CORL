@@ -1,67 +1,20 @@
-import os
-import copy
-from copy import deepcopy
-import sys
-import time
-import math
-import random
-from typing import Any, Dict, Optional, Sequence, List, Union, Callable, Tuple, Generator, Iterator, cast
-import types
-from collections import defaultdict
-from tqdm.auto import tqdm
-import numpy as np
-from functools import partial
+from typing import Any, Dict, Optional, Sequence, List, cast
 import torch
 from torch import Tensor
-from torch.utils.data import TensorDataset, DataLoader, DataLoader
-from torch.distributions.normal import Normal
 
-from d3rlpy.argument_utility import (
-    ActionScalerArg,
-    EncoderArg,
-    QFuncArg,
-    RewardScalerArg,
-    ScalerArg,
-    UseGPUArg,
-    check_encoder,
-    check_q_func,
-    check_use_gpu,
-)
-from d3rlpy.torch_utility import TorchMiniBatch, _get_attributes
-from d3rlpy.dataset import MDPDataset, Episode, TransitionMiniBatch, Transition
+from d3rlpy.dataset import TransitionMiniBatch, Transition
 from d3rlpy.gpu import Device
-from d3rlpy.models.optimizers import AdamFactory, OptimizerFactory
+from d3rlpy.models.optimizers import OptimizerFactory
 from d3rlpy.models.q_functions import QFunctionFactory
-from d3rlpy.algos.base import AlgoBase
 from d3rlpy.algos.cql import CQL
-from d3rlpy.constants import (
-    CONTINUOUS_ACTION_SPACE_MISMATCH_ERROR,
-    DISCRETE_ACTION_SPACE_MISMATCH_ERROR,
-    IMPL_NOT_INITIALIZED_ERROR,
-    DYNAMICS_NOT_GIVEN_ERROR,
-    ActionSpace,
-)
-from d3rlpy.base import LearnableBase
-from d3rlpy.iterators import TransitionIterator
+from d3rlpy.constants import IMPL_NOT_INITIALIZED_ERROR
 from d3rlpy.models.encoders import EncoderFactory
-from d3rlpy.metrics.scorer import dynamics_observation_prediction_error_scorer, dynamics_reward_prediction_error_scorer, dynamics_prediction_variance_scorer
-from d3rlpy.iterators.random_iterator import RandomIterator
-from d3rlpy.iterators.round_iterator import RoundIterator
-from d3rlpy.logger import LOG, D3RLPyLogger
-import gym
-
-from online.utils import ReplayBuffer
-from online.eval_policy import eval_policy
 
 from myd3rlpy.algos.st import STBase
-from myd3rlpy.algos.torch.state_vae_impl import StateVAEImpl as StateVAEImpl
-from myd3rlpy.models.vaes import VAEFactory, create_vae_factory
-from myd3rlpy.models.encoders import EnsembelDefaultEncoderFactory
-from utils.utils import Struct
 
 
-replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'terminals', 'policy_actions', 'qs', 'phis', 'psis']
-class ST(STBase, CQL):
+replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'terminals', 'policy_actions', 'qs']
+class STCQL(STBase, CQL):
     r"""Twin Delayed Deep Deterministic Policy Gradients algorithm.
     TD3 is an improved DDPG-based algorithm.
     Major differences from DDPG are as follows.
@@ -123,16 +76,11 @@ class ST(STBase, CQL):
 
     _actor_learning_rate: float
     _critic_learning_rate: float
-    _vae_learning_rate: float
     _actor_optim_factory: OptimizerFactory
     _critic_optim_factory: OptimizerFactory
-    _vae_optim_factory: OptimizerFactory
     _actor_encoder_factory: EncoderFactory
     _critic_encoder_factory: EncoderFactory
-    _vae_encoder_factory: EncoderFactory
     _q_func_factory: QFunctionFactory
-    _vae_factory: VAEFactory
-    _feature_size: int
     # actor必须被重放，没用选择。
     _tau: float
     _n_critics: int
@@ -164,8 +112,6 @@ class ST(STBase, CQL):
         critic_replay_lambda=1,
         actor_replay_type='rl',
         actor_replay_lambda=1,
-        vae_replay_type = 'bc',
-        vae_replay_lambda = 1,
         gem_alpha: float = 1,
         agem_alpha: float = 1,
         ewc_rwalk_alpha: float = 0.5,
@@ -181,22 +127,16 @@ class ST(STBase, CQL):
         match_epsilon = 0.1,
         random_sample_times = 10,
 
-        critic_update_step = 100000,
+        critic_update_step = 0,
 
         clone_critic = False,
         clone_actor = False,
         merge = False,
-        coldstart_step = 5000,
+        coldstart_step = 0,
 
         fine_tuned_step = 1,
         std_time = 1,
         std_type = 'clamp',
-
-        use_vae = False,
-        vae_learning_rate = 1e-3,
-        vae_optim_factory = AdamFactory(),
-        vae_factory = 'vector',
-        feature_size = 256,
 
         **kwargs: Any
     ):
@@ -205,8 +145,6 @@ class ST(STBase, CQL):
         self._critic_replay_lambda = critic_replay_lambda
         self._actor_replay_type = actor_replay_type
         self._actor_replay_lambda = actor_replay_lambda
-        self._vae_replay_type = vae_replay_type
-        self._vae_replay_lambda = vae_replay_lambda
 
         self._gem_alpha = gem_alpha
         self._agem_alpha = agem_alpha
@@ -237,15 +175,6 @@ class ST(STBase, CQL):
         self._std_time = std_time
         self._std_type = std_type
 
-        self._use_vae = use_vae
-        self._vae_learning_rate = vae_learning_rate
-        self._vae_optim_factory = vae_optim_factory
-        if isinstance(vae_factory, str):
-            self._vae_factory = create_vae_factory(vae_factory)
-        else:
-            self._vae_factory = vae_factory
-        self._feature_size = feature_size
-
     def _create_impl(
         self, observation_shape: Sequence[int], action_size: int) -> None:
         impl_dict = {
@@ -253,26 +182,19 @@ class ST(STBase, CQL):
             'action_size':action_size,
             'actor_learning_rate':self._actor_learning_rate,
             'critic_learning_rate':self._critic_learning_rate,
-            'vae_learning_rate':self._vae_learning_rate,
             'temp_learning_rate':self._temp_learning_rate,
             'alpha_learning_rate':self._alpha_learning_rate,
             'actor_optim_factory':self._actor_optim_factory,
             'critic_optim_factory':self._critic_optim_factory,
-            'vae_optim_factory':self._vae_optim_factory,
             'temp_optim_factory':self._temp_optim_factory,
             'alpha_optim_factory':self._alpha_optim_factory,
             'actor_encoder_factory':self._actor_encoder_factory,
             'critic_encoder_factory':self._critic_encoder_factory,
-            'vae_factory': self._vae_factory,
-            'use_vae': self._use_vae,
-            'feature_size': self._feature_size,
             'q_func_factory':self._q_func_factory,
             'critic_replay_type':self._critic_replay_type,
             'critic_replay_lambda':self._critic_replay_lambda,
             'actor_replay_type':self._actor_replay_type,
             'actor_replay_lambda':self._actor_replay_lambda,
-            'vae_replay_type':self._vae_replay_type,
-            'vae_replay_lambda':self._vae_replay_lambda,
             'gamma':self._gamma,
             'gem_alpha':self._gem_alpha,
             'agem_alpha':self._agem_alpha,
@@ -294,7 +216,7 @@ class ST(STBase, CQL):
             'fine_tuned_step': self._fine_tuned_step,
         }
         if self._impl_name == 'cql':
-            from myd3rlpy.algos.torch.st_cql_impl import STImpl as STImpl
+            from myd3rlpy.algos.torch.st_cql_impl import STCQLImpl as STImpl
             impl_dict["std_time"] = self._std_time
             impl_dict["std_type"] = self._std_type
         # elif self._impl_name in ['mgcql', 'mqcql', 'mrcql']:
@@ -323,43 +245,19 @@ class ST(STBase, CQL):
         metrics = {}
         if not self._merge or total_step < coldstart_step:
             if self._temp_learning_rate > 0:
-                if total_step % 1000 == 0:
-                    h = self._impl._policy._encoder(torch.from_numpy(batch.observations).to(self._impl.device))
-                    mu = self._impl._policy._mu(h)
-                    logstd = cast(torch.nn.Linear, self._impl._policy._logstd)(h)
-                    clipped_logstd = logstd.clamp(self._impl._policy._min_logstd, self._impl._policy._max_logstd)
-                    print(f"{torch.mean(h)=}")
-                    print(f"{torch.max(h)=}")
-                    print(f"{torch.min(h)=}")
-                    print(f"{torch.mean(mu)=}")
-                    print(f"{torch.max(mu)=}")
-                    print(f"{torch.min(mu)=}")
-                    print(f"{torch.mean(logstd)=}")
-                    print(f"{torch.max(logstd)=}")
-                    print(f"{torch.min(logstd)=}")
-                    print(f"{torch.mean(clipped_logstd)=}")
-                    print(f"{torch.max(clipped_logstd)=}")
-                    print(f"{torch.min(clipped_logstd)=}")
-                try:
-                    temp_loss, temp = self._impl.update_temp(batch)
-                except ValueError:
-                    h = self._impl._policy._encoder(torch.from_numpy(batch.observations).to(self._impl.device))
-                    mu = self._impl._policy._mu(h)
-                    logstd = cast(torch.nn.Linear, self._impl._policy._logstd)(h)
-                    clipped_logstd = logstd.clamp(self._impl._policy._min_logstd, self._impl._policy._max_logstd)
-                    print(f"{torch.mean(h)=}")
-                    print(f"{torch.max(h)=}")
-                    print(f"{torch.min(h)=}")
-                    print(f"{torch.mean(mu)=}")
-                    print(f"{torch.max(mu)=}")
-                    print(f"{torch.min(mu)=}")
-                    print(f"{torch.mean(logstd)=}")
-                    print(f"{torch.max(logstd)=}")
-                    print(f"{torch.min(logstd)=}")
-                    print(f"{torch.mean(clipped_logstd)=}")
-                    print(f"{torch.max(clipped_logstd)=}")
-                    print(f"{torch.min(clipped_logstd)=}")
-                    policy_sample, policy_logstd = self._impl._policy.sample_with_log_prob(torch.from_numpy(batch.observations).to(self._impl.device))
+                #if total_step % 1000 == 0:
+                #    h = self._impl._policy._encoder(torch.from_numpy(batch.observations).to(self._impl.device))
+                #    mu = self._impl._policy._mu(h)
+                #    logstd = cast(torch.nn.Linear, self._impl._policy._logstd)(h)
+                #    clipped_logstd = logstd.clamp(self._impl._policy._min_logstd, self._impl._policy._max_logstd)
+                #try:
+                temp_loss, temp = self._impl.update_temp(batch)
+                #except ValueError:
+                #    h = self._impl._policy._encoder(torch.from_numpy(batch.observations).to(self._impl.device))
+                #    mu = self._impl._policy._mu(h)
+                #    logstd = cast(torch.nn.Linear, self._impl._policy._logstd)(h)
+                #    clipped_logstd = logstd.clamp(self._impl._policy._min_logstd, self._impl._policy._max_logstd)
+                #    policy_sample, policy_logstd = self._impl._policy.sample_with_log_prob(torch.from_numpy(batch.observations).to(self._impl.device))
                 metrics.update({"temp_loss": temp_loss, "temp": temp})
             if self._alpha_learning_rate > 0:
                 alpha_loss, alpha = self._impl.update_alpha(batch)
@@ -374,12 +272,6 @@ class ST(STBase, CQL):
                 # actor_loss, replay_actor_loss = self._impl.update_actor(batch, replay_batch, online=online)
                 metrics.update({"actor_loss": actor_loss})
                 metrics.update({"replay_actor_loss": replay_actor_loss})
-
-            if self._use_vae and not online:
-                vae_loss, replay_vae_loss = self._impl.update_vae(batch, replay_batch)
-                # actor_loss, replay_actor_loss = self._impl.update_actor(batch, replay_batch, online=online)
-                metrics.update({"vae_loss": vae_loss})
-                metrics.update({"replay_vae_loss": replay_vae_loss})
 
             self._impl.update_critic_target()
             self._impl.update_actor_target()

@@ -3,7 +3,7 @@ import torch
 import quadprog
 
 
-def store_grad(params, grads, grad_dims, append=0):
+def store_grad(params, grads, grad_dims):
     """
         This stores parameter gradients of past tasks.
         pp: parameters
@@ -11,14 +11,13 @@ def store_grad(params, grads, grad_dims, append=0):
         grad_dims: list with number of parameters per layers
     """
     # store the gradients
-    if append == 0:
-        grads.zero_()
+    grads.fill_(0.0)
     count = 0
     for param in params:
         if param.grad is not None:
             begin = 0 if count == 0 else sum(grad_dims[:count])
             end = np.sum(grad_dims[:count + 1])
-            grads[begin: end].copy_((param.grad.data.view(-1) + grads[begin: end] * append) / (append + 1))
+            grads[begin: end].copy_(param.grad.data.view(-1))
         count += 1
 
 
@@ -31,7 +30,7 @@ def overwrite_grad(params, newgrad, grad_dims):
         grad_dims: list storing number of parameters at each layer
     """
     count = 0
-    for n, param in params:
+    for param in params():
         if param.grad is not None:
             begin = 0 if count == 0 else sum(grad_dims[:count])
             end = sum(grad_dims[:count + 1])

@@ -2,7 +2,7 @@ import d3rlpy
 from d3rlpy.preprocessing.reward_scalers import ConstantShiftRewardScaler
 
 
-def get_st_dict(args, dataset, algo):
+def get_st_dict(args, dataset, algo, quality):
     st_dict = dict()
     st_dict['impl_name'] = algo
     st_dict['critic_replay_type'] = args.critic_replay_type
@@ -24,60 +24,48 @@ def get_st_dict(args, dataset, algo):
     online_st_dict['buffer_size'] = 1000000
     step_dict = dict()
     if dataset == 'd4rl':
-        step_dict['n_steps'] = 500000
-        step_dict['coldstart_steps'] = 500000
-        # step_dict['merge_n_steps'] = 200000
-        step_dict['n_steps_per_epoch'] = 1000
-        st_dict['critic_update_step'] = 0
         st_dict['batch_size'] = 256
-        st_dict['vae_learning_rate'] = 1e-3
-        st_dict['n_action_samples'] = args.n_action_samples
         if args.algo_kind == 'cql':
             encoder = d3rlpy.models.encoders.VectorEncoderFactory([256, 256, 256])
             st_dict['actor_encoder_factory'] = encoder
             st_dict['critic_encoder_factory'] = encoder
-            st_dict['actor_learning_rate'] = 1e-5
+            st_dict['actor_learning_rate'] = 1e-4
             st_dict['critic_learning_rate'] = 3e-4
-            st_dict['temp_learning_rate'] = 1e-4
             st_dict['alpha_learning_rate'] = 0.0
-            st_dict['initial_alpha'] = 1.0
-            st_dict['initial_temperature'] = 1.0
-            st_dict['gamma'] = 0.99
-            st_dict['tau'] = 0.005
-            st_dict['std_time'] = 1
-            st_dict['std_type'] = 'clamp'
-        if args.algo_kind == 'td3_plus_bc':
+            st_dict['n_action_samples'] = 10
+            if 'medium' in quality:
+                st_dict['conservative_weight'] = 10.0
+            else:
+                st_dict['conservative_weight'] = 5.0
+        if args.algo_kind in ['td3_plus_bc', 'td3']:
             encoder = d3rlpy.models.encoders.VectorEncoderFactory([256, 256, 256])
             st_dict['actor_encoder_factory'] = encoder
             st_dict['critic_encoder_factory'] = encoder
-            st_dict['actor_learning_rate'] = 1e-4
+            st_dict['actor_learning_rate'] = 3e-4
             st_dict['critic_learning_rate'] = 3e-4
-            st_dict['temp_learning_rate'] = 1e-4
-            st_dict['alpha_learning_rate'] = 0.0
-            st_dict['conservative_weight'] = 5.0
-            st_dict['conservative_threshold'] = 0.1
-            st_dict['std_time'] = 1
-            st_dict['std_type'] = 'clamp'
-        elif algo in ['sacn', 'edac']:
+            st_dict['target_smoothing_sigma'] = 0.2
+            st_dict['target_smoothing_clip'] = 0.5
+            st_dict['update_actor_interval'] = 2
+        elif algo in ['sac', 'sacn', 'edac']:
             encoder = d3rlpy.models.encoders.VectorEncoderFactory([256, 256, 256])
             st_dict['actor_encoder_factory'] = encoder
             st_dict['critic_encoder_factory'] = encoder
-            st_dict['actor_learning_rate'] = 1e-4
+            st_dict['actor_learning_rate'] = 3e-4
             st_dict['critic_learning_rate'] = 3e-4
-            st_dict['temp_learning_rate'] = 1e-4
-            st_dict['n_critics'] = 10
+            st_dict['temp_learning_rate'] = 3e-4
         elif algo in ['iql', 'iqln', 'iqln2', 'iqln3', 'iqln4', 'sql', 'sqln']:
-            st_dict['actor_encoder_factory'] = "default"
-            st_dict['critic_encoder_factory'] = "default"
-            st_dict['value_encoder_factory'] = "default"
+            encoder = d3rlpy.models.encoders.VectorEncoderFactory([256, 256, 256])
+            st_dict['actor_encoder_factory'] = encoder
+            st_dict['critic_encoder_factory'] = encoder
+            st_dict['value_encoder_factory'] = encoder
             st_dict['actor_learning_rate'] = 3e-4
             st_dict['critic_learning_rate'] = 3e-4
             st_dict['weight_temp'] = 3.0
             st_dict['max_weight'] = 100.0
             st_dict['expectile'] = 0.7
-            # reward_scaler = d3rlpy.preprocessing.ReturnBasedRewardScaler(
-            #     multiplier=1000.0)
-            # st_dict['reward_scaler'] = reward_scaler
+            reward_scaler = d3rlpy.preprocessing.ReturnBasedRewardScaler(
+                multiplier=1000.0)
+            st_dict['reward_scaler'] = reward_scaler
             if algo in ['iqln', 'iqln2', 'iqln3', 'iqln4', 'sqln']:
                 st_dict['n_ensemble'] = 10
                 st_dict['entropy_time'] = 0.2
@@ -106,14 +94,14 @@ def get_st_dict(args, dataset, algo):
             st_dict['conservative_threshold'] = 0.1
             st_dict['std_time'] = 1
             st_dict['std_type'] = 'clamp'
-        elif algo in ['sacn', 'edac']:
+        elif algo in ['sacn', 'edac', 'n_critics']:
             encoder = d3rlpy.models.encoders.VectorEncoderFactory([256, 256, 256])
             st_dict['actor_encoder_factory'] = encoder
             st_dict['critic_encoder_factory'] = encoder
             st_dict['actor_learning_rate'] = 1e-4
             st_dict['critic_learning_rate'] = 3e-4
             st_dict['temp_learning_rate'] = 1e-4
-            st_dict['n_critics'] = 10
+            st_dict['n_critics'] = args.n_critics
         elif algo in ['iql', 'iqln', 'iqln2', 'iqln3', 'iqln4']:
             st_dict['actor_encoder_factory'] = "default"
             st_dict['critic_encoder_factory'] = "default"
@@ -138,7 +126,7 @@ def get_st_dict(args, dataset, algo):
         st_dict['critic_update_step'] = 0
         st_dict['batch_size'] = 256
         st_dict['vae_learning_rate'] = 1e-3
-        st_dict["n_critics"] = 2
+        st_dict["n_critics"] = n_critics
         if args.algo_kind == 'cql':
             encoder = d3rlpy.models.encoders.VectorEncoderFactory([256, 256, 256])
             st_dict['actor_encoder_factory'] = encoder
@@ -151,7 +139,7 @@ def get_st_dict(args, dataset, algo):
             st_dict['conservative_threshold'] = 0.1
             st_dict['std_time'] = 1
             st_dict['std_type'] = 'clamp'
-        if args.algo_kind == 'td3_plus_bc':
+        if args.algo_kind in ['td3_plus_bc', 'td3']:
             encoder = d3rlpy.models.encoders.VectorEncoderFactory([256, 256, 256])
             st_dict['actor_encoder_factory'] = encoder
             st_dict['critic_encoder_factory'] = encoder
@@ -163,14 +151,14 @@ def get_st_dict(args, dataset, algo):
             st_dict['conservative_threshold'] = 0.1
             st_dict['std_time'] = 1
             st_dict['std_type'] = 'clamp'
-        elif algo in ['sacn', 'edac']:
+        elif algo in ['sacn', 'edac', 'sac', 'td3']:
             encoder = d3rlpy.models.encoders.VectorEncoderFactory([256, 256, 256])
             st_dict['actor_encoder_factory'] = encoder
             st_dict['critic_encoder_factory'] = encoder
             st_dict['actor_learning_rate'] = 1e-4
             st_dict['critic_learning_rate'] = 3e-4
             st_dict['temp_learning_rate'] = 1e-4
-            st_dict['n_critics'] = 10
+            st_dict['n_critics'] = args.n_critics
         elif algo in ['iql', 'iqln', 'iqln2', 'iqln3', 'iqln4']:
             st_dict['actor_encoder_factory'] = "default"
             st_dict['critic_encoder_factory'] = "default"

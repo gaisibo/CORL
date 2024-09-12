@@ -27,8 +27,8 @@ from myd3rlpy.algos.torch.st_impl import STImpl
 from utils.utils import Struct
 
 
-replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'terminals', 'policy_actions', 'qs', 'phis', 'psis']
-class STImpl(STImpl, IQLImpl):
+replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'terminals', 'policy_actions', 'qs']
+class STSQLImpl(STImpl, IQLImpl):
 
     def __init__(
         self,

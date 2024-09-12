@@ -102,7 +102,6 @@ class ParallelEnsembleQFunction(ParallelizedEnsembleFlattenMLP):  # type: ignore
             batch_norm,
             final_init_scale,
         )
-        self.reduction = reduction
 
     def compute_error(
         self,
@@ -125,21 +124,22 @@ class ParallelEnsembleQFunction(ParallelizedEnsembleFlattenMLP):  # type: ignore
         x: torch.Tensor,
         action: Optional[torch.Tensor] = None,
         lam: float = 0.75,
+        reduction: str = "mean",
     ) -> torch.Tensor:
         values = super().forward(x, action)
 
         if action is None:
             # mean Q function
             if values.shape[2] == self._action_size:
-                return _reduce_ensemble(values, self.reduction)
+                return _reduce_ensemble(values, reduction)
             # distributional Q function
             n_q_funcs = values.shape[0]
             values = values.view(n_q_funcs, x.shape[0], self._action_size, -1)
-            return _reduce_quantile_ensemble(values, self.reduction)
+            return _reduce_quantile_ensemble(values, reduction)
 
         if values.shape[2] == 1:
-            return _reduce_ensemble(values, self.reduction, lam=lam)
-        return _reduce_quantile_ensemble(values, self.reduction, lam=lam)
+            return _reduce_ensemble(values, reduction, lam=lam)
+        return _reduce_quantile_ensemble(values, reduction, lam=lam)
 
     # 这里主要是为了给compute_max_with_n_actions_and_indices调用用的。
     @property
@@ -150,8 +150,8 @@ class ParallelEnsembleDiscreteQFunction(ParallelEnsembleQFunction):
     def forward(self, x: torch.Tensor, reduction=None) -> torch.Tensor:
         values = super().forward(x)
         if reduction is None:
-            reduction = self.reduction
-        return _reduce_ensemble(values, self.reduction)
+            reduction = "mean"
+        return _reduce_ensemble(values, reduction)
 
     def __call__(
         self, x: torch.Tensor, reduction=None
@@ -163,8 +163,9 @@ class ParallelEnsembleDiscreteQFunction(ParallelEnsembleQFunction):
         x: torch.Tensor,
         action: Optional[torch.Tensor] = None,
         lam: float = 0.75,
+        reduction: str = 'mean',
     ) -> torch.Tensor:
-        return self._compute_target(x, action, lam)
+        return self._compute_target(x, action, lam, reduction)
 
 
 class ParallelEnsembleContinuousQFunction(ParallelEnsembleQFunction):
@@ -173,7 +174,7 @@ class ParallelEnsembleContinuousQFunction(ParallelEnsembleQFunction):
     ) -> torch.Tensor:
         values = super().forward(x, action)
         if reduction is None:
-            reduction = self.reduction
+            reduction = 'mean'
         return _reduce_ensemble(values, reduction=reduction)
 
     def __call__(
@@ -186,5 +187,6 @@ class ParallelEnsembleContinuousQFunction(ParallelEnsembleQFunction):
         x: torch.Tensor,
         action: torch.Tensor,
         lam: float = 0.75,
+        reduction: str= 'mean',
     ) -> torch.Tensor:
-        return self._compute_target(x, action, lam)
+        return self._compute_target(x, action, lam, reduction)

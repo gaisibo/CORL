@@ -38,17 +38,11 @@ class COTD3PlusBCImpl(CODeterministicImpl, TD3PlusBCImpl):
         action_size: int,
         actor_learning_rate: float,
         critic_learning_rate: float,
-        phi_learning_rate: float,
-        psi_learning_rate: float,
         model_learning_rate: float,
         actor_optim_factory: OptimizerFactory,
         critic_optim_factory: OptimizerFactory,
-        phi_optim_factory: OptimizerFactory,
-        psi_optim_factory: OptimizerFactory,
-        model_optim_factory: OptimizerFactory,
         actor_encoder_factory: EncoderFactory,
         critic_encoder_factory: EncoderFactory,
-        model_encoder_factory: EncoderFactory,
         q_func_factory: QFunctionFactory,
         replay_type: str,
         gamma: float,
@@ -67,8 +61,6 @@ class COTD3PlusBCImpl(CODeterministicImpl, TD3PlusBCImpl):
         action_scaler: Optional[ActionScaler],
         reward_scaler: Optional[RewardScaler],
         model_n_ensembles: int,
-        use_phi: bool,
-        use_model: bool,
         clone_actor: bool,
         replay_model: bool,
         replay_critic: bool,
@@ -105,22 +97,10 @@ class COTD3PlusBCImpl(CODeterministicImpl, TD3PlusBCImpl):
         self._damping = damping
         self._epsilon = epsilon
 
-        self._use_phi = use_phi
-        self._use_model = use_model
         self._clone_actor = clone_actor
         self._replay_alpha = replay_alpha
         self._replay_critic = replay_critic
         self._replay_model = replay_model
-        self._phi_learning_rate = phi_learning_rate
-        self._psi_learning_rate = psi_learning_rate
-        self._phi_optim_factory = phi_optim_factory
-        self._psi_optim_factory = psi_optim_factory
-
-        self._model_learning_rate = model_learning_rate
-        self._model_optim_factory = model_optim_factory
-        self._model_encoder_factory = model_encoder_factory
-        self._model_n_ensembles = model_n_ensembles
-        self._retrain_model_alpha = retrain_model_alpha
 
         self._single_head = single_head
         if single_head:
@@ -182,17 +162,6 @@ class COTD3PlusBCImpl(CODeterministicImpl, TD3PlusBCImpl):
                 for q_func in self._targ_q_func._q_funcs:
                     q_func._fcs = dict()
                     q_func._fcs[task_id] = deepcopy(q_func._fc.state_dict())
-        if self._use_model and self._replay_model:
-            if "_mus" not in self._dynamic._models[0].__dict__.keys():
-                for model in self._dynamic._models:
-                    model._mus = dict()
-                    model._mus[task_id] = deepcopy(model._mu.state_dict())
-                    model._logstds = dict()
-                    model._logstds[task_id] = deepcopy(model._logstd.state_dict())
-                    model._max_logstds = dict()
-                    model._max_logstds[task_id] = deepcopy(model._max_logstd)
-                    model._min_logstds = dict()
-                    model._min_logstds[task_id] = deepcopy(model._min_logstd)
     # self._using_id = task_id
         if self._clone_actor:
             if task_id not in self._clone_policy._fcs.keys():
@@ -215,13 +184,6 @@ class COTD3PlusBCImpl(CODeterministicImpl, TD3PlusBCImpl):
                     self._targ_q_func = copy.deepcopy(self._q_func)
             else:
                 self._targ_q_func = copy.deepcopy(self._q_func)
-        if self._use_model and self._replay_model:
-            if task_id not in self._dynamic._models[0]._mus.keys():
-                for model in self._dynamic._models:
-                    model._mus[task_id] = deepcopy(nn.Linear(model._mu.weight.shape[1], model._mu.weight.shape[0], bias=model._mu.bias is not None).to(self.device).state_dict())
-                    model._logstds[task_id] = deepcopy(nn.Linear(model._logstd.weight.shape[1], model._logstd.weight.shape[0], bias=model._logstd.bias is not None).to(self.device).state_dict())
-                    model._max_logstds[task_id] = deepcopy(nn.Parameter(torch.empty(1, model._logstd.weight.shape[0], dtype=torch.float32).fill_(2.0).to(self.device)))
-                    model._min_logstds[task_id] = deepcopy(nn.Parameter(torch.empty(1, model._logstd.weight.shape[0], dtype=torch.float32).fill_(-10.0).to(self.device)))
         if self._impl_id != task_id:
             if self._clone_actor and self._replay_type == 'bc':
                 self._clone_policy._fcs[self._impl_id] = deepcopy(self._clone_policy._fc.state_dict())
@@ -240,20 +202,6 @@ class COTD3PlusBCImpl(CODeterministicImpl, TD3PlusBCImpl):
                     for q_func in self._targ_q_func._q_funcs:
                         q_func._fcs[self._impl_id] = deepcopy(q_func._fc.state_dict())
                         q_func._fc.load_state_dict(q_func._fcs[task_id])
-            if self._use_model and self._replay_model:
-                for model in self._dynamic._models:
-                    model._mus[self._impl_id] = deepcopy(model._mu.state_dict())
-                    model._mu.load_state_dict(model._mus[task_id].state_dict())
-                    model._logstds[self._impl_id] = deepcopy(model._logstd.state_dict())
-                    model._logstd.load_state_dict(model._logstds[task_id].state_dict())
-                    model._max_logstds[self._impl_id] =  deepcopy(model._max_logstd)
-                    model._max_logstd.copy_(model._max_logstds[task_id])
-                    model._min_logstds[self._impl_id] = deepcopy(model._min_logstd)
-                    model._min_logstd.copy_(model._min_logstds[task_id])
         self._build_actor_optim()
         self._build_critic_optim()
-        if self._use_model and self._replay_model:
-            self._model_optim = self._model_optim_factory.create(
-                self._dynamic.parameters(), lr=self._model_learning_rate
-            )
         self._impl_id = task_id
