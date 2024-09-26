@@ -13,14 +13,16 @@ from torch.distributions.normal import Normal
 from d3rlpy.metrics.scorer import evaluate_on_environment
 from d3rlpy.online.buffers import Buffer, ReplayBuffer
 from d3rlpy.torch_utility import _get_attributes
-from d3rlpy.dataset import MDPDataset, Episode, TransitionMiniBatch, Transition
 from d3rlpy.constants import IMPL_NOT_INITIALIZED_ERROR
 from d3rlpy.base import LearnableBase
-from d3rlpy.iterators import TransitionIterator
-from d3rlpy.iterators.random_iterator import RandomIterator
-from d3rlpy.iterators.round_iterator import RoundIterator
 from d3rlpy.logger import LOG, D3RLPyLogger
 import gym
+
+from myd3rlpy.dataset import MDPDataset, Episode, TransitionMiniBatch, Transition
+from d3rlpy.dataset import MDPDataset as OldMDPDataset
+from myd3rlpy.iterators.base import TransitionIterator
+from myd3rlpy.iterators.random_iterator import RandomIterator
+from myd3rlpy.iterators.round_iterator import RoundIterator
 
 # from myd3rlpy.dynamics.probabilistic_ensemble_dynamics import ProbabilisticEnsembleDynamics
 
@@ -132,6 +134,9 @@ class STBase():
         transitions = []
         if isinstance(dataset, MDPDataset):
             for episode in cast(MDPDataset, dataset).episodes:
+                transitions += episode.transitions
+        elif isinstance(dataset, OldMDPDataset):
+            for episode in cast(OldMDPDataset, dataset).episodes:
                 transitions += episode.transitions
         elif not dataset:
             raise ValueError("empty dataset is not supported.")

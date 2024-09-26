@@ -7,7 +7,7 @@ import gym
 import torch
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from d3rlpy.online.buffers import ReplayBuffer
-from d3rlpy.datasets import get_d4rl
+from myd3rlpy.datasets import get_d4rl
 from d3rlpy.metrics import evaluate_on_environment
 
 from myd3rlpy.algos.o2o_td3 import O2OTD3
@@ -15,141 +15,11 @@ from myd3rlpy.algos.o2o_sac import O2OSAC
 from myd3rlpy.algos.o2o_iql import O2OIQL
 from myd3rlpy.algos.o2o_cql import O2OCQL
 from mygym.envs.online_offline_wrapper import online_offline_wrapper
-from config.o2o_config import get_o2o_dict
+from config.o2o_config import get_o2o_dict, online_algos, offline_algos
 
+from myd3rlpy.dataset import MDPDataset
+from d3rlpy.dataset import MDPDataset as OldMDPDataset
 
-RESET = R = 'r'  # Reset position.
-GOAL = G = 'g'
-
-mazes = {
-    'umaze':
-        [[[[1, 1, 1, 1, 1],
-           [1, R, 0, 0, 1],
-           [1, 1, 1, G, 1],
-           [1, 0, 0, 0, 1],
-           [1, 1, 1, 1, 1]],
-
-          [[1, 1, 1, 1, 1],
-           [1, R, 0, 0, 1],
-           [1, 1, 1, 0, 1],
-           [1, G, 0, 0, 1],
-           [1, 1, 1, 1, 1]]],
-         None,
-        ],
-    'medium':
-	[[[[1, 1, 1, 1, 1, 1, 1, 1],
-           [1, R, 0, 1, 1, 0, 0, 1],
-           [1, 0, 0, 1, 0, 0, 0, 1],
-           [1, 1, 0, 0, 0, 1, 1, 1],
-           [1, 0, 0, 1, G, 0, 0, 1],
-           [1, 0, 1, 0, 0, 1, 0, 1],
-           [1, 0, 0, 0, 1, 0, 0, 1],
-           [1, 1, 1, 1, 1, 1, 1, 1]],
-	  [[1, 1, 1, 1, 1, 1, 1, 1],
-           [1, R, 0, 1, 1, 0, 0, 1],
-           [1, 0, 0, 1, 0, 0, 0, 1],
-           [1, 1, 0, 0, 0, 1, 1, 1],
-           [1, 0, 0, 1, 0, 0, 0, 1],
-           [1, 0, 1, 0, 0, 1, 0, 1],
-           [1, 0, 0, 0, 1, 0, G, 1],
-           [1, 1, 1, 1, 1, 1, 1, 1]]],
-
-	 [[[1, 1, 1, 1, 1, 1, 1, 1],
-           [1, R, 0, 1, 1, 0, 0, 1],
-           [1, 0, 0, 1, 0, 0, 0, 1],
-           [1, 1, G, 0, 0, 1, 1, 1],
-           [1, 0, 0, 1, 0, 0, 0, 1],
-           [1, 0, 1, 0, 0, 1, 0, 1],
-           [1, 0, 0, 0, 1, 0, 0, 1],
-           [1, 1, 1, 1, 1, 1, 1, 1]],
-	  [[1, 1, 1, 1, 1, 1, 1, 1],
-           [1, R, 0, 1, 1, 0, 0, 1],
-           [1, 0, 0, 1, 0, 0, 0, 1],
-           [1, 1, 0, 0, 0, 1, 1, 1],
-           [1, 0, 0, 1, G, 0, 0, 1],
-           [1, 0, 1, 0, 0, 1, 0, 1],
-           [1, 0, 0, 0, 1, 0, 0, 1],
-           [1, 1, 1, 1, 1, 1, 1, 1]],
-	  [[1, 1, 1, 1, 1, 1, 1, 1],
-           [1, R, 0, 1, 1, 0, 0, 1],
-           [1, 0, 0, 1, 0, 0, 0, 1],
-           [1, 1, 0, 0, 0, 1, 1, 1],
-           [1, 0, 0, 1, 0, 0, 0, 1],
-           [1, 0, 1, 0, 0, 1, G, 1],
-           [1, 0, 0, 0, 1, 0, 0, 1],
-           [1, 1, 1, 1, 1, 1, 1, 1]],
-	  [[1, 1, 1, 1, 1, 1, 1, 1],
-           [1, R, 0, 1, 1, 0, 0, 1],
-           [1, 0, 0, 1, 0, 0, 0, 1],
-           [1, 1, 0, 0, 0, 1, 1, 1],
-           [1, 0, 0, 1, 0, 0, 0, 1],
-           [1, 0, 1, 0, 0, 1, 0, 1],
-           [1, 0, 0, 0, 1, 0, G, 1],
-           [1, 1, 1, 1, 1, 1, 1, 1]]],
-        ],
-    'large':
-	[[[[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-	   [1, R, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1],
-	   [1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1],
-	   [1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1],
-	   [1, 0, 1, 1, 1, 1, G, 1, 1, 1, 0, 1],
-	   [1, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1],
-	   [1, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1],
-	   [1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1],
-	   [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]],
-	  [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-	   [1, R, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1],
-	   [1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1],
-	   [1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1],
-	   [1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1],
-	   [1, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1],
-	   [1, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1],
-	   [1, 0, 0, 1, 0, 0, 0, 1, 0, G, 0, 1],
-	   [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]]],
-
-	 [[[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-	   [1, R, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1],
-	   [1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1],
-	   [1, 0, 0, G, 0, 0, 0, 1, 0, 0, 0, 1],
-	   [1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1],
-	   [1, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1],
-	   [1, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1],
-	   [1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1],
-	   [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]],
-	  [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-	   [1, R, 0, 0, 0, 1, G, 0, 0, 0, 0, 1],
-	   [1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1],
-	   [1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1],
-	   [1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1],
-	   [1, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1],
-	   [1, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1],
-	   [1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1],
-	   [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]],
-	  [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-	   [1, R, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1],
-	   [1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1],
-	   [1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1],
-	   [1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1],
-	   [1, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1],
-	   [1, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1],
-	   [1, 0, 0, 1, 0, 0, G, 1, 0, 0, 0, 1],
-	   [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]],
-	  [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-	   [1, R, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1],
-	   [1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1],
-	   [1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1],
-	   [1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1],
-	   [1, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1],
-	   [1, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1],
-	   [1, 0, 0, 1, 0, 0, 0, 1, 0, G, 0, 1],
-	   [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]]],
-        ]
-    }
-
-mazes_start = {'umaze': [[(1, 1), (1, 1)], None], 'medium': [[(1, 1), (3, 4)], [(1, 1), (2, 2), (3, 4), (4, 6)]], 'large': [[(1, 1), (3, 6)], [(1, 1), (3, 2), (1, 7), (7, 5)]]}
-
-online_algos = ['td3', 'sac']
-offline_algos = ['iql', 'cql']
 
 def read_dict(state_dict, prename):
     for key, value in state_dict.items():
@@ -165,11 +35,7 @@ def main(args, use_gpu):
     print("Start")
     np.set_printoptions(precision=1, suppress=True)
     dataset0, env = get_d4rl(args.dataset + '-' + args.qualities[0] + '-v0')
-    if args.qualities[1] != args.qualities[0] and args.algorithms[1] in offline_algos:
-        dataset1, eval_env = get_d4rl(args.dataset + '-' + args.qualities[1] + '-v0')
-    else:
-        dataset1 = dataset0
-        _, eval_env = get_d4rl(args.dataset + '-' + args.qualities[1] + '-v0')
+    dataset1, eval_env = get_d4rl(args.dataset + '-' + args.qualities[1] + '-v0')
 
     # prepare algorithm
     # st_dict, online_st_dict, step_dict = get_st_dict(args, args.dataset_kind, args.algo)
@@ -191,47 +57,25 @@ def main(args, use_gpu):
     # For saving and loading
     load_name = args.dataset
     load_name += '_' + str(args.first_n_steps)
-    if args.algorithms[0] not in offline_algos:
+    if args.algorithms[0] in online_algos:
         load_name += '_' + str(args.n_buffer)
     load_name += '_' + args.algorithms[0]
-    load_name += '_' + args.qualities[0]
+    if args.algorithms[0] in offline_algos:
+        load_name += '_' + args.qualities[0]
     if args.add_name != '':
         load_name += '_' + args.add_name
 
     if not args.eval:
         print(f'Start Training')
+        #if args.test:
+        #    o2o0_path = "save_algos/" + load_name + '.pt.test'
+        #else:
         o2o0_path = "save_algos/" + load_name + '.pt'
+        print(f"o2o0_path: {o2o0_path}")
         assert os.path.exists(o2o0_path)
         print(f'Start Loading Algo 0')
-        loaded_data = torch.load(o2o0_path, map_location="cuda:" + str(args.gpu))
-        if args.algorithms[0] in online_algos:
-            loaded_mdp = loaded_data['buffer']
-            loaded_buffer = ReplayBuffer(args.n_buffer, env)
-            for episode in loaded_mdp.episodes:
-                loaded_buffer.append_episode(episode)
-        elif args.algorithms[0] in offline_algos:
-            if args.copy_buffer in ['copy', 'mix_same']:
-                loaded_buffer = ReplayBuffer(args.n_buffer, env)
-                for episode in dataset0.episodes:
-                    loaded_buffer.append_episode(episode)
-            elif args.copy_buffer == 'mix_all':
-                loaded_buffer = ReplayBuffer(dataset0.observations.shape[0], env)
-                for episode in dataset0.episodes:
-                    loaded_buffer.append_episode(episode)
-        else:
-            raise NotImplementedError
+        loaded_data = torch.load(o2o0_path, map_location="cuda:" + str(use_gpu))
         o2o0 = loaded_data['algo']
-        if args.copy_buffer == 'copy':
-            buffer = loaded_buffer
-            old_buffer = None
-        elif args.copy_buffer in ['mix_same', 'mix_all']:
-            buffer = ReplayBuffer(args.n_buffer, env)
-            old_buffer = loaded_buffer
-        elif args.copy_buffer == 'none':
-            buffer = ReplayBuffer(args.n_buffer, env)
-            old_buffer = None
-        else:
-            raise NotImplementedError
 
         o2o1_path = "save_algos/" + algos_name + '.pt'
         # Task 1
@@ -240,19 +84,49 @@ def main(args, use_gpu):
         # Each algo a half.
         o2o1_dict['use_gpu'] = use_gpu
         o2o1_dict['impl_name'] = args.algorithms[1]
-        if args.algorithms[1] == 'td3':
+        if args.algorithms[1] in ['td3', 'td3_plus_bc']:
             o2o1 = O2OTD3(**o2o1_dict)
         elif args.algorithms[1] == 'sac':
             o2o1 = O2OSAC(**o2o1_dict)
         elif args.algorithms[1] == 'iql':
             o2o1 = O2OIQL(**o2o1_dict)
-        elif args.algorithms[1] == 'cql':
+        elif args.algorithms[1] in ['cql', 'cal']:
             o2o1 = O2OCQL(**o2o1_dict)
         else:
             raise NotImplementedError
         o2o1.build_with_env(env)
-        o2o1.copy_from_past(args.algorithms[1], o2o0._impl, args.copy_optim)
+        o2o1.copy_from_past(args.algorithms[0], args.algorithms[1], o2o0._impl, args.copy_optim)
         if args.algorithms[1] in online_algos:
+            if args.algorithms[0] in online_algos:
+                loaded_mdp = loaded_data['buffer']
+                if isinstance(loaded_mdp, MDPDataset):
+                    loaded_mdp = OldMDPDataset(dataset0.observations, dataset0.actions, dataset0.rewards, dataset0.terminals, dataset0.episode_terminals)
+                loaded_buffer = ReplayBuffer(args.n_buffer, env)
+                for episode in loaded_mdp.episodes:
+                    loaded_buffer.append_episode(episode)
+            elif args.algorithms[0] in offline_algos:
+                if args.copy_buffer in ['copy', 'mix_same']:
+                    loaded_buffer = ReplayBuffer(args.n_buffer, env)
+                elif args.copy_buffer == 'mix_all':
+                    loaded_buffer = ReplayBuffer(dataset0.observations.shape[0], env)
+                if args.copy_buffer != 'none':
+                    if isinstance(dataset0, MDPDataset):
+                        dataset0 = OldMDPDataset(dataset0.observations, dataset0.actions, dataset0.rewards, dataset0.terminals, dataset0.episode_terminals)
+                    for episode in dataset0.episodes:
+                        loaded_buffer.append_episode(episode)
+            else:
+                raise NotImplementedError
+            if args.copy_buffer == 'copy':
+                buffer = loaded_buffer
+                old_buffer = None
+            elif args.copy_buffer in ['mix_same', 'mix_all']:
+                buffer = ReplayBuffer(args.n_buffer, env)
+                old_buffer = loaded_buffer
+            elif args.copy_buffer == 'none':
+                buffer = ReplayBuffer(args.n_buffer, env)
+                old_buffer = None
+            else:
+                raise NotImplementedError
             o2o1.fit_online(
                 env,
                 eval_env,
@@ -269,10 +143,33 @@ def main(args, use_gpu):
                 experiment_name=experiment_name + "_1",
             )
         elif args.algorithms[1] in offline_algos:
+            if args.algorithms[0] in online_algos:
+                loaded_mdp = loaded_data['buffer']
+                if isinstance(loaded_mdp, MDPDataset):
+                    loaded_mdp = OldMDPDataset(loaded_mdp.observations, loaded_mdp.actions, loaded_mdp.rewards, loaded_mdp.terminals, loaded_mdp.episode_terminals)
+            elif args.algorithms[0] in offline_algos:
+                loaded_mdp = dataset0
+            else:
+                raise NotImplementedError
+            if args.copy_buffer == 'none':
+                old_dataset = None
+            elif args.copy_buffer == 'copy':
+                dataset1 = loaded_mdp
+                if isinstance(dataset1, OldMDPDataset):
+                    dataset1 = MDPDataset(dataset1.observations, dataset1.actions, dataset1.rewards, dataset1.terminals, dataset1.episode_terminals)
+                old_dataset = None
+            elif args.copy_buffer in ['mix_all', 'mix_same']:
+                old_dataset = loaded_mdp
+            else:
+                raise NotImplementedError
             scorers_env = {'evaluation': evaluate_on_environment(online_offline_wrapper(env))}
             scorers_list = [scorers_env]
-            o2o0.build_with_env(online_offline_wrapper(env))
-            iterator, _, n_epochs = o2o0.make_iterator(dataset1, None, args.first_n_steps, args.n_steps_per_epoch, None, True)
+            o2o1.build_with_env(online_offline_wrapper(env))
+            iterator, _, n_epochs = o2o1.make_iterator(dataset1, None, args.first_n_steps, args.n_steps_per_epoch, None, True)
+            if old_dataset is not None:
+                old_iterator, _, n_epochs = o2o1.make_iterator(old_dataset, None, args.first_n_steps, args.n_steps_per_epoch, None, True)
+            else:
+                old_iterator = None
             if args.algorithms[1] == 'iql':
                 scheduler = CosineAnnealingLR(o2o0._impl._actor_optim, 1000000)
                 def callback(algo, epoch, total_step):
@@ -282,10 +179,10 @@ def main(args, use_gpu):
             save_epochs = []
             for save_step in args.save_steps:
                 save_epochs.append(save_step // args.n_steps_per_epoch)
-            o2o0.fitter(
+            o2o1.fitter(
                 dataset1,
                 iterator,
-                old_buffer = old_buffer,
+                old_iterator = old_iterator,
                 buffer_mix_type = args.buffer_mix_type,
                 n_epochs=n_epochs,
                 experiment_name=experiment_name + "_1",

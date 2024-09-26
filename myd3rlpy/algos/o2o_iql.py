@@ -1,4 +1,4 @@
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Sequence
 from torch import Tensor
 
 from d3rlpy.dataset import TransitionMiniBatch
@@ -25,12 +25,45 @@ class O2OIQL(O2OBase, STIQL):
 
         return metrics
 
-    def copy_from_past(self, arg1: str, impl: STImpl, copy_optim: bool):
-        if arg1 == 'sac':
-            self._impl.copy_from_sac(impl, copy_optim)
-        elif arg1 == 'td3':
-            self._impl.copy_from_td3(impl, copy_optim)
-        elif arg1 == 'iql':
-            pass
+    def _create_impl(
+        self, observation_shape: Sequence[int], action_size: int) -> None:
+        impl_dict = {
+            'observation_shape':observation_shape,
+            'action_size':action_size,
+            'actor_learning_rate':self._actor_learning_rate,
+            'critic_learning_rate':self._critic_learning_rate,
+            'actor_optim_factory':self._actor_optim_factory,
+            'critic_optim_factory':self._critic_optim_factory,
+            'actor_encoder_factory':self._actor_encoder_factory,
+            'critic_encoder_factory':self._critic_encoder_factory,
+            'value_encoder_factory':self._value_encoder_factory,
+            'critic_replay_type':self._critic_replay_type,
+            'critic_replay_lambda':self._critic_replay_lambda,
+            'actor_replay_type':self._actor_replay_type,
+            'actor_replay_lambda':self._actor_replay_lambda,
+            'gamma':self._gamma,
+            'gem_alpha':self._gem_alpha,
+            'agem_alpha':self._agem_alpha,
+            'ewc_rwalk_alpha':self._ewc_rwalk_alpha,
+            'epsilon':self._epsilon,
+            "damping":self._damping,
+            'tau':self._tau,
+            'n_critics':self._n_critics,
+            'expectile': self._expectile,
+            'weight_temp': self._weight_temp,
+            'max_weight': self._max_weight,
+            'use_gpu':self._use_gpu,
+            'scaler':self._scaler,
+            'action_scaler':self._action_scaler,
+            'reward_scaler':self._reward_scaler,
+            'fine_tuned_step': self._fine_tuned_step,
+        }
+        if self._impl_name == 'iql':
+            from myd3rlpy.algos.torch.o2o_iql_impl import O2OIQLImpl as O2OImpl
         else:
+            print(self._impl_name)
             raise NotImplementedError
+        self._impl = O2OImpl(
+            **impl_dict
+        )
+        self._impl.build()

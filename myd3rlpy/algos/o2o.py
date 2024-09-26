@@ -9,12 +9,14 @@ import torch
 
 from d3rlpy.metrics.scorer import evaluate_on_environment
 from d3rlpy.online.buffers import Buffer, ReplayBuffer
-from d3rlpy.dataset import MDPDataset, Episode, TransitionMiniBatch
 from d3rlpy.iterators import TransitionIterator
 from d3rlpy.base import LearnableBase
 from d3rlpy.logger import LOG, D3RLPyLogger
 import gym
 from myd3rlpy.algos.st import STBase
+from myd3rlpy.algos.torch.st_impl import STImpl
+from d3rlpy.dataset import TransitionMiniBatch as OldTransitionMiniBatch
+from myd3rlpy.dataset import MDPDataset, Episode, TransitionMiniBatch
 
 
 class O2OBase(STBase):
@@ -34,7 +36,7 @@ class O2OBase(STBase):
         self,
         dataset: Optional[Union[List[Episode], MDPDataset]] = None,
         iterator: Optional[TransitionIterator] = None,
-        old_buffer: Optional[Buffer] = None,
+        old_iterator: Optional[TransitionIterator] = None,
         buffer_mix_ratio: float = 0.5,
         buffer_mix_type: str = "all",
         n_epochs: int = 1000,
@@ -153,15 +155,10 @@ class O2OBase(STBase):
                 with logger.measure_time("step"):
                     # pick transitions
                     with logger.measure_time("sample_batch"):
-                        if old_buffer is not None:
+                        if old_iterator is not None:
                             new_batch = next(iterator)
+                            old_batch = next(old_iterator)
                             part_new_batch = TransitionMiniBatch(new_batch.transitions[:round((1 - buffer_mix_ratio) * self._batch_size)])
-                            old_batch = old_buffer.sample(
-                                batch_size=round(buffer_mix_ratio * self._batch_size),
-                                n_frames=self._n_frames,
-                                n_steps=self._n_steps,
-                                gamma=self._gamma,
-                            )
                             mix_batch = TransitionMiniBatch(
                                     part_new_batch.transitions + old_batch.transitions
                                     )
@@ -427,14 +424,14 @@ class O2OBase(STBase):
                                     n_steps=self._n_steps,
                                     gamma=self._gamma,
                                 )
-                                part_new_batch = TransitionMiniBatch(new_batch.transitions[:round((1 - buffer_mix_ratio) * self._batch_size)])
+                                part_new_batch = OldTransitionMiniBatch(new_batch.transitions[:round((1 - buffer_mix_ratio) * self._batch_size)])
                                 old_batch = old_buffer.sample(
                                     batch_size=round(buffer_mix_ratio * self._batch_size),
                                     n_frames=self._n_frames,
                                     n_steps=self._n_steps,
                                     gamma=self._gamma,
                                 )
-                                mix_batch = TransitionMiniBatch(
+                                mix_batch = OldTransitionMiniBatch(
                                         part_new_batch.transitions + old_batch.transitions
                                         )
                                 if buffer_mix_type == 'all':
@@ -474,10 +471,23 @@ class O2OBase(STBase):
 
             if save_steps is not None and save_path is not None and total_step in save_steps:
                 buffer.clip_episode()
-                torch.save({'buffer': buffer.to_mdp_dataset(), 'algo': self}, save_path.replace(str(n_steps), str(total_step - 1), 1))
+                torch.save({'buffer': buffer.to_mdp_dataset(), 'algo': self}, save_path)
 
         # clip the last episode
         buffer.clip_episode()
 
         # close logger
         logger.close()
+
+    def copy_from_past(self, arg0: str, arg1: str, impl: STImpl, copy_optim: bool):
+        assert self._impl is not None
+        if arg0 in ['td3', 'td3_plus_bc']:
+            self._impl.copy_from_td3(impl, copy_optim)
+        elif arg0 == 'iql':
+            self._impl.copy_from_iql(impl, copy_optim)
+        elif arg0 == 'sac':
+            self._impl.copy_from_sac(impl, copy_optim)
+        elif arg0 in ['cql', 'cal']:
+            self._impl.copy_from_cql(impl, copy_optim)
+        else:
+            raise NotImplementedError

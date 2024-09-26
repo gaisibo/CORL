@@ -10,7 +10,8 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from d3rlpy.torch_utility import train_api, torch_api
+from d3rlpy.torch_utility import train_api, eval_api
+from myd3rlpy.torch_utility import torch_api
 from d3rlpy.dataset import TransitionMiniBatch
 
 from myd3rlpy.algos.torch.gem import overwrite_grad, store_grad, project2cone2
@@ -137,6 +138,11 @@ class STImpl():
                 self._actor_grad_dims.append(param.data.numel())
             self._actor_grad_xy = torch.Tensor(np.sum(self._actor_grad_dims)).to(self.device)
             self._actor_grad_er = torch.Tensor(np.sum(self._actor_grad_dims)).to(self.device)
+
+    #@eval_api
+    #@torch_api(scaler_targets=["x"])
+    #def predict_best_action(self, x: torch.Tensor) -> np.ndarray:
+    #    return super().predict_best_action(x)
 
     @train_api
     @torch_api(reward_scaler_targets=["batch", "replay_batch"])

@@ -6,7 +6,7 @@ from myd3rlpy.algos.torch.st_iql_impl import STIQLImpl
 from myd3rlpy.algos.torch.st_cql_impl import STCQLImpl
 
 
-class O2OIQLImple(STIQLImpl):
+class O2OIQLImpl(STIQLImpl):
     # sac actor: _encoder, _mu.weight, _mu.bias, _logstd.weight, _logstd.bias
     # td3 actor: _encoder, _fc.weight, _fc.bias
     # iql actor: _logstd, _encoder, _fc.weight, _fc.bias
@@ -21,8 +21,13 @@ class O2OIQLImple(STIQLImpl):
             self._actor_encoder_factory,
         )
 
-    def copy_from_cql(self, cql_impl: STCQLImpl, copy_optim: bool):
-        self.copy_from_sac(cql_impl, copy_optim)
+    def copy_from_iql(self, iql_impl: STIQLImpl, copy_optim: bool):
+        self._q_func.load_state_dict(iql_impl._q_func.state_dict())
+        self._policy.load_state_dict(iql_impl._policy.state_dict())
+        self._targ_q_func.load_state_dict(iql_impl._targ_q_func.state_dict())
+        if copy_optim:
+            self._actor_optim.load_state_dict(self._actor_optim.state_dict())
+            self._critic_optim.load_state_dict(self._critic_optim.state_dict())
 
     def copy_from_sac(self, sac_impl: STSACImpl, copy_optim: bool):
         assert self._policy is not None
@@ -38,9 +43,12 @@ class O2OIQLImple(STIQLImpl):
             self._actor_optim.load_state_dict(self._actor_optim.state_dict())
             critic_optim_state_dict = self._critic_optim.state_dict()
             sac_critic_optim_state_dict = sac_impl._critic_optim.state_dict()
-            for i in range(6):
-                critic_optim_state_dict[i] = sac_critic_optim_state_dict[i]
+            for i, _ in enumerate(sac_impl._q_func.parameters()):
+                critic_optim_state_dict['state'][i] = sac_critic_optim_state_dict['state'][i]
             self._critic_optim.load_state_dict(critic_optim_state_dict)
+
+    def copy_from_cql(self, cql_impl: STCQLImpl, copy_optim: bool):
+        self.copy_from_sac(cql_impl, copy_optim)
 
     def copy_from_td3(self, td3_impl: STTD3Impl, copy_optim: bool):
         assert self._policy is not None
@@ -50,12 +58,16 @@ class O2OIQLImple(STIQLImpl):
         policy_state_dict = td3_impl._policy.state_dict()
         policy_state_dict['_mu.weight'] = policy_state_dict['_fc.weight']
         policy_state_dict['_mu.bias'] = policy_state_dict['_fc.bias']
+        del policy_state_dict['_fc.weight']
+        del policy_state_dict['_fc.bias']
         # init
         policy_state_dict['_logstd.weight'] = self._policy._logstd.weight.data
         policy_state_dict['_logstd.bias'] = self._policy._logstd.bias.data
         targ_policy_state_dict = td3_impl._targ_policy.state_dict()
         targ_policy_state_dict['_mu.weight'] = targ_policy_state_dict['_fc.weight']
         targ_policy_state_dict['_mu.bias'] = targ_policy_state_dict['_fc.bias']
+        del targ_policy_state_dict['_fc.weight']
+        del targ_policy_state_dict['_fc.bias']
         # init
         targ_policy_state_dict['_logstd.weight'] = self._targ_policy._logstd.weight.data
         targ_policy_state_dict['_logstd.bias'] = self._targ_policy._logstd.bias.data
@@ -69,7 +81,11 @@ class O2OIQLImple(STIQLImpl):
         if copy_optim:
             td3_actor_optim_state_dict = td3_impl._actor_optim.state_dict()
             actor_optim_state_dict = self._actor_optim.state_dict()
-            for i in range(6):
+            for i, _ in enumerate(td3_impl._policy.parameters()):
                 actor_optim_state_dict['state'][i] = td3_actor_optim_state_dict['state'][i]
             self._actor_optim.load_state_dict(actor_optim_state_dict)
-            self._critic_optim.load_state_dict(td3_impl._critic_optim.state_dict())
+            td3_critic_optim_state_dict = td3_impl._critic_optim.state_dict()
+            critic_optim_state_dict = self._critic_optim.state_dict()
+            for i, _ in enumerate(td3_impl._q_func.parameters()):
+                critic_optim_state_dict['state'][i] = td3_critic_optim_state_dict['state'][i]
+            self._critic_optim.load_state_dict(critic_optim_state_dict)
