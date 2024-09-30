@@ -47,15 +47,13 @@ class O2OSACImpl(STSACImpl):
         policy_state_dict = td3_impl._policy.state_dict()
         policy_state_dict['_mu.weight'] = policy_state_dict['_fc.weight']
         policy_state_dict['_mu.bias'] = policy_state_dict['_fc.bias']
-        del policy_state_dict['_fc.weight']
-        del policy_state_dict['_fc.bias']
-        # init
         policy_state_dict['_logstd.weight'] = self._policy._logstd.weight.data
         policy_state_dict['_logstd.bias'] = self._policy._logstd.bias.data
+        del policy_state_dict['_fc.weight']
+        del policy_state_dict['_fc.bias']
         targ_policy_state_dict = td3_impl._targ_policy.state_dict()
         targ_policy_state_dict['_mu.weight'] = targ_policy_state_dict['_fc.weight']
         targ_policy_state_dict['_mu.bias'] = targ_policy_state_dict['_fc.bias']
-        # init
         targ_policy_state_dict['_logstd.weight'] = self._targ_policy._logstd.weight.data
         targ_policy_state_dict['_logstd.bias'] = self._targ_policy._logstd.bias.data
         del targ_policy_state_dict['_fc.weight']

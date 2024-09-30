@@ -157,7 +157,11 @@ class O2OBase(STBase):
                     with logger.measure_time("sample_batch"):
                         if old_iterator is not None:
                             new_batch = next(iterator)
-                            old_batch = next(old_iterator)
+                            try:
+                                old_batch = next(old_iterator)
+                            except StopIteration:
+                                old_iterator.reset()
+                                old_batch = next(old_iterator)
                             part_new_batch = TransitionMiniBatch(new_batch.transitions[:round((1 - buffer_mix_ratio) * self._batch_size)])
                             mix_batch = TransitionMiniBatch(
                                     part_new_batch.transitions + old_batch.transitions

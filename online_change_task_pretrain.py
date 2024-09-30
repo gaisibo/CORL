@@ -7,7 +7,7 @@ import gym
 import torch
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from d3rlpy.online.buffers import ReplayBuffer
-from d3rlpy.datasets import get_d4rl
+from myd3rlpy.datasets import get_d4rl
 from d3rlpy.metrics import evaluate_on_environment
 
 from myd3rlpy.algos.o2o_td3 import O2OTD3
@@ -15,141 +15,8 @@ from myd3rlpy.algos.o2o_sac import O2OSAC
 from myd3rlpy.algos.o2o_iql import O2OIQL
 from myd3rlpy.algos.o2o_cql import O2OCQL
 from mygym.envs.online_offline_wrapper import online_offline_wrapper
-from config.o2o_config import get_o2o_dict
+from config.o2o_config import get_o2o_dict, online_algos, offline_algos
 
-
-RESET = R = 'r'  # Reset position.
-GOAL = G = 'g'
-
-mazes = {
-    'umaze':
-        [[[[1, 1, 1, 1, 1],
-           [1, R, 0, 0, 1],
-           [1, 1, 1, G, 1],
-           [1, 0, 0, 0, 1],
-           [1, 1, 1, 1, 1]],
-
-          [[1, 1, 1, 1, 1],
-           [1, R, 0, 0, 1],
-           [1, 1, 1, 0, 1],
-           [1, G, 0, 0, 1],
-           [1, 1, 1, 1, 1]]],
-         None,
-        ],
-    'medium':
-	[[[[1, 1, 1, 1, 1, 1, 1, 1],
-           [1, R, 0, 1, 1, 0, 0, 1],
-           [1, 0, 0, 1, 0, 0, 0, 1],
-           [1, 1, 0, 0, 0, 1, 1, 1],
-           [1, 0, 0, 1, G, 0, 0, 1],
-           [1, 0, 1, 0, 0, 1, 0, 1],
-           [1, 0, 0, 0, 1, 0, 0, 1],
-           [1, 1, 1, 1, 1, 1, 1, 1]],
-	  [[1, 1, 1, 1, 1, 1, 1, 1],
-           [1, R, 0, 1, 1, 0, 0, 1],
-           [1, 0, 0, 1, 0, 0, 0, 1],
-           [1, 1, 0, 0, 0, 1, 1, 1],
-           [1, 0, 0, 1, 0, 0, 0, 1],
-           [1, 0, 1, 0, 0, 1, 0, 1],
-           [1, 0, 0, 0, 1, 0, G, 1],
-           [1, 1, 1, 1, 1, 1, 1, 1]]],
-
-	 [[[1, 1, 1, 1, 1, 1, 1, 1],
-           [1, R, 0, 1, 1, 0, 0, 1],
-           [1, 0, 0, 1, 0, 0, 0, 1],
-           [1, 1, G, 0, 0, 1, 1, 1],
-           [1, 0, 0, 1, 0, 0, 0, 1],
-           [1, 0, 1, 0, 0, 1, 0, 1],
-           [1, 0, 0, 0, 1, 0, 0, 1],
-           [1, 1, 1, 1, 1, 1, 1, 1]],
-	  [[1, 1, 1, 1, 1, 1, 1, 1],
-           [1, R, 0, 1, 1, 0, 0, 1],
-           [1, 0, 0, 1, 0, 0, 0, 1],
-           [1, 1, 0, 0, 0, 1, 1, 1],
-           [1, 0, 0, 1, G, 0, 0, 1],
-           [1, 0, 1, 0, 0, 1, 0, 1],
-           [1, 0, 0, 0, 1, 0, 0, 1],
-           [1, 1, 1, 1, 1, 1, 1, 1]],
-	  [[1, 1, 1, 1, 1, 1, 1, 1],
-           [1, R, 0, 1, 1, 0, 0, 1],
-           [1, 0, 0, 1, 0, 0, 0, 1],
-           [1, 1, 0, 0, 0, 1, 1, 1],
-           [1, 0, 0, 1, 0, 0, 0, 1],
-           [1, 0, 1, 0, 0, 1, G, 1],
-           [1, 0, 0, 0, 1, 0, 0, 1],
-           [1, 1, 1, 1, 1, 1, 1, 1]],
-	  [[1, 1, 1, 1, 1, 1, 1, 1],
-           [1, R, 0, 1, 1, 0, 0, 1],
-           [1, 0, 0, 1, 0, 0, 0, 1],
-           [1, 1, 0, 0, 0, 1, 1, 1],
-           [1, 0, 0, 1, 0, 0, 0, 1],
-           [1, 0, 1, 0, 0, 1, 0, 1],
-           [1, 0, 0, 0, 1, 0, G, 1],
-           [1, 1, 1, 1, 1, 1, 1, 1]]],
-        ],
-    'large':
-	[[[[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-	   [1, R, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1],
-	   [1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1],
-	   [1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1],
-	   [1, 0, 1, 1, 1, 1, G, 1, 1, 1, 0, 1],
-	   [1, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1],
-	   [1, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1],
-	   [1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1],
-	   [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]],
-	  [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-	   [1, R, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1],
-	   [1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1],
-	   [1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1],
-	   [1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1],
-	   [1, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1],
-	   [1, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1],
-	   [1, 0, 0, 1, 0, 0, 0, 1, 0, G, 0, 1],
-	   [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]]],
-
-	 [[[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-	   [1, R, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1],
-	   [1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1],
-	   [1, 0, 0, G, 0, 0, 0, 1, 0, 0, 0, 1],
-	   [1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1],
-	   [1, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1],
-	   [1, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1],
-	   [1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1],
-	   [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]],
-	  [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-	   [1, R, 0, 0, 0, 1, G, 0, 0, 0, 0, 1],
-	   [1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1],
-	   [1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1],
-	   [1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1],
-	   [1, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1],
-	   [1, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1],
-	   [1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1],
-	   [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]],
-	  [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-	   [1, R, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1],
-	   [1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1],
-	   [1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1],
-	   [1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1],
-	   [1, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1],
-	   [1, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1],
-	   [1, 0, 0, 1, 0, 0, G, 1, 0, 0, 0, 1],
-	   [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]],
-	  [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-	   [1, R, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1],
-	   [1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1],
-	   [1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1],
-	   [1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1],
-	   [1, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1],
-	   [1, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1],
-	   [1, 0, 0, 1, 0, 0, 0, 1, 0, G, 0, 1],
-	   [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]]],
-        ]
-    }
-
-mazes_start = {'umaze': [[(1, 1), (1, 1)], None], 'medium': [[(1, 1), (3, 4)], [(1, 1), (2, 2), (3, 4), (4, 6)]], 'large': [[(1, 1), (3, 6)], [(1, 1), (3, 2), (1, 7), (7, 5)]]}
-
-online_algos = ['td3', 'sac']
-offline_algos = ['iql', 'cql']
 
 def read_dict(state_dict, prename):
     for key, value in state_dict.items():
@@ -184,80 +51,82 @@ def main(args, use_gpu):
     # For saving and loading
     load_name = args.dataset
     load_name += '_' + str(args.first_n_steps)
-    if args.algorithms[0] not in offline_algos:
+    if args.algorithms[0] in online_algos:
         load_name += '_' + str(args.n_buffer)
     load_name += '_' + args.algorithms[0]
-    load_name += '_' + args.qualities[0]
-    load_name += ('_' + "test") if args.test else ""
+    if args.algorithms[0] in offline_algos:
+        load_name += '_' + args.qualities[0]
     if args.add_name != '':
         load_name += '_' + args.add_name
 
     if not args.eval:
         print(f'Start Training')
-        o2o0_path = "save_algos/" + load_name + '.pt'
-        print(f"{o2o0_path}")
-        if os.path.exists(o2o0_path):
-            return 0
+        if args.test:
+            o2o0_path = "save_algos/" + load_name + '.pt.test'
         else:
-            print(f'Start Training Algo 0')
-            o2o0_dict = get_o2o_dict(args.algorithms[0], args.qualities[0])
-            # Task 0
-            o2o0_dict['use_gpu'] = use_gpu
-            o2o0_dict['impl_name'] = args.algorithms[0]
-            if args.algorithms[0] == 'td3':
-                o2o0 = O2OTD3(**o2o0_dict)
-            elif args.algorithms[0] == 'sac':
-                o2o0 = O2OSAC(**o2o0_dict)
-            elif args.algorithms[0] == 'iql':
-                o2o0 = O2OIQL(**o2o0_dict)
-            elif args.algorithms[0] == 'cql':
-                o2o0 = O2OCQL(**o2o0_dict)
+            o2o0_path = "save_algos/" + load_name + '.pt'
+            #if os.path.exists(o2o0_path):
+            #    return 0
+        print(f"{o2o0_path}")
+        print(f'Start Training Algo 0')
+        o2o0_dict = get_o2o_dict(args.algorithms[0], args.qualities[0])
+        # Task 0
+        o2o0_dict['use_gpu'] = use_gpu
+        o2o0_dict['impl_name'] = args.algorithms[0]
+        if args.algorithms[0] in ['td3', 'td3_plus_bc']:
+            o2o0 = O2OTD3(**o2o0_dict)
+        elif args.algorithms[0] == 'sac':
+            o2o0 = O2OSAC(**o2o0_dict)
+        elif args.algorithms[0] == 'iql':
+            o2o0 = O2OIQL(**o2o0_dict)
+        elif args.algorithms[0] in ['cql', 'cal']:
+            o2o0 = O2OCQL(**o2o0_dict)
+        else:
+            raise NotImplementedError
+        if args.algorithms[0] in online_algos:
+            buffer = ReplayBuffer(args.n_buffer, env)
+            o2o0.build_with_env(env)
+            o2o0.fit_online(
+                env,
+                eval_env,
+                buffer,
+                n_steps = args.first_n_steps,
+                n_steps_per_epoch = args.n_steps_per_epoch,
+                save_steps=args.save_steps,
+                save_path=o2o0_path,
+                test = args.test,
+            )
+            torch.save({'buffer': buffer.to_mdp_dataset(), 'algo': o2o0}, o2o0_path)
+        elif args.algorithms[0] in offline_algos:
+            scorers_env = {'evaluation': evaluate_on_environment(online_offline_wrapper(env))}
+            scorers_list = [scorers_env]
+            o2o0.build_with_env(online_offline_wrapper(env))
+            iterator, _, n_epochs = o2o0.make_iterator(dataset0, None, args.first_n_steps, args.n_steps_per_epoch, None, True)
+            if args.algorithms[0] == 'iql':
+                scheduler = CosineAnnealingLR(o2o0._impl._actor_optim, 1000000)
+                def callback(algo, epoch, total_step):
+                    scheduler.step()
             else:
-                raise NotImplementedError
-            if args.algorithms[0] in online_algos:
-                buffer = ReplayBuffer(args.n_buffer, env)
-                o2o0.build_with_env(env)
-                o2o0.fit_online(
-                    env,
-                    eval_env,
-                    buffer,
-                    n_steps = args.first_n_steps,
-                    n_steps_per_epoch = args.n_steps_per_epoch,
-                    save_steps=args.save_steps,
-                    save_path=o2o0_path,
-                    test = args.test,
-                )
-                torch.save({'buffer': buffer.to_mdp_dataset(), 'algo': o2o0}, o2o0_path)
-            elif args.algorithms[0] in offline_algos:
-                scorers_env = {'evaluation': evaluate_on_environment(online_offline_wrapper(env))}
-                scorers_list = [scorers_env]
-                o2o0.build_with_env(online_offline_wrapper(env))
-                iterator, _, n_epochs = o2o0.make_iterator(dataset0, None, args.first_n_steps, args.n_steps_per_epoch, None, True)
-                if args.algorithms[0] == 'iql':
-                    scheduler = CosineAnnealingLR(o2o0._impl._actor_optim, 1000000)
-                    def callback(algo, epoch, total_step):
-                        scheduler.step()
-                else:
-                    callback = None
-                save_epochs = []
-                for save_step in args.save_steps:
-                    save_epochs.append(save_step // args.n_steps_per_epoch)
-                o2o0.fitter(
-                    dataset0,
-                    iterator,
-                    n_epochs=n_epochs,
-                    n_steps_per_epoch=args.n_steps_per_epoch,
-                    experiment_name=experiment_name + "_0",
-                    scorers_list = scorers_list,
-                    eval_episodes_list = [None],
-                    save_epochs=save_epochs,
-                    save_path=o2o0_path,
-                    callback=callback,
-                    test = args.test,
-                )
-                torch.save({'buffer': None, 'algo': o2o0}, o2o0_path)
-            else:
-                raise NotImplementedError
+                callback = None
+            save_epochs = []
+            for save_step in args.save_steps:
+                save_epochs.append(save_step // args.n_steps_per_epoch)
+            o2o0.fitter(
+                dataset0,
+                iterator,
+                n_epochs=n_epochs,
+                n_steps_per_epoch=args.n_steps_per_epoch,
+                experiment_name=experiment_name + "_0",
+                scorers_list = scorers_list,
+                eval_episodes_list = [None],
+                save_epochs=save_epochs,
+                save_path=o2o0_path,
+                callback=callback,
+                test = args.test,
+            )
+            torch.save({'buffer': None, 'algo': o2o0}, o2o0_path)
+        else:
+            raise NotImplementedError
     print('finish')
 
 if __name__ == '__main__':
