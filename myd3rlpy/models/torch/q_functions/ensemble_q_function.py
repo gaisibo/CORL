@@ -102,6 +102,7 @@ class ParallelEnsembleQFunction(ParallelizedEnsembleFlattenMLP):  # type: ignore
             batch_norm,
             final_init_scale,
         )
+        self.reduction = reduction
 
     def compute_error(
         self,
@@ -190,3 +191,4 @@ class ParallelEnsembleContinuousQFunction(ParallelEnsembleQFunction):
         reduction: str= 'mean',
     ) -> torch.Tensor:
         return self._compute_target(x, action, lam, reduction)
+>>>>>>> f51a337 (init)
