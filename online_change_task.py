@@ -22,7 +22,7 @@ from d3rlpy.dataset import MDPDataset as OldMDPDataset
 
 
 online_algos = ['td3', 'sac']
-offline_algos = ['iql']
+offline_algos = ['iql', 'cql']
 
 def read_dict(state_dict, prename):
     for key, value in state_dict.items():

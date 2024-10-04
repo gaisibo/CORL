@@ -1,9 +1,7 @@
 import numpy as np
 from d3rlpy.models.builders import create_squashed_normal_policy
 
-from myd3rlpy.algos.torch.st_td3_impl import STTD3Impl
 from myd3rlpy.algos.torch.st_sac_impl import STSACImpl
-from myd3rlpy.algos.torch.st_iql_impl import STIQLImpl
 from myd3rlpy.algos.torch.st_cql_impl import STCQLImpl
 from myd3rlpy.algos.torch.o2o_sac_impl import O2OSACImpl
 from myd3rlpy.torch_utility import torch_api, TorchMiniBatch
