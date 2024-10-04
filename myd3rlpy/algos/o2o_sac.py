@@ -76,3 +76,14 @@ class O2OSAC(O2OBase, STSAC):
         self._impl.update_actor_target()
 
         return metrics
+
+    def copy_from_past(self, arg1: str, impl: STImpl, copy_optim: bool):
+        assert self._impl is not None
+        if arg1 == 'td3':
+            self._impl.copy_from_td3(impl, copy_optim)
+        elif arg1 == 'iql':
+            self._impl.copy_from_iql(impl, copy_optim)
+        elif arg1 == 'sac':
+            pass
+        else:
+            raise NotImplementedError
