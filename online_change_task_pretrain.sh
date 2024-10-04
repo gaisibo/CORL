@@ -68,7 +68,9 @@ done
 #    fi
 #done
 
-if [[ $algorithms == 'iql' || $algorithms == 'cql' || $algorithms == 'cal' || $algorithms=='td3_plus_bc' ]]; then
+algorithms_offline=( "iql" "cql" "cal" "td3_plus_bc" )
+echo "${algorithms_offline[@]}" | grep -wq ${algorithms}
+if [[ $? == 0 ]]; then
     output_file_name=logs/online_change_task_${dataset}_${qualities}_${algorithms}_${first_n_steps}.${expand_str}.log
     must_arg_strs=( "algorithms" "dataset" "qualities" )
 else
