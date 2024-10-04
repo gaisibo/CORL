@@ -15,7 +15,7 @@ def get_o2o_dict(algo, quality):
             conservative_weight = 10.0
         else:
             conservative_weight = 5.0
-        o2o_dict["actor_learning_rate"] = 1e-4
+        o2o_dict["actor_learning_rate"] = 3e-5
         o2o_dict["critic_learning_rate"] = 3e-4
         o2o_dict["temp_learning_rate"] = 1e-4
         o2o_dict["alpha_learning_rate"] = 0.0
