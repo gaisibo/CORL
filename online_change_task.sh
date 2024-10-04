@@ -18,7 +18,11 @@ seed=0
 gpu=0
 
 #ARGS=`getopt -o tc --long test,copy_optim -n 'online_change_task.sh' -- "$@"`
+<<<<<<< HEAD
 ARGS=`getopt -o +tecb:m:s:g: --long test,copy_optim,explore,copy_buffer:,buffer_mix_type:,algorithms:,qualities:,dataset:,first_n_steps:,second_n_steps:,n_buffer:,seed:,gpu: -n "$0" -- "$@"`
+=======
+ARGS=`getopt +tcb --long test,copy_optim,copy_buffer:,algorithms:,qualities:,dataset:,first_n_steps:,second_n_steps:,n_buffer: -n "$0" -- "$@"`
+>>>>>>> f9f73bb (完成多种类o2o，包括iql、td3和sac三种算法。)
 if [ $? != 0 ]; then
     echo "Terminating..."
     exit 1
@@ -45,10 +49,13 @@ while true; do
             copy_buffer=$2;
             shift 2
             ;;
+<<<<<<< HEAD
         -m|--buffer_mix_type)
             buffer_mix_type=$2;
             shift 2
             ;;
+=======
+>>>>>>> f9f73bb (完成多种类o2o，包括iql、td3和sac三种算法。)
         --algorithms)
             algorithms=$2;
             shift 2

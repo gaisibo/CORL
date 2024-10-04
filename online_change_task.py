@@ -21,6 +21,9 @@ from myd3rlpy.dataset import MDPDataset
 from d3rlpy.dataset import MDPDataset as OldMDPDataset
 
 
+online_algos = ['td3', 'sac']
+offline_algos = ['iql']
+
 def read_dict(state_dict, prename):
     for key, value in state_dict.items():
         if not isinstance(value, dict):

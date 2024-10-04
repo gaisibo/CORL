@@ -54,6 +54,7 @@ class O2OSAC(O2OBase, STSAC):
             **impl_dict
         )
         self._impl.build()
+
     def _update(self, policy_batch: TransitionMiniBatch, value_batch: TransitionMiniBatch, online: bool) -> Dict[int, float]:
         assert self._impl is not None, IMPL_NOT_INITIALIZED_ERROR
         metrics = {}
