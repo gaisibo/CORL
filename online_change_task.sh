@@ -5,6 +5,8 @@ test_arg=""
 algorithms=""
 copy_optim_arg=""
 copy_optim_str=""
+explore_arg=""
+explore_str=""
 copy_buffer=""
 buffer_mix_type="all"
 dataset=''
@@ -16,7 +18,7 @@ seed=0
 gpu=0
 
 #ARGS=`getopt -o tc --long test,copy_optim -n 'online_change_task.sh' -- "$@"`
-ARGS=`getopt -o +tcbmsg --long test,copy_optim,copy_buffer:,buffer_mix_type:,algorithms:,qualities:,dataset:,first_n_steps:,second_n_steps:,n_buffer:,seed:,gpu: -n "$0" -- "$@"`
+ARGS=`getopt -o +tecb:m:s:g: --long test,copy_optim,explore,copy_buffer:,buffer_mix_type:,algorithms:,qualities:,dataset:,first_n_steps:,second_n_steps:,n_buffer:,seed:,gpu: -n "$0" -- "$@"`
 if [ $? != 0 ]; then
     echo "Terminating..."
     exit 1
@@ -32,6 +34,11 @@ while true; do
         -c|--copy_optim)
             copy_optim_arg="--copy_optim";
             copy_optim_str="_copy_optim";
+            shift
+            ;;
+        -e|--explore)
+            explore_arg="--explore";
+            explore_str="_explore";
             shift
             ;;
         -b|--copy_buffer)
@@ -104,11 +111,11 @@ for must_arg_str in "algorithms" "dataset" "qualities" "copy_buffer"; do
 done
 
 if [[ $copy_buffer == "mix_all" || $copy_buffer == "mix_same" ]]; then
-    output_file_name=logs/online_change_task_${dataset}_${qualities}_${algorithms}_${first_n_steps}_${second_n_steps}_${n_buffer}${copy_optim_str}_${copy_buffer}_${buffer_mix_type}.${expand_str}_${seed}.log
+    output_file_name=logs/online_change_task_${dataset}_${qualities}_${algorithms}_${first_n_steps}_${second_n_steps}_${n_buffer}${explore}${copy_optim_str}_${copy_buffer}_${buffer_mix_type}.${expand_str}_${seed}.log
 else
-    output_file_name=logs/online_change_task_${dataset}_${qualities}_${algorithms}_${first_n_steps}_${second_n_steps}_${n_buffer}${copy_optim_str}_${copy_buffer}.${expand_str}_${seed}.log
+    output_file_name=logs/online_change_task_${dataset}_${qualities}_${algorithms}_${first_n_steps}_${second_n_steps}_${n_buffer}${explore}${copy_optim_str}_${copy_buffer}.${expand_str}_${seed}.log
 fi
 echo $output_file_name
-echo "python online_change_task.py --dataset ${dataset} --algorithms=${algorithms} --qualities=${qualities} $copy_optim_arg --copy_buffer $copy_buffer --buffer_mix_type ${buffer_mix_type} --first_n_steps ${first_n_steps} --second_n_steps ${second_n_steps} --n_buffer ${n_buffer} --seed ${seed} ${test_arg}" > ${output_file_name}
+echo "python online_change_task.py --dataset ${dataset} --algorithms=${algorithms} --qualities=${qualities} $copy_optim_arg $explore_arg $explore_arg --copy_buffer $copy_buffer --buffer_mix_type ${buffer_mix_type} --first_n_steps ${first_n_steps} --second_n_steps ${second_n_steps} --n_buffer ${n_buffer} --seed ${seed} ${test_arg}" > ${output_file_name}
 echo "" >> ${output_file_name}
-python online_change_task.py ${copy_optim_arg} --copy_buffer ${copy_buffer} --buffer_mix_type ${buffer_mix_type} --dataset ${dataset} --algorithms ${algorithms} --qualities ${qualities} --first_n_steps ${first_n_steps} --second_n_steps ${second_n_steps} --n_buffer ${n_buffer} --gpu ${gpu} --seed ${seed} ${test_arg} | tee ${output_file_name}
+python online_change_task.py ${copy_optim_arg} ${explore_arg} --copy_buffer ${copy_buffer} --buffer_mix_type ${buffer_mix_type} --dataset ${dataset} --algorithms ${algorithms} --qualities ${qualities} --first_n_steps ${first_n_steps} --second_n_steps ${second_n_steps} --n_buffer ${n_buffer} --gpu ${gpu} --seed ${seed} ${test_arg} | tee ${output_file_name}

@@ -137,7 +137,7 @@ def main(args, use_gpu):
                 n_steps_per_epoch = args.n_steps_per_epoch,
                 save_steps=args.save_steps,
                 save_path=o2o1_path,
-                random_step=0,
+                random_step=0 if args.explore else 100000,
                 test = args.test,
                 start_epoch = args.first_n_steps // args.n_steps_per_epoch + 1,
                 experiment_name=experiment_name + "_1",
@@ -254,6 +254,7 @@ if __name__ == '__main__':
     parser.add_argument('--copy_buffer', type=str, choices=['none', 'copy', 'mix_same', 'mix_all'], required=True)
     parser.add_argument('--buffer_mix_type', type=str, choices=['all', 'policy', 'value'], default='all')
     parser.add_argument("--dataset", default='halfcheetah', type=str)
+    parser.add_argument('--explore', action='store_true')
 
     parser.add_argument('--experience_type', default='random_episode', type=str, choices=['all', 'none', 'single', 'online', 'generate', 'model_prob', 'model_next', 'model', 'model_this', 'coverage', 'random_transition', 'random_episode', 'max_reward', 'max_match', 'max_supervise', 'max_model', 'max_reward_end', 'max_reward_mean', 'max_match_end', 'max_match_mean', 'max_supervise_end', 'max_supervise_mean', 'max_model_end', 'max_model_mean', 'min_reward', 'min_match', 'min_supervise', 'min_model', 'min_reward_end', 'min_reward_mean', 'min_match_end', 'min_match_mean', 'min_supervise_end', 'min_supervise_mean', 'min_model_end', 'min_model_mean'])
     parser.add_argument('--max_export_step', default=1000, type=int)

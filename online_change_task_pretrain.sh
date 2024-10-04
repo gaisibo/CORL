@@ -4,7 +4,7 @@ expand_str=`date +"%Y%m%d%H%M%S"`
 test_arg=""
 algorithms=""
 dataset="halfcheetah"
-qualities=''
+qualities='medium'
 first_n_steps=1000000
 n_buffer=0
 gpu=0
@@ -75,12 +75,12 @@ else
     output_file_name=logs/online_change_task_${dataset}_${algorithms}_${first_n_steps}_${n_buffer}.${expand_str}.log
     must_arg_strs=( "algorithms" "dataset" "n_buffer" )
 fi
-for must_arg_str in "algorithms" "dataset" "qualities"; do
-must_arg=`eval echo '$'$must_arg_str`
-if [[ $must_arg == '' ]]; then
-    echo "$must_arg_str must be set!"
-    exit 1
-fi
+for must_arg_str in ${must_arg_strs[@]}; do
+        must_arg=`eval echo '$'$must_arg_strs`
+        if [[ $must_arg == '' ]]; then
+            echo "$must_arg_str must be set!"
+            exit 1
+        fi
 done
 echo $output_file_name
 echo "python online_change_task.py --dataset ${dataset} --algorithms=${algorithms} --qualities=${qualities} --first_n_steps ${first_n_steps} --n_buffer ${n_buffer} ${test_arg}" > ${output_file_name}

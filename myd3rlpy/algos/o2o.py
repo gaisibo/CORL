@@ -350,14 +350,16 @@ class O2OBase(STBase):
         # switch based on show_progress flag
         xrange = trange if show_progress else range
 
-        # setup evaluation scorer
-        eval_scorer: Optional[Callable[..., float]]
-        if eval_env:
-            eval_scorer = evaluate_on_environment(eval_env, epsilon=eval_epsilon)
-        else:
-            eval_scorer = None
+        ## setup evaluation scorer
+        #eval_scorer: Optional[Callable[..., float]]
+        #if eval_env:
+        #    eval_scorer = evaluate_on_environment(eval_env, epsilon=eval_epsilon)
+        #else:
+        #    eval_scorer = None
         # start training loop
         observation, _ = env.reset()
+        if random_step > 0:
+            exploit_observation, _ = eval_env.reset()
         rollout_return = 0.0
 
 
@@ -372,6 +374,8 @@ class O2OBase(STBase):
                 with logger.measure_time("inference"):
                     if total_step < random_step:
                         action = env.action_space.sample()
+                        exploit_action = self.sample_action(observation[np.newaxis, :])
+                        exploit_action = exploit_action[0]
                     else:
                         #action = self.sample_action([fed_observation])[0]
                         action = self.sample_action(observation[np.newaxis, :])
@@ -380,8 +384,12 @@ class O2OBase(STBase):
                 # step environment
                 episode_length = 0
                 with logger.measure_time("environment_step"):
-                    next_observation, reward, terminal, truncated, info = env.step(action)
-                    rollout_return += reward
+                    if total_step < random_step:
+                        exploit_next_observation, exploit_reward, exploit_terminal, exploit_truncated, exploit_info = eval_env.step(exploit_action)
+                        rollout_return += exploit_reward
+                    else:
+                        next_observation, reward, terminal, truncated, info = env.step(action)
+                        rollout_return += reward
                     episode_length += 1
 
                 # special case for TimeLimit wrapper
