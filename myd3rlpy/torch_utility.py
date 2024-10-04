@@ -26,6 +26,8 @@ class TorchMiniBatch(OldTorchMiniBatch):
         if hasattr(batch, "rtgs"):
             rtgs = _convert_to_torch(batch.rtgs, device)
         next_observations = _convert_to_torch(batch.next_observations, device)
+        if hasattr(batch, "next_actions"):
+            next_actions = _convert_to_torch(batch.next_actions, device)
         terminals = _convert_to_torch(batch.terminals, device)
         n_steps = _convert_to_torch(batch.n_steps, device)
 
@@ -35,6 +37,7 @@ class TorchMiniBatch(OldTorchMiniBatch):
             next_observations = scaler.transform(next_observations)
         if action_scaler:
             actions = action_scaler.transform(actions)
+            next_actions = action_scaler.transform(next_actions)
         if reward_scaler:
             rewards = reward_scaler.transform(rewards)
             if hasattr(batch, "rtgs"):
@@ -46,6 +49,8 @@ class TorchMiniBatch(OldTorchMiniBatch):
         if hasattr(batch, "rtgs"):
             self._rtgs = rtgs
         self._next_observations = next_observations
+        if hasattr(batch, "next_actions"):
+            self._next_actions = next_actions
         self._terminals = terminals
         self._n_steps = n_steps
         self._device = device

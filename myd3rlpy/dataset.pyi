@@ -16,6 +16,7 @@ class Transition(OldTransition):
         reward: float,
         rtg: float,
         next_observation: np.ndarray,
+        next_action: Union[int, np.ndarray],
         terminal: float,
         prev_transition: Optional["Transition"] = ...,
         next_transition: Optional["Transition"] = ...,

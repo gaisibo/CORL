@@ -154,8 +154,6 @@ class STSAC(STBase, SAC):
         self._fine_tuned_step = fine_tuned_step
         self._eta = eta
 
-        self._update_actor_interval = 2
-
     def _create_impl(
         self, observation_shape: Sequence[int], action_size: int
     ) -> None:

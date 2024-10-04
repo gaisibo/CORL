@@ -111,11 +111,16 @@ def _to_transitions(
             if terminal:
                 # dummy observation
                 next_observation = np.zeros_like(observation)
+                if isinstance(action, np.ndarray):
+                    next_action = np.zeros_like(action)
+                else:
+                    next_action = 0
             else:
                 # skip the last step if not terminated
                 break
         else:
             next_observation = observations[i + 1]
+            next_action = actions[i + 1]
 
         env_terminal = terminal if i == num_data - 1 else 0.0
 
@@ -127,6 +132,7 @@ def _to_transitions(
             reward=reward,
             rtg=rtg,
             next_observation=next_observation,
+            next_action=next_action,
             terminal=env_terminal,
             prev_transition=prev_transition
         )
@@ -881,6 +887,7 @@ cdef class Transition():
     cdef _observation
     cdef _action
     cdef _next_observation
+    cdef _next_action
     cdef Transition _prev_transition
     cdef Transition _next_transition
 
@@ -893,6 +900,7 @@ cdef class Transition():
         float reward,
         float rtg,
         np.ndarray next_observation,
+        next_action not None,
         float terminal,
         Transition prev_transition=None,
         Transition next_transition=None
@@ -943,16 +951,21 @@ cdef class Transition():
         cdef int action_i
         if isinstance(action, np.ndarray):
             action_f = np.asarray(action, dtype=np.float32)
+            next_action_f = np.asarray(next_action, dtype=np.float32)
             self._thisptr.get().action_f = <FLOAT_t*> action_f.data
+            self._thisptr.get().next_action_f = <FLOAT_t*> next_action_f.data
             self._is_discrete = False
         else:
             action_i = action
+            next_action_i = next_action
             self._thisptr.get().action_i = action_i
+            self._thisptr.get().next_action_i = next_action_i
             self._is_discrete = True
 
         self._observation = observation
         self._action = action
         self._next_observation = next_observation
+        self._next_action = next_action
         self._prev_transition = prev_transition
         self._next_transition = next_transition
 
@@ -1036,6 +1049,16 @@ cdef class Transition():
 
         """
         return self._next_observation
+
+    @property
+    def next_action(self):
+        """ Returns observation at `t+1`.
+
+        Returns:
+            numpy.ndarray or torch.Tensor: observation at `t+1`.
+
+        """
+        return self._next_action
 
     @property
     def terminal(self):
@@ -1212,6 +1235,7 @@ cdef class TransitionMiniBatch():
     cdef np.ndarray _rewards
     cdef np.ndarray _rtgs
     cdef np.ndarray _next_observations
+    cdef np.ndarray _next_actions
     cdef np.ndarray _terminals
     cdef np.ndarray _n_steps
 
@@ -1251,6 +1275,9 @@ cdef class TransitionMiniBatch():
         self._next_observations = np.empty(
             (size,) + observation_shape, dtype=observation_dtype
         )
+        self._next_actions = np.empty(
+            (size,) + action_shape, dtype=action_dtype
+        )
         self._terminals = np.empty((size, 1), dtype=np.float32)
         self._n_steps = np.empty((size, 1), dtype=np.float32)
 
@@ -1266,6 +1293,7 @@ cdef class TransitionMiniBatch():
         cdef FLOAT_t* rewards_ptr = <FLOAT_t*> self._rewards.data
         cdef FLOAT_t* rtgs_ptr = <FLOAT_t*> self._rtgs.data
         cdef void* next_observations_ptr = self._next_observations.data
+        cdef void* next_actions_ptr = self._next_actions.data
         cdef FLOAT_t* terminals_ptr = <FLOAT_t*> self._terminals.data
         cdef FLOAT_t* n_steps_ptr = <FLOAT_t*> self._n_steps.data
 
@@ -1289,6 +1317,7 @@ cdef class TransitionMiniBatch():
                 rewards_ptr=rewards_ptr,
                 rtgs_ptr=rtgs_ptr,
                 next_observations_ptr=next_observations_ptr,
+                next_actions_ptr=next_actions_ptr,
                 terminals_ptr=terminals_ptr,
                 n_steps_ptr=n_steps_ptr,
                 n_frames=n_frames,
@@ -1351,14 +1380,21 @@ cdef class TransitionMiniBatch():
         TransitionPtr ptr,
         void* actions_ptr,
         bool is_discrete,
+        bool is_next,
     ) nogil:
         cdef int offset
         cdef void* src_action_ptr
         if is_discrete:
-            ((<INT_t*> actions_ptr) + batch_index)[0] = ptr.get().action_i
+            if is_next:
+                ((<INT_t*> actions_ptr) + batch_index)[0] = ptr.get().action_i
+            else:
+                ((<INT_t*> actions_ptr) + batch_index)[0] = ptr.get().next_action_i
         else:
             offset = batch_index * ptr.get().action_size
-            src_action_ptr = ptr.get().action_f
+            if is_next:
+                src_action_ptr = ptr.get().action_f
+            else:
+                src_action_ptr = ptr.get().next_action_f
             memcpy(
                 (<FLOAT_t*> actions_ptr) + offset,
                 <FLOAT_t*> src_action_ptr,
@@ -1400,6 +1436,7 @@ cdef class TransitionMiniBatch():
             ptr=ptr,
             actions_ptr=actions_ptr,
             is_discrete=is_discrete,
+            is_next=False,
         )
 
         # compute N-step return
@@ -1421,6 +1458,13 @@ cdef class TransitionMiniBatch():
             n_frames=n_frames,
             is_image=is_image,
             is_next=True
+        )
+        self._assign_action(
+            batch_index=batch_index,
+            ptr=ptr,
+            actions_ptr=next_actions_ptr,
+            is_discrete=is_discrete,
+            is_next=True,
         )
         terminals_ptr[batch_index] = next_ptr.get().terminal
         n_steps_ptr[batch_index] = i + 1
@@ -1474,6 +1518,16 @@ cdef class TransitionMiniBatch():
 
         """
         return self._next_observations
+
+    @property
+    def next_actions(self):
+        """ Returns mini-batch of observations at `t+n`.
+
+        Returns:
+            numpy.ndarray or torch.Tensor: observations at `t+n`.
+
+        """
+        return self._next_actions
 
     @property
     def terminals(self):
