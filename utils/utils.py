@@ -367,5 +367,12 @@ class Struct:
     def __init__(self, **entries):
         self.__dict__.update(entries)
 
+def orthogonal_initWeights(
+    net: nn.Module,
+    ) -> None:
+    for e in net.parameters():
+        if len(e.size()) >= 2:
+            nn.init.orthogonal_(e)
+
 if __name__ == '__main__':
     test_new_buffer()

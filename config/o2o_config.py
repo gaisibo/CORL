@@ -40,6 +40,21 @@ def get_o2o_dict(algo, quality):
         o2o_dict["weight_temp"] = 3.0
         o2o_dict["max_weight"] = 100.0
         o2o_dict["reward_scaler"] = reward_scaler
+    elif algo in ['ppo', 'bppo']:
+        reward_scaler = d3rlpy.preprocessing.ReturnBasedRewardScaler(multiplier=1000.0)
+        o2o_dict["actor_learning_rate"] = 3e-4
+        o2o_dict["critic_learning_rate"] = 3e-4
+        o2o_dict["weight_temp"] = 3.0
+        o2o_dict["max_weight"] = 100.0
+        o2o_dict["reward_scaler"] = reward_scaler
+
+        o2o_dict['const_eps'] = 1e-10
+        o2o_dict['is_clip_decay'] = True
+        o2o_dict['is_lr_decay'] = True
+        o2o_dict['update_critic'] = False
+        o2o_dict['update_critic_interval'] = 2
+        o2o_dict['update_old_policy'] = True
+        o2o_dict['update_old_policy_interval'] = 10
     else:
         raise NotImplementedError
     return o2o_dict

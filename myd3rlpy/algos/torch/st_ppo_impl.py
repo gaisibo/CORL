@@ -16,8 +16,10 @@ from d3rlpy.preprocessing import ActionScaler, RewardScaler, Scaler
 from myd3rlpy.algos.torch.st_impl import STImpl
 from myd3rlpy.models.builders import create_parallel_continuous_q_function
 from utils.networks import ParallelizedEnsembleFlattenMLP
+from utils.utils import orthogonal_initWeights
 
 
+# ALT: Only for bppo, can not learn only!
 class STPPOImpl(STImpl, TorchImplBase):
 
     _policy: Optional[SquashedNormalPolicy]
@@ -97,6 +99,7 @@ class STPPOImpl(STImpl, TorchImplBase):
             self._action_size,
             self._actor_encoder_factory,
         )
+        orthogonal_initWeights(self._policy)
         self._old_policy = copy.deepcopy(self._policy)
 
     def compute_target(self, batch: TorchMiniBatch):
@@ -110,21 +113,6 @@ class STPPOImpl(STImpl, TorchImplBase):
         assert self._targ_q_func is not None
         critic_loss = F.mse_loss(self._q_func(batch.observations, batch.actions), q_tpn)
         return critic_loss
-    #def compute_critic_loss(self, batch, q_tpn, clone_critic: bool=False, online: bool=False, replay=False, first_time=False):
-    #    value = self._q_func(batch.observations, batch.actions)
-    #    y = batch.rewards + self._gamma * q_tpn * (1 - batch.terminals)
-    #    loss = F.mse_loss(value, y, reduction="mean")
-    #    return loss
-
-    #def compute_target(self, batch: TorchMiniBatch) -> torch.Tensor:
-    #    with torch.no_grad():
-    #        # v_t = []
-    #        # for value_func in self._value_func:
-    #        #     v_t.append(value_func(batch.next_observations))
-    #        # v_t, _ = torch.min(torch.stack(v_t, dim=0), dim=0)
-    #        action, log_prob = self._policy.sample_with_log_prob(batch.next_observations)
-    #        q_t = torch.mean(self._targ_q_func(batch.next_observations, action), dim=0)
-    #        return q_t
 
     def weighted_advantage(self, advantage: torch.Tensor) -> torch.Tensor:
         if self._omega == 0.5:
@@ -179,18 +167,6 @@ class STPPOImpl(STImpl, TorchImplBase):
         critic_loss = F.mse_loss(self._q_func(batch.observations, batch.actions), q_tpn)
         value_loss = F.mse_loss(self._value_func(batch.observations), batch.rtgs)
         return critic_loss, value_loss
-    #def compute_critic_loss(self, batch, q_tpn, clone_critic: bool=False, online: bool=False, replay=False, first_time=False):
-    #    value = self._q_func(batch.observations, batch.actions)
-    #    y = batch.rewards + self._gamma * q_tpn * (1 - batch.terminals)
-    #    loss = F.mse_loss(value, y, reduction="mean")
-    #    return loss
 
-    #def compute_target(self, batch: TorchMiniBatch) -> torch.Tensor:
-    #    with torch.no_grad():
-    #        # v_t = []
-    #        # for value_func in self._value_func:
-    #        #     v_t.append(value_func(batch.next_observations))
-    #        # v_t, _ = torch.min(torch.stack(v_t, dim=0), dim=0)
-    #        action, log_prob = self._policy.sample_with_log_prob(batch.next_observations)
-    #        q_t = torch.mean(self._targ_q_func(batch.next_observations, action), dim=0)
-    #        return q_t
+    def set_old_policy(self) -> None:
+        self._old_policy.load_state_dict(self._policy.state_dict())
