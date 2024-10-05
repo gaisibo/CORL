@@ -130,6 +130,12 @@ def main(args, use_gpu):
                 old_buffer = None
             else:
                 raise NotImplementedError
+            if args.algorithms[1] == 'ppo':
+                n_steps = 1000
+                n_steps_per_epoch = 1
+            else:
+                n_steps = args.second_n_steps
+                n_steps_per_epoch = args.n_steps_per_epoch
             o2o1.fit_online(
                 env,
                 eval_env,
@@ -173,12 +179,19 @@ def main(args, use_gpu):
                 old_iterator, _, n_epochs = o2o1.make_iterator(old_dataset, None, args.first_n_steps, args.n_steps_per_epoch, None, True)
             else:
                 old_iterator = None
-            if args.algorithms[1] == 'iql':
+            fitter_dict = dict()
+            if args.algorithms[0] == 'iql':
                 scheduler = CosineAnnealingLR(o2o0._impl._actor_optim, 1000000)
                 def callback(algo, epoch, total_step):
                     scheduler.step()
-            else:
-                callback = None
+                fitter_dict['callback'] = callback
+            if args.algorithms[0] == 'ppo':
+                value_iterator, _, n_value_epochs = o2o0.make_iterator(dataset0, None, args.first_n_value_steps, args.n_value_steps_per_epoch, None, True)
+                bc_iterator, _, n_bc_epochs = o2o0.make_iterator(dataset0, None, args.first_n_bc_steps, args.n_bc_steps_per_epoch, None, True)
+                fitter_dict['value_iterator'] = value_iterator
+                fitter_dict['bc_iterator'] = bc_iterator
+                fitter_dict['n_value_epochs'] = n_value_epochs
+                fitter_dict['n_bc_epochs'] = n_bc_epochs
             save_epochs = []
             for save_step in args.save_steps:
                 save_epochs.append(save_step // args.n_steps_per_epoch)
@@ -195,6 +208,7 @@ def main(args, use_gpu):
                 save_path=o2o1_path,
                 callback=callback,
                 test = args.test,
+                **fitter_dict,
             )
         else:
             raise NotImplementedError
@@ -226,10 +240,6 @@ if __name__ == '__main__':
 
 
     parser.add_argument("--n_buffer", default=1000000, type=int)
-    parser.add_argument("--first_n_steps", default=2000000, type=int)
-    parser.add_argument("--second_n_steps", default=2000000, type=int)
-    parser.add_argument("--n_steps_per_epoch", default=1000, type=int)
-    parser.add_argument("--online_maxlen", default=1000000, type=int)
 
     parser.add_argument("--save_interval", default=1, type=int)
     parser.add_argument("--n_action_samples", default=10, type=int)
@@ -271,8 +281,6 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    args.save_steps = [1000000, 300000, 100000]
-
     #if args.dataset in ['HalfCheetah-v2', 'Hopper-v2', 'Walker2d-v2', 'Ant-v2']:
     #    args.dataset_kind = 'd4rl'
     #elif 'antmaze' in args.dataset:
@@ -293,6 +301,18 @@ if __name__ == '__main__':
         assert len(args.qualities) == 2
         for quality in args.qualities:
             assert quality in ['medium', 'expert']
+
+    if args.algorithms[1] not in ['ppo', 'bppo']:
+        args.second_n_steps = 1000000
+        args.n_steps_per_epoch = 1000
+        args.save_steps = [1000000, 300000, 100000]
+    else:
+        args.second_n_steps = 100
+        args.n_steps_per_epoch = 10
+        args.second_n_value_steps = 2000000
+        args.second_n_bc_steps = 500000
+        args.second_n_value_steps_per_epoch = 1000
+        args.second_n_value_steps_per_epoch = 1000
 
     args.model_path = 'd3rlpy' + '_' + args.dataset
     if not os.path.exists(args.model_path):
