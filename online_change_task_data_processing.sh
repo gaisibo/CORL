@@ -51,39 +51,34 @@ for algorithm1 in "${algorithms_all[@]}"; do
                                 copy_buffer_str=$(echo ${copy_buffer} | sed "s/\_/\\\_/g")
                                 buffer_mix_type_str=$(echo ${buffer_mix_type} | sed "s/\_/\\\_/g")
                                 for copy_optim in "" "_copy_optim"; do
-                                    #for copy_optim in '' '_copy_optim'; do
-                                    #    if [[ $copy_optim == '_copy_optim' ]]; then
-                                    #        copy_optim_str='copy\_optim'
-                                    #        copy_optim_path='copy_optim'
-                                    #    else
-                                    #        copy_optim_str='no\_copy\_optim'
-                                    #        copy_optim_path='no_copy_optim'
-                                    #    fi
-                                    TMPFILE1=$(mktemp) || exit 1
-                                    echo "${algorithms_offline[@]}" | grep -wq ${algorithm1} && log_name=logs/online_change_task_${dataset}_${quality1}_${algorithm1}_${first}.latest.log || log_name=logs/online_change_task_${dataset}_${algorithm1}_${first}_${buffer}.latest.log
-                                    if [[ -f $log_name ]]; then
-                                        #echo $log_name
-                                        awk -f online_change_task_data_processing.awk $log_name | sed "s/=//g" | sed "s/\}//g" > TMPFILE1
-                                    else
-                                        #echo $log_name not exist
-                                        continue
-                                    fi
-                                    TMPFILE2=$(mktemp) || exit 1
-                                    #log_name=logs/online_change_task_${dataset}_${qualities}_${algorithms}_${first}_${second}_${buffer}${copy_optim}_${copy_buffer}.latest.log
-                                    log_name=logs/online_change_task_${dataset}_${qualities}_${algorithms}_${first}_${second}_${buffer}${copy_optim}_${copy_buffer}${buffer_mix_type}.latest.log
-                                    if [[ -f $log_name ]]; then
-                                        #echo $log_name
-                                        awk -f online_change_task_data_processing.awk $log_name | sed "s/=//g" | sed "s/\}//g" > TMPFILE2
-                                    else
-                                        echo $log_name not exist
-                                        continue
-                                    fi
-                                    pic_name=pics/online_change_task_${dataset}_${qualities}_${algorithms}_${first}_${second}_${buffer}${copy_optim}_${copy_buffer}${buffer_mix_type}.png
-                                    txt_name=pics/online_change_task_${dataset}_${qualities}_${algorithms}_${first}_${second}_${buffer}${copy_optim}_${copy_buffer}${buffer_mix_type}.txt
-                                    #cat TMPFILE1 TMPFILE2 | gnuplot -e "set terminal png; set title '${dataset}\_${qualities}\_${algorithms}\_${first}\_${second}\_${buffer}\_${copy_optim_str}\_${copy_buffer_str}'; plot '-' using 1 with lines;" > $pic_name
-                                    algorithms_str=$(echo ${algorithms} | sed "s/\_/\\\_/g")
-                                    copy_optim_str=$(echo ${copy_optim} | sed "s/\_/\\\_/g")
-                                    cat TMPFILE1 TMPFILE2 | gnuplot -e "set terminal png; set title '${qualities}\_${algorithms_str}\_${buffer}${copy_optim_str}\_${copy_buffer_str}${buffer_mix_type_str}'; plot '-' using 1 with lines;" > $pic_name
+                                    for explore in "" "_explore"; do
+                                        TMPFILE1=$(mktemp) || exit 1
+                                        echo "${algorithms_offline[@]}" | grep -wq ${algorithm1} && log_name=logs/online_change_task_${dataset}_${quality1}_${algorithm1}_${first}.latest.log || log_name=logs/online_change_task_${dataset}_${algorithm1}_${first}_${buffer}.latest.log
+                                        if [[ -f $log_name ]]; then
+                                            #echo $log_name
+                                            awk -f online_change_task_data_processing.awk $log_name | sed "s/=//g" | sed "s/\}//g" > TMPFILE1
+                                        else
+                                            #echo $log_name not exist
+                                            continue
+                                        fi
+                                        TMPFILE2=$(mktemp) || exit 1
+                                        #log_name=logs/online_change_task_${dataset}_${qualities}_${algorithms}_${first}_${second}_${buffer}${copy_optim}_${copy_buffer}.latest.log
+                                        log_name=logs/online_change_task_${dataset}_${qualities}_${algorithms}_${first}_${second}_${buffer}${explore}${copy_optim}_${copy_buffer}${buffer_mix_type}.latest.log
+                                        if [[ -f $log_name ]]; then
+                                            #echo $log_name
+                                            awk -f online_change_task_data_processing.awk $log_name | sed "s/=//g" | sed "s/\}//g" > TMPFILE2
+                                        else
+                                            echo $log_name not exist
+                                            continue
+                                        fi
+                                        pic_name=pics/online_change_task_${dataset}_${qualities}_${algorithms}_${first}_${second}_${buffer}${explore}${copy_optim}_${copy_buffer}${buffer_mix_type}.png
+                                        txt_name=pics/online_change_task_${dataset}_${qualities}_${algorithms}_${first}_${second}_${buffer}${explore}${copy_optim}_${copy_buffer}${buffer_mix_type}.txt
+                                        #cat TMPFILE1 TMPFILE2 | gnuplot -e "set terminal png; set title '${dataset}\_${qualities}\_${algorithms}\_${first}\_${second}\_${buffer}\_${copy_optim_str}\_${copy_buffer_str}'; plot '-' using 1 with lines;" > $pic_name
+                                        algorithms_str=$(echo ${algorithms} | sed "s/\_/\\\_/g")
+                                        copy_optim_str=$(echo ${copy_optim} | sed "s/\_/\\\_/g")
+                                        explore_str=$(echo ${explore} | sed "s/\_/\\\_/g")
+                                        cat TMPFILE1 TMPFILE2 | gnuplot -e "set terminal png; set title '${qualities}\_${algorithms_str}\_${buffer}${explore_str}${copy_optim_str}\_${copy_buffer_str}${buffer_mix_type_str}'; plot '-' using 1 with lines;" > $pic_name
+                                    done
                                 done
                             done
                         done

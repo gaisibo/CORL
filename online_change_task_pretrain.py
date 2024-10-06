@@ -102,18 +102,25 @@ def main(args, use_gpu):
             scorers_list = [scorers_env]
             o2o0.build_with_env(online_offline_wrapper(env))
             iterator, _, n_epochs = o2o0.make_iterator(dataset0, None, args.first_n_steps, args.n_steps_per_epoch, None, True)
+            fitter_dict = dict()
             if args.algorithms[0] == 'iql':
                 scheduler = CosineAnnealingLR(o2o0._impl._actor_optim, 1000000)
                 def callback(algo, epoch, total_step):
                     scheduler.step()
-            else:
-                callback = None
+                fitter_dict['callback'] = callback
+            if args.algorithms[0] in ['ppo', 'bppo']:
+                value_iterator, _, n_value_epochs = o2o0.make_iterator(dataset0, None, args.first_n_value_steps, args.n_value_steps_per_epoch, None, True)
+                bc_iterator, _, n_bc_epochs = o2o0.make_iterator(dataset0, None, args.first_n_bc_steps, args.n_bc_steps_per_epoch, None, True)
+                fitter_dict['value_iterator'] = value_iterator
+                fitter_dict['bc_iterator'] = bc_iterator
+                fitter_dict['n_value_epochs'] = n_value_epochs
+                fitter_dict['n_bc_epochs'] = n_bc_epochs
             save_epochs = []
             for save_step in args.save_steps:
                 save_epochs.append(save_step // args.n_steps_per_epoch)
             o2o0.fitter(
-                dataset0,
-                iterator,
+                dataset=dataset0,
+                iterator=iterator,
                 n_epochs=n_epochs,
                 n_steps_per_epoch=args.n_steps_per_epoch,
                 experiment_name=experiment_name + "_0",
@@ -121,8 +128,8 @@ def main(args, use_gpu):
                 eval_episodes_list = [None],
                 save_epochs=save_epochs,
                 save_path=o2o0_path,
-                callback=callback,
                 test = args.test,
+                **fitter_dict,
             )
             torch.save({'buffer': None, 'algo': o2o0}, o2o0_path)
         else:
@@ -155,8 +162,9 @@ if __name__ == '__main__':
 
 
     parser.add_argument("--n_buffer", default=1000000, type=int)
-    parser.add_argument("--first_n_steps", default=2000000, type=int)
-    parser.add_argument("--n_steps_per_epoch", default=1000, type=int)
+    # For ppo
+    parser.add_argument("--n_value_steps_per_epoch", default=1000, type=int)
+    parser.add_argument("--n_bc_steps_per_epoch", default=1000, type=int)
     parser.add_argument("--online_maxlen", default=1000000, type=int)
 
     parser.add_argument("--save_interval", default=1, type=int)
@@ -196,15 +204,17 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    #if args.dataset in ['HalfCheetah-v2', 'Hopper-v2', 'Walker2d-v2', 'Ant-v2']:
-    #    args.dataset_kind = 'd4rl'
-    #elif 'antmaze' in args.dataset:
-    #    args.dataset_kind = 'antmaze'
-    #    # args.maze = args.dataset.split('-')[1]
-    #    # assert args.maze in ['umaze', 'medium', 'large']
-    #    # args.part_times_num = 0 if len(args.dataset_nums) == 2 else 1
-    #else:
-    #    raise NotImplementedError
+    if args.algorithms not in ['ppo', 'bppo']:
+        args.first_n_steps = 1000000
+        args.n_steps_per_epoch = 1000
+    else:
+        args.first_n_steps = 100
+        args.n_steps_per_epoch = 10
+        args.first_n_value_steps = 2000000
+        args.first_n_bc_steps = 500000
+        args.first_n_value_steps_per_epoch = 1000
+        args.first_n_value_steps_per_epoch = 1000
+
     args.algorithms_str = args.algorithms
     args.algorithms = args.algorithms.split('-')
     assert len(args.algorithms) == 1
