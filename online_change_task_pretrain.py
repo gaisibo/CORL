@@ -31,8 +31,8 @@ replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'termi
 def main(args, use_gpu):
     print("Start")
     np.set_printoptions(precision=1, suppress=True)
-    dataset0, env = get_d4rl(args.dataset + '-' + args.qualities[0] + '-v0')
-    _, eval_env = get_d4rl(args.dataset + '-' + args.qualities[0] + '-v0')
+    dataset0, env = get_d4rl(args.dataset + '-' + args.qualities[0].replace("_", "-") + '-v0')
+    _, eval_env = get_d4rl(args.dataset + '-' + args.qualities[0].replace("_", "-") + '-v0')
 
     # prepare algorithm
     # st_dict, online_st_dict, step_dict = get_st_dict(args, args.dataset_kind, args.algo)
@@ -214,8 +214,7 @@ if __name__ == '__main__':
         args.qualities_str = args.qualities
         args.qualities = args.qualities.split('-')
         assert len(args.qualities) == 1
-        for quality in args.qualities:
-            assert quality in ['medium', 'expert']
+        assert args.qualities[0] in ['medium', 'expert', 'medium_replay', 'medium_expert', 'random']
 
     args.save_steps = [300000, 100000]
 

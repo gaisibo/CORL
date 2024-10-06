@@ -37,7 +37,7 @@ class STIQLImpl(STImpl, IQLImpl):
             n_ensembles=self._n_critics,
             reduction='min',
         )
-        self._value_func = ParallelizedEnsembleFlattenMLP(self._n_ensemble, [256, 256], self._observation_shape[0], 1, device=self.device)
+        self._value_func = ParallelizedEnsembleFlattenMLP(self._n_critics, [256, 256], self._observation_shape[0], 1, device=self.device)
         self._critic_networks = [self._q_func, self._value_func]
 
     def _build_critic_optim(self) -> None:

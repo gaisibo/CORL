@@ -94,10 +94,12 @@ while true; do
                 qualities="expert-medium";
             elif [[ $2 == "m" || $2 == "mm" ]]; then
                 qualities="medium-medium";
-            elif [[ $2 == "ee" ]]; then
-                qualities="expert-expert";
-            elif [[ $2 == "me" ]]; then
-                qualities="medium-expert";
+            elif [[ $2 == "r" || $2 == "rr" ]]; then
+                qualities="random-random";
+            elif [[ $2 == "l" || $2 == "ll" ]]; then
+                qualities="medium_replay-medium_replay";
+            elif [[ $2 == "h" || $2 == "hh" ]]; then
+                qualities="medium_expert-medium_expert";
             fi
             shift 2
             ;;

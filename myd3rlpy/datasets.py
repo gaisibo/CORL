@@ -7,7 +7,7 @@ from urllib import request
 import gym
 import numpy as np
 
-from d3rlpy.dataset import Episode, MDPDataset, Transition
+from myd3rlpy.dataset import Episode, MDPDataset, Transition
 from d3rlpy.envs import ChannelFirst
 
 
@@ -36,53 +36,12 @@ def get_d4rl(
         env = gym.make(env_name)
         dataset = env.get_dataset(h5path=h5path)
 
-        observations = []
-        actions = []
-        rewards = []
-        terminals = []
-        episode_terminals = []
-        episode_step = 0
-        cursor = 0
-        dataset_size = dataset["observations"].shape[0]
-        while cursor < dataset_size:
-            # collect data for step=t
-            observation = dataset["observations"][cursor]
-            action = dataset["actions"][cursor]
-            if episode_step == 0:
-                reward = 0.0
-            else:
-                reward = dataset["rewards"][cursor - 1]
-
-            observations.append(observation)
-            actions.append(action)
-            rewards.append(reward)
-            terminals.append(0.0)
-
-            # skip adding the last step when timeout
-            if dataset["timeouts"][cursor]:
-                episode_terminals.append(1.0)
-                episode_step = 0
-                cursor += 1
-                continue
-
-            episode_terminals.append(0.0)
-            episode_step += 1
-
-            if dataset["terminals"][cursor]:
-                # collect data for step=t+1
-                dummy_observation = observation.copy()
-                dummy_action = action.copy()
-                next_reward = dataset["rewards"][cursor]
-
-                # the last observation is rarely used
-                observations.append(dummy_observation)
-                actions.append(dummy_action)
-                rewards.append(next_reward)
-                terminals.append(1.0)
-                episode_terminals.append(1.0)
-                episode_step = 0
-
-            cursor += 1
+        observations = dataset['observations']
+        actions = dataset['actions']
+        rewards = dataset['rewards']
+        terminals = dataset['terminals']
+        timeouts = dataset['timeouts']
+        episode_terminals = np.logical_or(terminals, timeouts)
 
         mdp_dataset = MDPDataset(
             observations=np.array(observations, dtype=np.float32),
@@ -90,8 +49,6 @@ def get_d4rl(
             rewards=np.array(rewards, dtype=np.float32),
             terminals=np.array(terminals, dtype=np.float32),
             episode_terminals=np.array(episode_terminals, dtype=np.float32),
-            create_mask=create_mask,
-            mask_size=mask_size,
         )
 
         return mdp_dataset, env
