@@ -21,9 +21,6 @@ from myd3rlpy.dataset import MDPDataset
 from d3rlpy.dataset import MDPDataset as OldMDPDataset
 
 
-online_algos = ['td3', 'sac']
-offline_algos = ['iql', 'cql']
-
 def read_dict(state_dict, prename):
     for key, value in state_dict.items():
         if not isinstance(value, dict):
@@ -130,12 +127,12 @@ def main(args, use_gpu):
                 old_buffer = None
             else:
                 raise NotImplementedError
-            if args.algorithms[1] == 'ppo':
-                n_steps = 1000
-                n_steps_per_epoch = 1
-            else:
-                n_steps = args.second_n_steps
-                n_steps_per_epoch = args.n_steps_per_epoch
+            #if args.algorithms[1] == 'ppo':
+            #    n_steps = 1000
+            #    n_steps_per_epoch = 1
+            #else:
+            n_steps = args.second_n_steps
+            n_steps_per_epoch = args.n_steps_per_epoch
             o2o1.fit_online(
                 env,
                 eval_env,
@@ -151,65 +148,65 @@ def main(args, use_gpu):
                 start_epoch = args.first_n_steps // args.n_steps_per_epoch + 1,
                 experiment_name=experiment_name + "_1",
             )
-        elif args.algorithms[1] in offline_algos:
-            if args.algorithms[0] in online_algos:
-                loaded_mdp = loaded_data['buffer']
-                if isinstance(loaded_mdp, MDPDataset):
-                    loaded_mdp = OldMDPDataset(loaded_mdp.observations, loaded_mdp.actions, loaded_mdp.rewards, loaded_mdp.terminals, loaded_mdp.episode_terminals)
-            elif args.algorithms[0] in offline_algos:
-                loaded_mdp = dataset0
-            else:
-                raise NotImplementedError
-            if args.copy_buffer == 'none':
-                old_dataset = None
-            elif args.copy_buffer == 'copy':
-                dataset1 = loaded_mdp
-                if isinstance(dataset1, OldMDPDataset):
-                    dataset1 = MDPDataset(dataset1.observations, dataset1.actions, dataset1.rewards, dataset1.terminals, dataset1.episode_terminals)
-                old_dataset = None
-            elif args.copy_buffer in ['mix_all', 'mix_same']:
-                old_dataset = loaded_mdp
-            else:
-                raise NotImplementedError
-            scorers_env = {'evaluation': evaluate_on_environment(online_offline_wrapper(env))}
-            scorers_list = [scorers_env]
-            o2o1.build_with_env(online_offline_wrapper(env))
-            iterator, _, n_epochs = o2o1.make_iterator(dataset1, None, args.first_n_steps, args.n_steps_per_epoch, None, True)
-            if old_dataset is not None:
-                old_iterator, _, n_epochs = o2o1.make_iterator(old_dataset, None, args.first_n_steps, args.n_steps_per_epoch, None, True)
-            else:
-                old_iterator = None
-            fitter_dict = dict()
-            if args.algorithms[0] == 'iql':
-                scheduler = CosineAnnealingLR(o2o0._impl._actor_optim, 1000000)
-                def callback(algo, epoch, total_step):
-                    scheduler.step()
-                fitter_dict['callback'] = callback
-            if args.algorithms[0] == 'ppo':
-                value_iterator, _, n_value_epochs = o2o0.make_iterator(dataset0, None, args.first_n_value_steps, args.n_value_steps_per_epoch, None, True)
-                bc_iterator, _, n_bc_epochs = o2o0.make_iterator(dataset0, None, args.first_n_bc_steps, args.n_bc_steps_per_epoch, None, True)
-                fitter_dict['value_iterator'] = value_iterator
-                fitter_dict['bc_iterator'] = bc_iterator
-                fitter_dict['n_value_epochs'] = n_value_epochs
-                fitter_dict['n_bc_epochs'] = n_bc_epochs
-            save_epochs = []
-            for save_step in args.save_steps:
-                save_epochs.append(save_step // args.n_steps_per_epoch)
-            o2o1.fitter(
-                dataset1,
-                iterator,
-                old_iterator = old_iterator,
-                buffer_mix_type = args.buffer_mix_type,
-                n_epochs=n_epochs,
-                experiment_name=experiment_name + "_1",
-                scorers_list = scorers_list,
-                eval_episodes_list = [None],
-                save_epochs=save_epochs,
-                save_path=o2o1_path,
-                callback=callback,
-                test = args.test,
-                **fitter_dict,
-            )
+        #elif args.algorithms[1] in offline_algos:
+        #    if args.algorithms[0] in online_algos:
+        #        loaded_mdp = loaded_data['buffer']
+        #        if isinstance(loaded_mdp, MDPDataset):
+        #            loaded_mdp = OldMDPDataset(loaded_mdp.observations, loaded_mdp.actions, loaded_mdp.rewards, loaded_mdp.terminals, loaded_mdp.episode_terminals)
+        #    elif args.algorithms[0] in offline_algos:
+        #        loaded_mdp = dataset0
+        #    else:
+        #        raise NotImplementedError
+        #    if args.copy_buffer == 'none':
+        #        old_dataset = None
+        #    elif args.copy_buffer == 'copy':
+        #        dataset1 = loaded_mdp
+        #        if isinstance(dataset1, OldMDPDataset):
+        #            dataset1 = MDPDataset(dataset1.observations, dataset1.actions, dataset1.rewards, dataset1.terminals, dataset1.episode_terminals)
+        #        old_dataset = None
+        #    elif args.copy_buffer in ['mix_all', 'mix_same']:
+        #        old_dataset = loaded_mdp
+        #    else:
+        #        raise NotImplementedError
+        #    scorers_env = {'evaluation': evaluate_on_environment(online_offline_wrapper(env))}
+        #    scorers_list = [scorers_env]
+        #    o2o1.build_with_env(online_offline_wrapper(env))
+        #    iterator, _, n_epochs = o2o1.make_iterator(dataset1, None, args.first_n_steps, args.n_steps_per_epoch, None, True)
+        #    if old_dataset is not None:
+        #        old_iterator, _, n_epochs = o2o1.make_iterator(old_dataset, None, args.first_n_steps, args.n_steps_per_epoch, None, True)
+        #    else:
+        #        old_iterator = None
+        #    fitter_dict = dict()
+        #    if args.algorithms[0] == 'iql':
+        #        scheduler = CosineAnnealingLR(o2o0._impl._actor_optim, 1000000)
+        #        def callback(algo, epoch, total_step):
+        #            scheduler.step()
+        #        fitter_dict['callback'] = callback
+        #    if args.algorithms[0] == 'ppo':
+        #        value_iterator, _, n_value_epochs = o2o0.make_iterator(dataset0, None, args.first_n_value_steps, args.n_value_steps_per_epoch, None, True)
+        #        bc_iterator, _, n_bc_epochs = o2o0.make_iterator(dataset0, None, args.first_n_bc_steps, args.n_bc_steps_per_epoch, None, True)
+        #        fitter_dict['value_iterator'] = value_iterator
+        #        fitter_dict['bc_iterator'] = bc_iterator
+        #        fitter_dict['n_value_epochs'] = n_value_epochs
+        #        fitter_dict['n_bc_epochs'] = n_bc_epochs
+        #    save_epochs = []
+        #    for save_step in args.save_steps:
+        #        save_epochs.append(save_step // args.n_steps_per_epoch)
+        #    o2o1.fitter(
+        #        dataset1,
+        #        iterator,
+        #        old_iterator = old_iterator,
+        #        buffer_mix_type = args.buffer_mix_type,
+        #        n_epochs=n_epochs,
+        #        experiment_name=experiment_name + "_1",
+        #        scorers_list = scorers_list,
+        #        eval_episodes_list = [None],
+        #        save_epochs=save_epochs,
+        #        save_path=o2o1_path,
+        #        callback=callback,
+        #        test = args.test,
+        #        **fitter_dict,
+        #    )
         else:
             raise NotImplementedError
     print('finish')
@@ -302,17 +299,17 @@ if __name__ == '__main__':
         for quality in args.qualities:
             assert quality in ['medium', 'expert']
 
-    if args.algorithms[1] not in ['ppo', 'bppo']:
-        args.second_n_steps = 1000000
-        args.n_steps_per_epoch = 1000
-        args.save_steps = [1000000, 300000, 100000]
-    else:
-        args.second_n_steps = 100
-        args.n_steps_per_epoch = 10
-        args.second_n_value_steps = 2000000
-        args.second_n_bc_steps = 500000
-        args.second_n_value_steps_per_epoch = 1000
-        args.second_n_value_steps_per_epoch = 1000
+    #if args.algorithms[1] not in ['ppo', 'bppo']:
+    #    args.second_n_steps = 1000000
+    #    args.n_steps_per_epoch = 1000
+    #    args.save_steps = [1000000, 300000, 100000]
+    #else:
+    args.second_n_steps = 100
+    args.n_steps_per_epoch = 10
+    args.second_n_value_steps = 2000000
+    args.second_n_bc_steps = 500000
+    args.second_n_value_steps_per_epoch = 1000
+    args.second_n_value_steps_per_epoch = 1000
 
     args.model_path = 'd3rlpy' + '_' + args.dataset
     if not os.path.exists(args.model_path):

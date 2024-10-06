@@ -1,7 +1,7 @@
 import d3rlpy
 
 
-online_algos = ['td3', 'sac']
+online_algos = ['td3', 'sac', 'iql']
 offline_algos = ['iql', 'cql', 'cal', 'td3_plus_bc']
 def get_o2o_dict(algo, quality):
     o2o_dict = dict()
