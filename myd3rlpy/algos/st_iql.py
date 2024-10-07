@@ -498,3 +498,8 @@ class STIQL(STBase, IQL):
             indices_old = indices_old.cpu().numpy()
         replay_dataset = self._generate_new_replay_dataset(new_replay_dataset, old_replay_dataset, indices_new.cpu().numpy(), indices_old)
         return replay_dataset
+
+    def generate_new_data(
+        self, transitions: List[Transition], real_observation_size, real_action_size, batch_size = 64,
+    ) -> Optional[List[Transition]]:
+        return None

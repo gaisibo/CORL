@@ -114,6 +114,7 @@ class STTD3(STBase, TD3):
         log_prob_topk = 10,
         experience_type = 'random_transition',
         sample_type = 'retrain',
+        policy_noise = 0.2,
 
         critic_update_step = 0,
 
@@ -144,6 +145,7 @@ class STTD3(STBase, TD3):
         self._log_prob_topk = log_prob_topk
         self._experience_type = experience_type
         self._sample_type = sample_type
+        self._policy_noise = policy_noise
 
         self._conservative_threshold = conservative_threshold
 
@@ -195,6 +197,7 @@ class STTD3(STBase, TD3):
             _impl_dict['alpha'] = self._alpha
         elif self._impl_name == 'td3':
             from myd3rlpy.algos.torch.st_td3_impl import STTD3Impl as STImpl
+            _impl_dict['policy_noise'] = self._policy_noise
         else:
             print(self._impl_name)
             raise NotImplementedError
@@ -222,3 +225,7 @@ class STTD3(STBase, TD3):
         self, transitions: List[Transition], real_observation_size, real_action_size, batch_size = 64,
     ) -> Optional[List[Transition]]:
         return None
+
+    def sample_action(self, x):
+        assert self._impl is not None, IMPL_NOT_INITIALIZED_ERROR
+        return self._impl._sample_action(x)

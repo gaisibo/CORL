@@ -59,6 +59,7 @@ class O2OTD3(O2OBase, STTD3):
             action_scaler=self._action_scaler,
             reward_scaler=self._reward_scaler,
             fine_tuned_step = self._fine_tuned_step,
+            policy_noise = self._policy_noise,
         )
         if self._impl_name == 'td3_plus_bc':
             from myd3rlpy.algos.torch.o2o_td3_plus_bc_impl import O2OTD3PlusBCImpl as O2OImpl

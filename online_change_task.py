@@ -34,6 +34,7 @@ replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'termi
 def main(args, use_gpu):
     print("Start")
     np.set_printoptions(precision=1, suppress=True)
+    print(args.dataset + '-' + args.qualities[0].replace("_", "-") + '-v0')
     dataset0, env = get_d4rl(args.dataset + '-' + args.qualities[0].replace("_", "-") + '-v0')
     dataset1, eval_env = get_d4rl(args.dataset + '-' + args.qualities[1].replace("_", "-") + '-v0')
 
@@ -57,7 +58,7 @@ def main(args, use_gpu):
     # For saving and loading
     load_name = args.dataset
     load_name += '_' + str(args.first_n_steps)
-    if args.algorithms[0] in online_algos:
+    if args.algorithms[0] not in offline_algos:
         load_name += '_' + str(args.n_buffer)
     load_name += '_' + args.algorithms[0]
     if args.algorithms[0] in offline_algos:
@@ -88,16 +89,16 @@ def main(args, use_gpu):
             o2o1 = O2OTD3(**o2o1_dict)
         elif args.algorithms[1] == 'sac':
             o2o1 = O2OSAC(**o2o1_dict)
-        elif args.algorithms[1] == 'iql':
+        elif args.algorithms[1] in ['iql', 'iql_online']:
             o2o1 = O2OIQL(**o2o1_dict)
         elif args.algorithms[1] in ['cql', 'cal']:
             o2o1 = O2OCQL(**o2o1_dict)
         else:
             raise NotImplementedError
         o2o1.build_with_env(env)
-        o2o1.copy_from_past(args.algorithms[0], args.algorithms[1], o2o0._impl, args.copy_optim)
+        o2o1.copy_from_past(args.algorithms[0], o2o0._impl, args.copy_optim)
         if args.algorithms[1] in online_algos:
-            if args.algorithms[0] in online_algos:
+            if args.algorithms[0] not in offline_algos:
                 loaded_mdp = loaded_data['buffer']
                 if isinstance(loaded_mdp, MDPDataset):
                     loaded_mdp = OldMDPDataset(dataset0.observations, dataset0.actions, dataset0.rewards, dataset0.terminals, dataset0.episode_terminals)
@@ -133,6 +134,8 @@ def main(args, use_gpu):
             #else:
             n_steps = args.second_n_steps
             n_steps_per_epoch = args.n_steps_per_epoch
+            scorers_env = {'evaluation': evaluate_on_environment(online_offline_wrapper(env))}
+            scorers_list = [scorers_env]
             o2o1.fit_online(
                 env,
                 eval_env,
@@ -147,6 +150,9 @@ def main(args, use_gpu):
                 test = args.test,
                 start_epoch = args.first_n_steps // args.n_steps_per_epoch + 1,
                 experiment_name=experiment_name + "_1",
+
+                scorers_list = scorers_list,
+                eval_episodes_list = [None],
             )
         #elif args.algorithms[1] in offline_algos:
         #    if args.algorithms[0] in online_algos:
@@ -237,6 +243,9 @@ if __name__ == '__main__':
 
 
     parser.add_argument("--n_buffer", default=1000000, type=int)
+    parser.add_argument("--first_n_steps", default=1000000, type=int)
+    parser.add_argument("--second_n_steps", default=1000000, type=int)
+    parser.add_argument("--n_steps_per_epoch", default=1000, type=int)
 
     parser.add_argument("--save_interval", default=1, type=int)
     parser.add_argument("--n_action_samples", default=10, type=int)
@@ -302,14 +311,14 @@ if __name__ == '__main__':
     #if args.algorithms[1] not in ['ppo', 'bppo']:
     #    args.second_n_steps = 1000000
     #    args.n_steps_per_epoch = 1000
-    #    args.save_steps = [1000000, 300000, 100000]
+    args.save_steps = [args.first_n_steps, 300000, 100000]
     #else:
-    args.second_n_steps = 100
-    args.n_steps_per_epoch = 10
-    args.second_n_value_steps = 2000000
-    args.second_n_bc_steps = 500000
-    args.second_n_value_steps_per_epoch = 1000
-    args.second_n_value_steps_per_epoch = 1000
+    #args.second_n_steps = 100
+    #args.n_steps_per_epoch = 10
+    #args.second_n_value_steps = 2000000
+    #args.second_n_bc_steps = 500000
+    #args.second_n_value_steps_per_epoch = 1000
+    #args.second_n_value_steps_per_epoch = 1000
 
     args.model_path = 'd3rlpy' + '_' + args.dataset
     if not os.path.exists(args.model_path):

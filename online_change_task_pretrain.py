@@ -51,7 +51,7 @@ def main(args, use_gpu):
     # For saving and loading
     load_name = args.dataset
     load_name += '_' + str(args.first_n_steps)
-    if args.algorithms[0] in online_algos:
+    if args.algorithms[0] not in offline_algos:
         load_name += '_' + str(args.n_buffer)
     load_name += '_' + args.algorithms[0]
     if args.algorithms[0] in offline_algos:
@@ -67,7 +67,6 @@ def main(args, use_gpu):
             o2o0_path = "save_algos/" + load_name + '.pt'
             #if os.path.exists(o2o0_path):
             #    return 0
-        print(f"{o2o0_path}")
         print(f'Start Training Algo 0')
         o2o0_dict = get_o2o_dict(args.algorithms[0], args.qualities[0])
         # Task 0
@@ -77,12 +76,14 @@ def main(args, use_gpu):
             o2o0 = O2OTD3(**o2o0_dict)
         elif args.algorithms[0] == 'sac':
             o2o0 = O2OSAC(**o2o0_dict)
-        elif args.algorithms[0] == 'iql':
+        elif args.algorithms[0] in ['iql', 'iql_online']:
             o2o0 = O2OIQL(**o2o0_dict)
         elif args.algorithms[0] in ['cql', 'cal']:
             o2o0 = O2OCQL(**o2o0_dict)
         else:
             raise NotImplementedError
+        scorers_env = {'evaluation': evaluate_on_environment(online_offline_wrapper(env))}
+        scorers_list = [scorers_env]
         if args.algorithms[0] in online_algos:
             buffer = ReplayBuffer(args.n_buffer, env)
             o2o0.build_with_env(env)
@@ -95,15 +96,16 @@ def main(args, use_gpu):
                 save_steps=args.save_steps,
                 save_path=o2o0_path,
                 test = args.test,
+
+                scorers_list = scorers_list,
+                eval_episodes_list = [None],
             )
             torch.save({'buffer': buffer.to_mdp_dataset(), 'algo': o2o0}, o2o0_path)
         elif args.algorithms[0] in offline_algos:
-            scorers_env = {'evaluation': evaluate_on_environment(online_offline_wrapper(env))}
-            scorers_list = [scorers_env]
             o2o0.build_with_env(online_offline_wrapper(env))
             iterator, _, n_epochs = o2o0.make_iterator(dataset0, None, args.first_n_steps, args.n_steps_per_epoch, None, True)
             fitter_dict = dict()
-            if args.algorithms[0] == 'iql':
+            if args.algorithms[0] in ['iql', 'iql_online']:
                 scheduler = CosineAnnealingLR(o2o0._impl._actor_optim, 1000000)
                 def callback(algo, epoch, total_step):
                     scheduler.step()
@@ -162,6 +164,9 @@ if __name__ == '__main__':
 
 
     parser.add_argument("--n_buffer", default=1000000, type=int)
+    parser.add_argument("--first_n_steps", default=1000000, type=int)
+    parser.add_argument("--second_n_steps", default=1000000, type=int)
+    parser.add_argument("--n_steps_per_epoch", default=1000, type=int)
     # For ppo
     parser.add_argument("--n_value_steps_per_epoch", default=1000, type=int)
     parser.add_argument("--n_bc_steps_per_epoch", default=1000, type=int)
@@ -204,16 +209,16 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    if args.algorithms not in ['ppo', 'bppo']:
-        args.first_n_steps = 1000000
-        args.n_steps_per_epoch = 1000
-    else:
-        args.first_n_steps = 100
-        args.n_steps_per_epoch = 10
-        args.first_n_value_steps = 2000000
-        args.first_n_bc_steps = 500000
-        args.first_n_value_steps_per_epoch = 1000
-        args.first_n_value_steps_per_epoch = 1000
+    #if args.algorithms not in ['ppo', 'bppo']:
+    #args.first_n_steps = 1000000
+    #args.n_steps_per_epoch = 1000
+    #else:
+    #    args.first_n_steps = 100
+    #    args.n_steps_per_epoch = 10
+    #    args.first_n_value_steps = 2000000
+    #    args.first_n_bc_steps = 500000
+    #    args.first_n_value_steps_per_epoch = 1000
+    #    args.first_n_value_steps_per_epoch = 1000
 
     args.algorithms_str = args.algorithms
     args.algorithms = args.algorithms.split('-')

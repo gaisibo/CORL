@@ -1,14 +1,19 @@
 import torch
 
-from d3rlpy.torch_utility import TorchMiniBatch
+from d3rlpy.torch_utility import TorchMiniBatch, eval_api
 from d3rlpy.algos.torch.td3_impl import TD3Impl
 
 from myd3rlpy.algos.torch.st_impl import STImpl
 from myd3rlpy.models.builders import create_parallel_continuous_q_function
+from myd3rlpy.torch_utility import torch_api
 
 
 replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'terminals', 'policy_actions', 'qs']
 class STTD3Impl(STImpl, TD3Impl):
+
+    def __init__(self, policy_noise, **kwargs):
+        self._policy_noise = policy_noise
+        super().__init__(**kwargs)
 
     def _build_critic(self) -> None:
         self._q_func = create_parallel_continuous_q_function(
@@ -36,3 +41,11 @@ class STTD3Impl(STImpl, TD3Impl):
     def compute_actor_loss(self, batch, clone_actor: bool = False, online: bool = False, replay: bool = False):
         loss = self._compute_actor_loss(batch, clone_actor=clone_actor, online=online)
         return loss
+
+    @eval_api
+    @torch_api(scaler_targets=["x"])
+    def _sample_action(self, x: torch.Tensor) -> torch.Tensor:
+        action = super()._sample_action(x)
+        noise = torch.randn_like(action) * self._policy_noise
+        action = torch.clamp(action + noise, -1.0, 1.0)
+        return action.cpu().detach().numpy()

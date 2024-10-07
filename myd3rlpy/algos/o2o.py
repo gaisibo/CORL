@@ -280,6 +280,10 @@ class O2OBase(STBase):
         verbose: bool = True,
         show_progress: bool = False,
         tensorboard_dir: Optional[str] = None,
+        scorers_list: Optional[
+                List[Dict[str, Callable[[Any, List[Episode]], float]]]
+            ] = None,
+        eval_episodes_list: Optional[Dict[int, List[Episode]]] = None,
         callback: Optional[Callable[[LearnableBase, int, int], None]] = None,
         test: bool = False,
         # train_dynamics = False,
@@ -372,24 +376,20 @@ class O2OBase(STBase):
 
                 # sample exploration action
                 with logger.measure_time("inference"):
-                    if total_step < random_step:
+                    if total_step < random_step and not test:
                         action = env.action_space.sample()
-                        exploit_action = self.sample_action(observation[np.newaxis, :])
-                        exploit_action = exploit_action[0]
                     else:
-                        #action = self.sample_action([fed_observation])[0]
                         action = self.sample_action(observation[np.newaxis, :])
                         action = action[0]
+                    #exploit_action = self.predict(observation[np.newaxis, :])
+                    #exploit_action = exploit_action[0]
 
                 # step environment
                 episode_length = 0
                 with logger.measure_time("environment_step"):
-                    if total_step < random_step:
-                        exploit_next_observation, exploit_reward, exploit_terminal, exploit_truncated, exploit_info = eval_env.step(exploit_action)
-                        rollout_return += exploit_reward
-                    else:
-                        next_observation, reward, terminal, truncated, info = env.step(action)
-                        rollout_return += reward
+                    #exploit_next_observation, exploit_reward, exploit_terminal, exploit_truncated, exploit_info = eval_env.step(exploit_action)
+                    next_observation, reward, terminal, truncated, info = env.step(action)
+                    rollout_return += reward
                     episode_length += 1
 
                 # special case for TimeLimit wrapper
@@ -478,6 +478,14 @@ class O2OBase(STBase):
                     callback(self, epoch, total_step)
 
             if epoch > start_epoch and total_step % n_steps_per_epoch == 0:
+                if scorers_list and eval_episodes_list:
+                    for scorer_num, (scorers, eval_episodes) in enumerate(zip(scorers_list, eval_episodes_list)):
+                        rename_scorers = dict()
+                        for name, scorer in scorers.items():
+                            rename_scorers[str(scorer_num) + '_' + name] = scorer
+                        #print("test predict: {self._impl.predict_best_action()}")
+                        self._evaluate(eval_episodes, rename_scorers, logger)
+
                 # save metrics
                 logger.commit(epoch, total_step)
 
@@ -491,7 +499,7 @@ class O2OBase(STBase):
         # close logger
         logger.close()
 
-    def copy_from_past(self, arg0: str, arg1: str, impl: STImpl, copy_optim: bool):
+    def copy_from_past(self, arg0: str, impl: STImpl, copy_optim: bool):
         assert self._impl is not None
         if arg0 in ['td3', 'td3_plus_bc']:
             self._impl.copy_from_td3(impl, copy_optim)

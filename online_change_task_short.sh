@@ -12,8 +12,8 @@ second_n_steps=1000000
 n_buffer=0
 seed=0
 
-#ARGS=`getopt -o tc --long test,copy_optim -n 'online_change_task.sh' -- "$@"`
-ARGS=`getopt -o +tcn:a:q:d: --long test,copy_optim,algorithms:,qualities:,dataset:,n_buffer: -n "$0" -- "$@"`
+#ARGS=`getopt -o +tcn:a:q:d: --long test,copy_optim,algorithms:,qualities:,dataset:,n_buffer: -n "$0" -- "$@"`
+ARGS=`getopt -o +tca:q:d: --long test,copy_optim,algorithms:,qualities:,dataset: -n "$0" -- "$@"`
 if [ $? != 0 ]; then
     echo "Terminating..."
     exit 1
@@ -36,6 +36,8 @@ while true; do
                 algorithms="iql-sac";
             elif [[ $2 == "it" ]]; then
                 algorithms="iql-td3";
+            elif [[ $2 == "ii" ]]; then
+                algorithms="iql-iql_online";
             elif [[ $2 == "io" ]]; then
                 algorithms1="iql-td3_plus_bc";
                 algorithms2="iql-iql";
@@ -46,14 +48,20 @@ while true; do
                 algorithms="cql-sac";
             elif [[ $2 == "ct" ]]; then
                 algorithms="cql-td3";
+            elif [[ $2 == "ci" ]]; then
+                algorithms="cql-iql_online";
             elif [[ $2 == "co" ]]; then
                 algorithms1="cql-td3_plus_bc";
                 algorithms2="cql-iql";
                 algorithms3="cql-cql";
                 algorithms4="cql-cal";
                 algorithms="other";
+            elif [[ $2 == "cat" ]]; then
+                algorithms="cal-td3";
             elif [[ $2 == "cas" ]]; then
                 algorithms="cal-sac";
+            elif [[ $2 == "cai" ]]; then
+                algorithms="cal-iql_online";
             elif [[ $2 == "cao" ]]; then
                 algorithms1="cal-td3_plus_bc";
                 algorithms2="cal-iql";
@@ -62,12 +70,18 @@ while true; do
                 algorithms="other";
             elif [[ $2 == "ts" ]]; then
                 algorithms="td3-sac";
+            elif [[ $2 == "ti" ]]; then
+                algorithms="td3-iql_online";
             elif [[ $2 == "st" ]]; then
                 algorithms="sac-td3";
+            elif [[ $2 == "si" ]]; then
+                algorithms="sac-iql_online";
             elif [[ $2 == "tbs" ]]; then
                 algorithms="td3_plus_bc-sac";
             elif [[ $2 == "tbt" ]]; then
                 algorithms="td3_plus_bc-td3";
+            elif [[ $2 == "tbi" ]]; then
+                algorithms="td3_plus_bc-iql_online";
             elif [[ $2 == "tbo" ]]; then
                 algorithms1="td3_plus_bc-td3_plus_bc";
                 algorithms2="td3_plus_bc-iql";
@@ -115,14 +129,14 @@ while true; do
             fi
             shift 2
             ;;
-        -n|--n_buffer)
-            if [[ $2 == "s" ]]; then
-                n_buffer="20000";
-            elif [[ $2 == "b" ]]; then
-                n_buffer="2000000";
-            fi
-            shift 2
-            ;;
+        #-n|--n_buffer)
+        #    if [[ $2 == "s" ]]; then
+        #        n_buffer="20000";
+        #    elif [[ $2 == "b" ]]; then
+        #        n_buffer="2000000";
+        #    fi
+        #    shift 2
+        #    ;;
         --)
             shift
             break
@@ -138,14 +152,15 @@ done
 if [[ ${algorithms} != "other" ]]; then
         export LD_LIBRARY_PATH=/root/.mujoco/mujoco210/bin;
 
-        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --qualities=${qualities} ${copy_optim_arg} --explore --n_buffer=${n_buffer} --copy_buffer=none --gpu 0 ${test_arg} &
-        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --qualities=${qualities} ${copy_optim_arg} --explore --n_buffer=${n_buffer} --copy_buffer=copy --gpu 1 ${test_arg} &
-        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --qualities=${qualities} ${copy_optim_arg} --explore --n_buffer=${n_buffer} --copy_buffer=mix_all --gpu 2 ${test_arg} &
-        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --qualities=${qualities} ${copy_optim_arg} --explore --n_buffer=${n_buffer} --copy_buffer=mix_same --gpu 3 ${test_arg} &
-        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --qualities=${qualities} ${copy_optim_arg} --n_buffer=${n_buffer} --copy_buffer=none --gpu 4 ${test_arg} &
-        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --qualities=${qualities} ${copy_optim_arg} --n_buffer=${n_buffer} --copy_buffer=copy --gpu 5 ${test_arg} &
-        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --qualities=${qualities} ${copy_optim_arg} --n_buffer=${n_buffer} --copy_buffer=mix_all --gpu 6 ${test_arg} &
-        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --qualities=${qualities} ${copy_optim_arg} --n_buffer=${n_buffer} --copy_buffer=mix_same --gpu 7 ${test_arg} &
+        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --qualities=${qualities} --copy_optim --n_buffer=20000 --copy_buffer=none --gpu 0 ${test_arg} &
+        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --qualities=${qualities} --copy_optim --n_buffer=20000 --copy_buffer=copy --gpu 1 ${test_arg} &
+        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --qualities=${qualities} --copy_optim --n_buffer=20000 --copy_buffer=mix_all --gpu 2 ${test_arg} &
+        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --qualities=${qualities} --copy_optim --n_buffer=20000 --copy_buffer=mix_same --gpu 3 ${test_arg} &
+        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --qualities=${qualities} --copy_optim --n_buffer=2000000 --copy_buffer=none --gpu 4 ${test_arg} &
+        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --qualities=${qualities} --copy_optim --n_buffer=2000000 --copy_buffer=copy --gpu 5 ${test_arg} &
+        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --qualities=${qualities} --copy_optim --n_buffer=2000000 --copy_buffer=mix_all --gpu 6 ${test_arg} &
+        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --qualities=${qualities} --copy_optim --n_buffer=2000000 --copy_buffer=mix_same --gpu 7 ${test_arg} &
+
         #bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --qualities=${qualities} ${copy_optim_arg} ${explore} --n_buffer=${n_buffer} --copy_buffer=mix_all --buffer_mix_type=value --gpu 4 ${test_arg} &
         #bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --qualities=${qualities} ${copy_optim_arg} ${explore} --n_buffer=${n_buffer} --copy_buffer=mix_all --buffer_mix_type=policy --gpu 5 ${test_arg} &
         #bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --qualities=${qualities} ${copy_optim_arg} ${explore} --n_buffer=${n_buffer} --copy_buffer=mix_same --buffer_mix_type=value --gpu 6 ${test_arg} &

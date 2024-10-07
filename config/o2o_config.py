@@ -1,7 +1,7 @@
 import d3rlpy
 
 
-online_algos = ['td3', 'sac', 'iql']
+online_algos = ['td3', 'sac', 'iql_online']
 offline_algos = ['iql', 'cql', 'cal', 'td3_plus_bc']
 def get_o2o_dict(algo, quality):
     o2o_dict = dict()
@@ -30,10 +30,11 @@ def get_o2o_dict(algo, quality):
         o2o_dict["target_smooth_sigma"] = 0.2
         o2o_dict["target_smooth_clip"] = 0.5
         o2o_dict["update_actor_interval"] = 2
+        o2o_dict['policy_noise'] = 0.2
         if algo == 'td3_plus_bc':
             o2o_dict['alpha'] = 2.5
             #o2o_dict['scaler'] = 'standard'
-    elif algo == 'iql':
+    elif algo in ['iql', 'iql_online']:
         reward_scaler = d3rlpy.preprocessing.ReturnBasedRewardScaler(multiplier=1000.0)
         o2o_dict["actor_learning_rate"] = 3e-4
         o2o_dict["critic_learning_rate"] = 3e-4
