@@ -99,6 +99,6 @@ for algorithm1 in "${algorithms_all[@]}"; do
         done
     done
 done
-#rm TMPFILE1
-#rm TMPFILE2
+rm TMPFILE1
+rm TMPFILE2
 # | sed "s/,//g"
