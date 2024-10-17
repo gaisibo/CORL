@@ -42,6 +42,7 @@ def main(args, use_gpu):
     algos_name += '_' + str(args.first_n_steps)
     algos_name += '_' + str(args.n_buffer)
     algos_name += '_' + args.algorithms_str
+    algos_name += '_' + str(args.n_critics)
     algos_name += '_' + args.qualities_str
     algos_name += ('_' + "test") if args.test else ""
     if args.add_name != '':
@@ -54,6 +55,7 @@ def main(args, use_gpu):
     if args.algorithms[0] not in offline_algos:
         load_name += '_' + str(args.n_buffer)
     load_name += '_' + args.algorithms[0]
+    load_name += '_' + str(args.n_critics)
     if args.algorithms[0] in offline_algos:
         load_name += '_' + args.qualities[0]
     if args.add_name != '':
@@ -76,7 +78,7 @@ def main(args, use_gpu):
             o2o0 = O2OTD3(**o2o0_dict)
         elif args.algorithms[0] == 'sac':
             o2o0 = O2OSAC(**o2o0_dict)
-        elif args.algorithms[0] in ['iql', 'iql_online']:
+        elif args.algorithms[0] in ['iql', 'iql_online', 'iqln', 'iqln_online']:
             o2o0 = O2OIQL(**o2o0_dict)
         elif args.algorithms[0] in ['cql', 'cal']:
             o2o0 = O2OCQL(**o2o0_dict)

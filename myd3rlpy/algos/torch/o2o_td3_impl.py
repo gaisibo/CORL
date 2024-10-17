@@ -2,6 +2,7 @@ from myd3rlpy.algos.torch.st_td3_impl import STTD3Impl
 from myd3rlpy.algos.torch.st_sac_impl import STSACImpl
 from myd3rlpy.algos.torch.st_iql_impl import STIQLImpl
 from myd3rlpy.algos.torch.st_cql_impl import STCQLImpl
+from myd3rlpy.algos.torch.o2o_impl import O2OImpl
 
 
 class O2OTD3Impl(STTD3Impl):
@@ -95,3 +96,6 @@ class O2OTD3Impl(STTD3Impl):
             for i, _ in enumerate(self._q_func.parameters()):
                 critic_optim_state_dict['state'][i] = iql_critic_optim_state_dict['state'][i]
             self._critic_optim.load_state_dict(critic_optim_state_dict)
+
+    def copy_from_iqln(self, iql_impl: STIQLImpl, copy_optim: bool):
+        self.copy_from_iql(iql_impl, copy_optim)

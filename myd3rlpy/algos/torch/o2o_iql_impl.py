@@ -4,9 +4,10 @@ from myd3rlpy.algos.torch.st_td3_impl import STTD3Impl
 from myd3rlpy.algos.torch.st_sac_impl import STSACImpl
 from myd3rlpy.algos.torch.st_iql_impl import STIQLImpl
 from myd3rlpy.algos.torch.st_cql_impl import STCQLImpl
+from myd3rlpy.algos.torch.o2o_impl import O2OImpl
 
 
-class O2OIQLImpl(STIQLImpl):
+class O2OIQLImpl(STIQLImpl, O2OImpl):
     # sac actor: _encoder, _mu.weight, _mu.bias, _logstd.weight, _logstd.bias
     # td3 actor: _encoder, _fc.weight, _fc.bias
     # iql actor: _logstd, _encoder, _fc.weight, _fc.bias
@@ -28,6 +29,10 @@ class O2OIQLImpl(STIQLImpl):
         if copy_optim:
             self._actor_optim.load_state_dict(self._actor_optim.state_dict())
             self._critic_optim.load_state_dict(self._critic_optim.state_dict())
+
+    def copy_from_iqln(self, iql_impl: STIQLImpl, copy_optim: bool):
+        self.copy_from_iql(iql_impl, copy_optim)
+        #raise NotImplementedError, "iql cannot load iqln"
 
     def copy_from_sac(self, sac_impl: STSACImpl, copy_optim: bool):
         assert self._policy is not None

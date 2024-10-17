@@ -5,12 +5,13 @@ test_arg=""
 algorithms=""
 dataset="halfcheetah"
 qualities='medium'
+n_critics="2"
 first_n_steps=1000000
 n_buffer=0
 gpu=0
 
 #ARGS=`getopt -o tc --long test,copy_optim -n 'online_change_task.sh' -- "$@"`
-ARGS=`getopt -o +tg --long test,algorithms:,qualities:,dataset:,first_n_steps:,n_buffer:,gpu: -n "$0" -- "$@"`
+ARGS=`getopt -o +tg --long test,algorithms:,qualities:,dataset:,first_n_steps:,n_buffer:,n_critics:,gpu: -n "$0" -- "$@"`
 if [ $? != 0 ]; then
     echo "Terminating..."
     exit 1
@@ -43,6 +44,10 @@ while true; do
             n_buffer=$2;
             shift 2
             ;;
+        --n_critics)
+            n_critics=$2;
+            shift 2
+            ;;
         -g|--gpu)
             gpu=$2;
             shift 2
@@ -71,10 +76,10 @@ done
 algorithms_offline=( "iql" "cql" "cal" "td3_plus_bc" )
 echo "${algorithms_offline[@]}" | grep -wq ${algorithms}
 if [[ $? == 0 ]]; then
-    output_file_name=logs/online_change_task_${dataset}_${qualities}_${algorithms}_${first_n_steps}.${expand_str}.log
+    output_file_name=logs/online_change_task_${dataset}_${qualities}_${algorithms}_${n_critics}_${first_n_steps}.${expand_str}.log
     must_arg_strs=( "algorithms" "dataset" "qualities" )
 else
-    output_file_name=logs/online_change_task_${dataset}_${algorithms}_${first_n_steps}_${n_buffer}.${expand_str}.log
+    output_file_name=logs/online_change_task_${dataset}_${algorithms}_${n_critics}_${first_n_steps}_${n_buffer}.${expand_str}.log
     must_arg_strs=( "algorithms" "dataset" "n_buffer" )
 fi
 for must_arg_str in ${must_arg_strs[@]}; do
@@ -85,6 +90,6 @@ for must_arg_str in ${must_arg_strs[@]}; do
         fi
 done
 echo $output_file_name
-echo "python online_change_task.py --dataset ${dataset} --algorithms=${algorithms} --qualities=${qualities} --first_n_steps ${first_n_steps} --n_buffer ${n_buffer} ${test_arg}" > ${output_file_name}
+echo "python online_change_task.py --dataset ${dataset} --algorithms=${algorithms} --n_critics=${n_critics} --qualities=${qualities} --first_n_steps ${first_n_steps} --n_buffer ${n_buffer} ${test_arg}" > ${output_file_name}
 echo "" >> ${output_file_name}
-python online_change_task_pretrain.py --dataset ${dataset} --algorithms ${algorithms} --qualities ${qualities} --first_n_steps ${first_n_steps} --n_buffer ${n_buffer} --gpu ${gpu} ${test_arg} | tee ${output_file_name}
+python online_change_task_pretrain.py --dataset ${dataset} --algorithms ${algorithms} --n_critics=${n_critics} --qualities ${qualities} --first_n_steps ${first_n_steps} --n_buffer ${n_buffer} --gpu ${gpu} ${test_arg} | tee ${output_file_name}

@@ -37,6 +37,7 @@ class O2OBase(STBase):
         dataset: Optional[Union[List[Episode], MDPDataset]] = None,
         iterator: Optional[TransitionIterator] = None,
         old_iterator: Optional[TransitionIterator] = None,
+        continual_type: str = "er",
         buffer_mix_ratio: float = 0.5,
         buffer_mix_type: str = "all",
         n_epochs: int = 1000,
@@ -125,6 +126,9 @@ class O2OBase(STBase):
 
         total_step = 0
         print(f'train policy')
+        if old_iterator is not None:
+            old_iterator.reset()
+            self.after_learn(old_buffer, continual_type, buffer_mix_type, test)
         for epoch in range(1, n_epochs + 1):
             if epoch > 1 and test:
                 break
@@ -139,6 +143,8 @@ class O2OBase(STBase):
             )
 
             iterator.reset()
+            if old_iterator is not None:
+                old_iterator.reset()
 
             for batch_num, itr in enumerate(range_gen):
                 if batch_num > 10 and test:
@@ -155,7 +161,7 @@ class O2OBase(STBase):
                 with logger.measure_time("step"):
                     # pick transitions
                     with logger.measure_time("sample_batch"):
-                        if old_iterator is not None:
+                        if old_iterator is not None and continual_type == "er":
                             new_batch = next(iterator)
                             try:
                                 old_batch = next(old_iterator)
@@ -263,6 +269,7 @@ class O2OBase(STBase):
         buffer: Optional[Buffer],
         old_buffer: Optional[Buffer] = None,
         buffer_mix_ratio: float = 0.5,
+        continual_type: str = "er",
         buffer_mix_type: str = "all",
         n_steps: int = 1000000,
         n_steps_per_epoch: int = 10000,
@@ -366,7 +373,8 @@ class O2OBase(STBase):
             exploit_observation, _ = eval_env.reset()
         rollout_return = 0.0
 
-
+        if old_buffer is not None:
+            self.after_learn(old_buffer, continual_type, buffer_mix_type, test)
         for total_step in xrange(1, n_steps + 1):
             if total_step > 2000 and test:
                 break
@@ -499,11 +507,17 @@ class O2OBase(STBase):
         # close logger
         logger.close()
 
+    def after_learn(self, iterator, continual_type, buffer_mix_type, test):
+        if continual_type in ['rwalk_same', 'rwalk_all', 'ewc_same', 'ewc_all'] and buffer_mix_type in ['all', 'value']:
+            self._impl.critic_ewc_rwalk_post_train_process(iterator, self._batch_size, self._n_frames, self._n_steps, self._gamma, test=test)
+        if continual_type in ['rwalk_same', 'rwalk_all', 'ewc_same', 'ewc_all'] and buffer_mix_type in ['all', 'policy']:
+            self._impl.actor_ewc_rwalk_post_train_process(iterator, self._batch_size, self._n_frames, self._n_steps, self._gamma, test=test)
+
     def copy_from_past(self, arg0: str, impl: STImpl, copy_optim: bool):
         assert self._impl is not None
         if arg0 in ['td3', 'td3_plus_bc']:
             self._impl.copy_from_td3(impl, copy_optim)
-        elif arg0 == 'iql':
+        elif arg0 in ['iql', 'iqln']:
             self._impl.copy_from_iql(impl, copy_optim)
         elif arg0 == 'sac':
             self._impl.copy_from_sac(impl, copy_optim)

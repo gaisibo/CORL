@@ -5,11 +5,12 @@ from myd3rlpy.algos.torch.st_td3_impl import STTD3Impl
 from myd3rlpy.algos.torch.st_sac_impl import STSACImpl
 from myd3rlpy.algos.torch.st_iql_impl import STIQLImpl
 from myd3rlpy.algos.torch.st_cql_impl import STCQLImpl
+from myd3rlpy.algos.torch.o2o_impl import O2OImpl
 from myd3rlpy.torch_utility import torch_api, TorchMiniBatch
 from d3rlpy.torch_utility import train_api
 
 
-class O2OSACImpl(STSACImpl):
+class O2OSACImpl(STSACImpl, O2OImpl):
     # sac actor: _encoder, _mu.weight, _mu.bias, _logstd.weight, _logstd.bias
     # td3 actor: _encoder, _fc.weight, _fc.bias
     # iql actor: _logstd, _encoder, _fc.weight, _fc.bias
@@ -92,6 +93,8 @@ class O2OSACImpl(STSACImpl):
             for i, _ in enumerate(self._q_func.parameters()):
                 critic_optim_state_dict['state'][i] = iql_critic_optim_state_dict['state'][i]
             self._critic_optim.load_state_dict(critic_optim_state_dict)
+    def copy_from_iqln(self, iql_impl: STIQLImpl, copy_optim: bool):
+        self.copy_from_iql(iql_impl, copy_optim)
 
     @train_api
     @torch_api()

@@ -13,6 +13,7 @@ import torch.nn.functional as F
 from d3rlpy.torch_utility import train_api, eval_api
 from myd3rlpy.torch_utility import torch_api
 from d3rlpy.dataset import TransitionMiniBatch
+from myd3rlpy.iterators.base import TransitionIterator
 
 from myd3rlpy.algos.torch.gem import overwrite_grad, store_grad, project2cone2
 from myd3rlpy.algos.torch.agem import project
@@ -55,11 +56,11 @@ class STImpl():
         self._clone_q_func = None
         self._clone_policy = None
 
-        self._critic_networks = [self._q_func]
-        self._actor_networks = [self._policy]
-
     def build(self):
         super().build()
+
+        self._critic_networks = [self._q_func]
+        self._actor_networks = [self._policy]
 
         assert self._q_func is not None
         if self._critic_replay_type in ['ewc', 'rwalk', 'si']:
@@ -393,16 +394,26 @@ class STImpl():
 
         return loss, replay_loss
 
-    def compute_fisher_matrix_diag(self, iterator, network, optim, update):
+    def compute_fisher_matrix_diag(self, iterator, network, optim, update, batch_size=None, n_frames=None, n_steps=None, gamma=None, test=False):
         # Store Fisher Information
         fisher = {n: torch.zeros(p.shape).to(self.device) for n, p in network.named_parameters()
                   if p.requires_grad}
         # Do forward and backward pass to compute the fisher information
         network.train()
         replay_loss = 0
-        iterator.reset()
-        for t in range(len(iterator)):
-            batch = next(iterator)
+        if isinstance(iterator, TransitionIterator):
+            iterator.reset()
+        else:
+            pass
+        for t in range(len(iterator) if not test else 2):
+            print(f"inner ewc update {t}/{len(iterator) if not test else 2}")
+            if isinstance(iterator, TransitionIterator):
+                batch = next(iterator)
+            else:
+                batch = iterator.sample(batch_size=batch_size,
+                        n_frames=n_frames,
+                        n_steps=n_steps,
+                        gamma=gamma)
             optim.zero_grad()
             update(self, batch)
             # Accumulate all gradients from loss with regularization
@@ -413,9 +424,17 @@ class STImpl():
         fisher = {n: (p / len(iterator)) for n, p in fisher.items()}
         return fisher
 
-    def _ewc_rwalk_post_train_process(self, networks, fishers, scores, Ws, older_params, iterator, optim, update):
-        for network, fisher, score, W, older_param in zip(networks, fishers, scores, Ws, older_params):
-            curr_fisher = self.compute_fisher_matrix_diag(iterator, network, optim, update)
+    def _ewc_rwalk_post_train_process(self, networks, fishers, older_params, iterator, optim, update, scores=None, Ws=None, batch_size=None, n_frames=None, n_steps=None, gamma=None, test=False):
+        if self._critic_replay_type == 'rwalk':
+            looper = zip(networks, fishers, scores, Ws, older_params)
+        else:
+            looper = zip(networks, fishers, older_params)
+        for i, elems in enumerate(looper):
+            if self._critic_replay_type == 'rwalk':
+                network, fisher, score, W, older_param = elems
+            else:
+                network, fisher, older_param = elems
+            curr_fisher = self.compute_fisher_matrix_diag(iterator, network, optim, update, batch_size, n_frames=n_frames, n_steps=n_steps, gamma=gamma, test=test)
             # merge fisher information, we do not want to keep fisher information for each task in memory
             for n in fisher.keys():
                 # Added option to accumulate fisher over time with a pre-fixed growing self._ewc_rwalk_alpha
@@ -437,7 +456,7 @@ class STImpl():
                 for n, p in score.items():
                     score[n] = (p + curr_critic_score[n]) / 2
 
-    def critic_ewc_rwalk_post_train_process(self, iterator):
+    def critic_ewc_rwalk_post_train_process(self, iterator, batch_size, n_frames, n_steps, gamma, test=False):
         # calculate Fisher information
         @train_api
         @torch_api()
@@ -445,16 +464,21 @@ class STImpl():
             q_tpn = self.compute_target(batch)
             loss = self.compute_critic_loss(batch, q_tpn)
             loss.backward()
-        self._ewc_rwalk_post_train_process(self._critic_networks, self._critic_fisher, self._critic_scores, self._critic_W, self._critic_older_params, iterator, self._critic_optim, update)
+        if self._critic_replay_type == 'rwalk':
+            self._ewc_rwalk_post_train_process(self._critic_networks, self._critic_fisher, self._critic_older_params, iterator, self._critic_optim, update, scores=self._critic_scores, Ws=self._critic_W, batch_size=batch_size, n_frames=n_frames, n_steps=n_steps, gamma=gamma, test=test)
+        else:
+            self._ewc_rwalk_post_train_process(self._critic_networks, self._critic_fisher, self._critic_older_params, iterator, self._critic_optim, update, batch_size=batch_size, n_frames=n_frames, n_steps=n_steps, gamma=gamma, test=test)
 
-    def actor_ewc_rwalk_post_train_process(self, iterator):
+    def actor_ewc_rwalk_post_train_process(self, iterator, batch_size, n_frames, n_steps, gamma, test=False):
         @train_api
         @torch_api()
         def update(self, batch):
             loss = self.compute_actor_loss(batch)
             loss.backward()
-        self._ewc_rwalk_post_train_process(self._actor_networks, self._actor_fisher, self._actor_scores, self._actor_W, self._actor_older_params, iterator, self._actor_optim, update)
-
+        if self._actor_replay_type == 'rwalk':
+            self._ewc_rwalk_post_train_process(self._actor_networks, self._actor_fisher, self._actor_older_params, iterator, self._actor_optim, update, scores=self._actor_scores, Ws=self._actor_W, batch_size=batch_size, n_frames=n_frames, n_steps=n_steps, gamma=gamma, test=test)
+        else:
+            self._ewc_rwalk_post_train_process(self._actor_networks, self._actor_fisher, self._actor_older_params, iterator, self._actor_optim, update, batch_size=batch_size, n_frames=n_frames, n_steps=n_steps, gamma=gamma, test=test)
     def fine_tuned_action(self, observation):
         assert self._policy is not None
         assert self._q_func is not None

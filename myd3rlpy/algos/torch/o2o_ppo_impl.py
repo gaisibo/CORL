@@ -3,9 +3,10 @@ from myd3rlpy.algos.torch.st_sac_impl import STSACImpl
 from myd3rlpy.algos.torch.st_iql_impl import STIQLImpl
 from myd3rlpy.algos.torch.st_cql_impl import STCQLImpl
 from myd3rlpy.algos.torch.st_ppo_impl import STPPOImpl
+from myd3rlpy.algos.torch.o2o_impl import O2OImpl
 
 
-class O2OPPOImpl(STPPOImpl):
+class O2OPPOImpl(STPPOImpl, O2OImpl):
     def copy_from_sac(self, sac_impl: STSACImpl, copy_optim: bool):
         self._policy.load_state_dict(sac_impl._policy.state_dict())
         self._targ_policy.load_state_dict(sac_impl._policy.state_dict())
@@ -48,3 +49,5 @@ class O2OPPOImpl(STPPOImpl):
         self._build_actor_optim()
         if copy_optim:
             self._actor_optim.load_state_dict(iql_impl._actor_optim.state_dict())
+    def copy_from_iqln(self, iql_impl: STIQLImpl, copy_optim: bool):
+        self.copy_from_iql(iql_impl, copy_optim)

@@ -47,8 +47,9 @@ def main(args, use_gpu):
     algos_name += '_' + str(args.second_n_steps)
     algos_name += '_' + str(args.n_buffer)
     algos_name += '_' + args.algorithms_str
+    algos_name += '_' + str(args.n_critics)
     algos_name += '_' + args.qualities_str
-    algos_name += '_' + args.copy_buffer
+    algos_name += '_' + args.continual_type
     algos_name += ('_' + "copy_optim") if args.copy_optim else ""
     algos_name += ('_' + "test") if args.test else ""
     if args.add_name != '':
@@ -61,6 +62,7 @@ def main(args, use_gpu):
     if args.algorithms[0] not in offline_algos:
         load_name += '_' + str(args.n_buffer)
     load_name += '_' + args.algorithms[0]
+    load_name += '_' + str(args.n_critics)
     if args.algorithms[0] in offline_algos:
         load_name += '_' + args.qualities[0]
     if args.add_name != '':
@@ -85,11 +87,16 @@ def main(args, use_gpu):
         # Each algo a half.
         o2o1_dict['use_gpu'] = use_gpu
         o2o1_dict['impl_name'] = args.algorithms[1]
+        if args.continual_type in ['ewc_same', 'ewc_all']:
+            if args.buffer_mix_type in ['all', 'value']:
+                o2o1_dict['critic_replay_type'] = 'ewc'
+            if args.buffer_mix_type in ['all', 'policy']:
+                o2o1_dict['actor_replay_type'] = 'ewc'
         if args.algorithms[1] in ['td3', 'td3_plus_bc']:
             o2o1 = O2OTD3(**o2o1_dict)
         elif args.algorithms[1] == 'sac':
             o2o1 = O2OSAC(**o2o1_dict)
-        elif args.algorithms[1] in ['iql', 'iql_online']:
+        elif args.algorithms[1] in ['iql', 'iqln', 'iql_online', 'iqln_online']:
             o2o1 = O2OIQL(**o2o1_dict)
         elif args.algorithms[1] in ['cql', 'cal']:
             o2o1 = O2OCQL(**o2o1_dict)
@@ -98,32 +105,34 @@ def main(args, use_gpu):
         o2o1.build_with_env(env)
         o2o1.copy_from_past(args.algorithms[0], o2o0._impl, args.copy_optim)
         if args.algorithms[1] in online_algos:
-            if args.algorithms[0] not in offline_algos:
+            if args.algorithms[0] in online_algos:
                 loaded_mdp = loaded_data['buffer']
                 if isinstance(loaded_mdp, MDPDataset):
-                    loaded_mdp = OldMDPDataset(dataset0.observations, dataset0.actions, dataset0.rewards, dataset0.terminals, dataset0.episode_terminals)
+                    loaded_mdp = OldMDPDataset(loaded_mdp.observations, loaded_mdp.actions, loaded_mdp.rewards, loaded_mdp.terminals, loaded_mdp.episode_terminals)
                 loaded_buffer = ReplayBuffer(args.n_buffer, env)
                 for episode in loaded_mdp.episodes:
                     loaded_buffer.append_episode(episode)
             elif args.algorithms[0] in offline_algos:
-                if args.copy_buffer in ['copy', 'mix_same']:
+                if isinstance(dataset0, MDPDataset):
+                    loaded_mdp = OldMDPDataset(dataset0.observations, dataset0.actions, dataset0.rewards, dataset0.terminals, dataset0.episode_terminals)
+                if args.continual_type in ['copy', 'mix_same', 'ewc_same']:
                     loaded_buffer = ReplayBuffer(args.n_buffer, env)
-                elif args.copy_buffer == 'mix_all':
+                elif args.continual_type in ['mix_all', 'ewc_all']:
                     loaded_buffer = ReplayBuffer(dataset0.observations.shape[0], env)
-                if args.copy_buffer != 'none':
-                    if isinstance(dataset0, MDPDataset):
-                        dataset0 = OldMDPDataset(dataset0.observations, dataset0.actions, dataset0.rewards, dataset0.terminals, dataset0.episode_terminals)
-                    for episode in dataset0.episodes:
+                if args.continual_type != 'none':
+                    for episode in loaded_mdp.episodes:
                         loaded_buffer.append_episode(episode)
             else:
                 raise NotImplementedError
-            if args.copy_buffer == 'copy':
+            # For making scalers
+            o2o1.make_transitions(loaded_mdp)
+            if args.continual_type in ['copy']:
                 buffer = loaded_buffer
                 old_buffer = None
-            elif args.copy_buffer in ['mix_same', 'mix_all']:
+            elif args.continual_type in ['mix_same', 'mix_all', 'ewc_same', 'ewc_all']:
                 buffer = ReplayBuffer(args.n_buffer, env)
                 old_buffer = loaded_buffer
-            elif args.copy_buffer == 'none':
+            elif args.continual_type == 'none':
                 buffer = ReplayBuffer(args.n_buffer, env)
                 old_buffer = None
             else:
@@ -140,6 +149,7 @@ def main(args, use_gpu):
                 env,
                 eval_env,
                 buffer,
+                continual_type = args.continual_type,
                 old_buffer = old_buffer,
                 buffer_mix_type = args.buffer_mix_type,
                 n_steps = args.second_n_steps,
@@ -159,18 +169,16 @@ def main(args, use_gpu):
         #        loaded_mdp = loaded_data['buffer']
         #        if isinstance(loaded_mdp, MDPDataset):
         #            loaded_mdp = OldMDPDataset(loaded_mdp.observations, loaded_mdp.actions, loaded_mdp.rewards, loaded_mdp.terminals, loaded_mdp.episode_terminals)
-        #    elif args.algorithms[0] in offline_algos:
-        #        loaded_mdp = dataset0
         #    else:
         #        raise NotImplementedError
-        #    if args.copy_buffer == 'none':
+        #    if args.continual_type == 'none':
         #        old_dataset = None
-        #    elif args.copy_buffer == 'copy':
+        #    elif args.continual_type == 'copy':
         #        dataset1 = loaded_mdp
         #        if isinstance(dataset1, OldMDPDataset):
         #            dataset1 = MDPDataset(dataset1.observations, dataset1.actions, dataset1.rewards, dataset1.terminals, dataset1.episode_terminals)
         #        old_dataset = None
-        #    elif args.copy_buffer in ['mix_all', 'mix_same']:
+        #    elif args.continual_type in ['mix_all', 'mix_same']:
         #        old_dataset = loaded_mdp
         #    else:
         #        raise NotImplementedError
@@ -189,8 +197,8 @@ def main(args, use_gpu):
         #            scheduler.step()
         #        fitter_dict['callback'] = callback
         #    if args.algorithms[0] == 'ppo':
-        #        value_iterator, _, n_value_epochs = o2o0.make_iterator(dataset0, None, args.first_n_value_steps, args.n_value_steps_per_epoch, None, True)
-        #        bc_iterator, _, n_bc_epochs = o2o0.make_iterator(dataset0, None, args.first_n_bc_steps, args.n_bc_steps_per_epoch, None, True)
+        #        value_iterator, _, n_value_epochs = o2o0.make_iterator(loaded_mdp, None, args.first_n_value_steps, args.n_value_steps_per_epoch, None, True)
+        #        bc_iterator, _, n_bc_epochs = o2o0.make_iterator(loaded_mdp, None, args.first_n_bc_steps, args.n_bc_steps_per_epoch, None, True)
         #        fitter_dict['value_iterator'] = value_iterator
         #        fitter_dict['bc_iterator'] = bc_iterator
         #        fitter_dict['n_value_epochs'] = n_value_epochs
@@ -201,6 +209,7 @@ def main(args, use_gpu):
         #    o2o1.fitter(
         #        dataset1,
         #        iterator,
+        #        continual_type = args.continual_type,
         #        old_iterator = old_iterator,
         #        buffer_mix_type = args.buffer_mix_type,
         #        n_epochs=n_epochs,
@@ -270,7 +279,7 @@ if __name__ == '__main__':
     parser.add_argument('--copy_optim', action='store_true')
     parser.add_argument('--algorithms', type=str, required=True)
     parser.add_argument('--qualities', type=str, default="medium-medium")
-    parser.add_argument('--copy_buffer', type=str, choices=['none', 'copy', 'mix_same', 'mix_all'], required=True)
+    parser.add_argument('--continual_type', type=str, choices=['none', 'copy', 'mix_same', 'mix_all', 'ewc_same', 'ewc_all'], required=True)
     parser.add_argument('--buffer_mix_type', type=str, choices=['all', 'policy', 'value'], default='all')
     parser.add_argument("--dataset", default='halfcheetah', type=str)
     parser.add_argument('--explore', action='store_true')

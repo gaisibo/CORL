@@ -218,23 +218,19 @@ class STIQL(STBase, IQL):
             'reward_scaler':self._reward_scaler,
             'fine_tuned_step': self._fine_tuned_step,
         }
-        if self._impl_name == 'iql':
+        if self._impl_name in ['iql', 'iql_online']:
             from myd3rlpy.algos.torch.st_iql_impl import STIQLImpl as STImpl
         elif self._impl_name == 'sql':
             from myd3rlpy.algos.torch.st_sql_impl import STSQLImpl as STImpl
             impl_dict["alpha"] = self._alpha
-        elif self._impl_name in ['iqln', 'iqln2', 'iqln3', 'iqln4', 'sqln']:
-            if self._impl_name == 'iqln':
-                from myd3rlpy.algos.torch.st_iqln_impl import STIQLNImpl as STImpl
-            else:
-                from myd3rlpy.algos.torch.st_sqln_impl import STSQLNImpl as STImpl
-                impl_dict["alpha"] = self._alpha
+        elif self._impl_name in ['iqln', 'iqln_online']:
+            from myd3rlpy.algos.torch.st_iqln_impl import STIQLNImpl as STImpl
+            impl_dict["n_ensemble"] = self._n_ensemble
             impl_dict["entropy_time"] = self._entropy_time
             impl_dict["expectile_max"] = self._expectile_max
             impl_dict["expectile_min"] = self._expectile_min
             impl_dict["std_time"] = self._std_time
             impl_dict["std_type"] = self._std_type
-            impl_dict["n_ensemble"] = self._n_ensemble
         else:
             print(self._impl_name)
             raise NotImplementedError

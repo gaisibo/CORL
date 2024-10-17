@@ -131,22 +131,8 @@ class STBase():
     def make_iterator(self, dataset, replay_dataset, n_steps, n_steps_per_epoch, n_epochs, shuffle):
         iterator: TransitionIterator
         assert dataset is not None
-        transitions = []
-        if isinstance(dataset, MDPDataset):
-            for episode in cast(MDPDataset, dataset).episodes:
-                transitions += episode.transitions
-        elif isinstance(dataset, OldMDPDataset):
-            for episode in cast(OldMDPDataset, dataset).episodes:
-                transitions += episode.transitions
-        elif not dataset:
-            raise ValueError("empty dataset is not supported.")
-        elif isinstance(dataset[0], Episode):
-            for episode in cast(List[Episode], dataset):
-                transitions += episode.transitions
-        elif isinstance(dataset[0], Transition):
-            transitions = list(cast(List[Transition], dataset))
-        else:
-            raise ValueError(f"invalid dataset type: {type(dataset)}")
+
+        transitions = self.make_transitions(dataset)
 
         if n_steps is not None:
             assert n_steps >= n_steps_per_epoch
@@ -220,13 +206,32 @@ class STBase():
                 raise ValueError("Either of n_epochs or n_steps must be given.")
         else:
             replay_iterator = None
+        return iterator, replay_iterator, n_epochs
+
+    def make_transitions(self, dataset):
+        transitions = []
+        if isinstance(dataset, MDPDataset):
+            for episode in cast(MDPDataset, dataset).episodes:
+                transitions += episode.transitions
+        elif isinstance(dataset, OldMDPDataset):
+            for episode in cast(OldMDPDataset, dataset).episodes:
+                transitions += episode.transitions
+        elif not dataset:
+            raise ValueError("empty dataset is not supported.")
+        elif isinstance(dataset[0], Episode):
+            for episode in cast(List[Episode], dataset):
+                transitions += episode.transitions
+        elif isinstance(dataset[0], Transition):
+            transitions = list(cast(List[Transition], dataset))
+        else:
+            raise ValueError(f"invalid dataset type: {type(dataset)}")
 
         # initialize scaler
         if self._scaler:
             LOG.debug("Fitting scaler...", scaler=self._scaler.get_type())
             self._scaler.fit(transitions)
-
         # initialize action scaler
+
         if self._action_scaler:
             LOG.debug(
                 "Fitting action scaler...",
@@ -241,7 +246,7 @@ class STBase():
                 reward_scaler=self._reward_scaler.get_type(),
             )
             self._reward_scaler.fit(transitions)
-        return iterator, replay_iterator, n_epochs
+        return transitions
 
     def fit(
         self,
@@ -552,7 +557,8 @@ class STBase():
 
             yield epoch, metrics
 
-    def after_learn(self, iterator, experiment_name, scorers_list, eval_episodes_list, logdir='d3rlpy_logs'):
+    #def after_learn(self, iterator, experiment_name, scorers_list, eval_episodes_list, logdir='d3rlpy_logs'):
+    def after_learn(self, iterator):
         # for EWC
         if self._critic_replay_type in ['rwalk', 'ewc']:
             self._impl.critic_ewc_rwalk_post_train_process(iterator)
@@ -564,8 +570,8 @@ class STBase():
             self._impl.actor_ewc_rwalk_post_train_process(iterator)
         # elif self._actor_replay_type == 'si':
         #     self._impl.actor_si_post_train_process()
-        if self._impl_name in ['mgcql', 'mqcql', 'mrcql']:
-            self._impl.match_prop_post_train_process(iterator)
+        #if self._impl_name in ['mgcql', 'mqcql', 'mrcql']:
+        #    self._impl.match_prop_post_train_process(iterator)
         # self._impl.reinit_network()
 
         # # TEST

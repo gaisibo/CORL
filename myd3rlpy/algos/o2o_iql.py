@@ -58,8 +58,10 @@ class O2OIQL(O2OBase, STIQL):
             'reward_scaler':self._reward_scaler,
             'fine_tuned_step': self._fine_tuned_step,
         }
-        if self._impl_name == 'iql':
+        if self._impl_name in ['iql', 'iql_online']:
             from myd3rlpy.algos.torch.o2o_iql_impl import O2OIQLImpl as O2OImpl
+        elif self._impl_name in ['iqln', 'iqln_online']:
+            from myd3rlpy.algos.torch.o2o_iqln_impl import O2OIQLNImpl as O2OImpl
         else:
             print(self._impl_name)
             raise NotImplementedError
