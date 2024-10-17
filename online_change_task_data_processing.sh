@@ -3,55 +3,66 @@
 rm logs/*latest*
 rm pics/*
 bash read_logs.sh
-algorithms_offline=( "iql" "cql" "cal" "td3_plus_bc" )
-algorithms_online=( "td3" "sac" )
+algorithms_offline=( "iql" "cql" "cal" "td3_plus_bc" "iqln" )
+algorithms_online=( "td3" "sac" "iql_online" "iqln_online" )
 algorithms_all=( ${algorithms_offline[@]} ${algorithms_online[@]} )
 for algorithm1 in "${algorithms_all[@]}"; do
-    for algorithm2 in "${algorithms_all[@]}"; do
+    for algorithm2 in "${algorithms_online[@]}"; do
         if [[ $algorithm1 == $algorithm2 ]]; then
             continue;
+        elif [[ $algorithm1 == "iqln" && $algorithm2 != "iqln_online" ]]; then
+            continue;
+        elif [[ $algorithm1 != "iqln" && $algorithm2 == "iqln_online" ]]; then
+            continue;
         fi
-        algorithms="${algorithm1}-${algorithm2}"
-        for dataset in "halfcheetah"; do
-            has_online=0
-            echo "${algorithms_offline[@]}" | grep -wq ${algorithm1}
-            if [[ $? == 0 ]]; then
-                quality1_list=( "medium" "expert" )
-            else
-                quality1_list=( "medium" )
-                has_online=1
-            fi
-            echo "${algorithms_offline[@]}" | grep -wq ${algorithm2}
-            if [[ $? == 0 ]]; then
-                quality2_list=( "medium" "expert" )
-                copy_buffer_list=( "none" "copy" )
-            else
-                quality2_list=( "medium" )
-                has_online=1
-                copy_buffer_list=( "none" "copy" "mix_all" "mix_same" )
-            fi
-            if [[ $has_online -eq 1 ]]; then
-                buffer_list=( "20000" "2000000" )
-            else
-                buffer_list=( "20000" )
-            fi
-            for quality1 in "${quality1_list[@]}" ; do
-                for quality2 in "${quality2_list[@]}" ; do
-                    qualities="${quality1}-${quality2}"
-                    first="1000000"
-                    second="1000000"
-                    for buffer in "${buffer_list[@]}"; do
-                        for copy_buffer in ${copy_buffer_list[@]}; do
-                            if [[ $copy_buffer == 'none' || $copy_buffer == 'copy' ]]; then
-                                buffer_mix_type_list=( "" )
-                            else
-                                buffer_mix_type_list=( "_all" "_policy" "_value" )
-                            fi
-                            for buffer_mix_type in "${buffer_mix_type_list[@]}"; do
-                                copy_buffer_str=$(echo ${copy_buffer} | sed "s/\_/\\\_/g")
-                                buffer_mix_type_str=$(echo ${buffer_mix_type} | sed "s/\_/\\\_/g")
-                                for copy_optim in "" "_copy_optim"; do
-                                    for explore in "" "_explore"; do
+        if [[ $algorithm1 == 'iqln' && $algorithm2 == "iqln_online" ]]; then
+            n_ensembles=( "2" )
+        else
+            n_ensembles=( "2" "10" )
+        fi
+        for n_ensemble in "${n_ensembles[@]}"; do
+            algorithms="${algorithm1}-${algorithm2}_${n_ensemble}"
+            datasets=( "halfcheetah" "hopper" "walker2d" "ant")
+            for dataset in ${datasets[@]}; do
+                has_online=0
+                echo "${algorithms_offline[@]}" | grep -wq ${algorithm1}
+                if [[ $? == 0 ]]; then
+                    quality1_list=( "medium" "expert" "random" "medium_random" "medium_replay" )
+                else
+                    quality1_list=( "medium" )
+                    has_online=1
+                fi
+                echo "${algorithms_offline[@]}" | grep -wq ${algorithm2}
+                if [[ $? == 0 ]]; then
+                    quality2_list=( "medium" "expert" "random" "medium_random" "medium_replay" )
+                    copy_buffer_list=( "none" "copy")
+                else
+                    quality2_list=( "medium" )
+                    has_online=1
+                    copy_buffer_list=( "none" "copy" "mix_all" "mix_same" "ewc_same" "ewc_all" )
+                fi
+                echo ${algorithm1}_${algorithm2}_${quality1_list}_${quality2_list}
+                if [[ $has_online -eq 1 ]]; then
+                    buffer_list=( "20000" "2000000" )
+                else
+                    buffer_list=( "20000" )
+                fi
+                for quality1 in "${quality1_list[@]}" ; do
+                    for quality2 in "${quality2_list[@]}" ; do
+                        qualities="${quality1}-${quality2}"
+                        first="1000000"
+                        second="1000000"
+                        for buffer in "${buffer_list[@]}"; do
+                            for copy_buffer in ${copy_buffer_list[@]}; do
+                                if [[ $copy_buffer == 'none' || $copy_buffer == 'copy' ]]; then
+                                    buffer_mix_type_list=( "" )
+                                else
+                                    buffer_mix_type_list=( "_all" "_policy" "_value" )
+                                fi
+                                for buffer_mix_type in "${buffer_mix_type_list[@]}"; do
+                                    copy_buffer_str=$(echo ${copy_buffer} | sed "s/\_/\\\_/g")
+                                    buffer_mix_type_str=$(echo ${buffer_mix_type} | sed "s/\_/\\\_/g")
+                                    for copy_optim in "" "_copy_optim"; do
                                         TMPFILE1=$(mktemp) || exit 1
                                         echo "${algorithms_offline[@]}" | grep -wq ${algorithm1} && log_name=logs/online_change_task_${dataset}_${quality1}_${algorithm1}_${first}.latest.log || log_name=logs/online_change_task_${dataset}_${algorithm1}_${first}_${buffer}.latest.log
                                         if [[ -f $log_name ]]; then
@@ -68,7 +79,7 @@ for algorithm1 in "${algorithms_all[@]}"; do
                                             #echo $log_name
                                             awk -f online_change_task_data_processing.awk $log_name | sed "s/=//g" | sed "s/\}//g" > TMPFILE2
                                         else
-                                            echo $log_name not exist
+                                            #echo $log_name not exist
                                             continue
                                         fi
                                         pic_name=pics/online_change_task_${dataset}_${qualities}_${algorithms}_${first}_${second}_${buffer}${explore}${copy_optim}_${copy_buffer}${buffer_mix_type}.png
@@ -88,6 +99,6 @@ for algorithm1 in "${algorithms_all[@]}"; do
         done
     done
 done
-rm TMPFILE1
-rm TMPFILE2
+#rm TMPFILE1
+#rm TMPFILE2
 # | sed "s/,//g"
