@@ -110,12 +110,12 @@ while true; do
                 qualities="expert-medium";
             elif [[ $2 == "m" || $2 == "mm" ]]; then
                 qualities="medium-medium";
-            elif [[ $2 == "r" || $2 == "rr" ]]; then
-                qualities="random-random";
-            elif [[ $2 == "l" || $2 == "ll" ]]; then
-                qualities="medium_replay-medium_replay";
-            elif [[ $2 == "h" || $2 == "hh" ]]; then
-                qualities="medium_expert-medium_expert";
+            elif [[ $2 == "r" || $2 == "rm" ]]; then
+                qualities="random-medium";
+            elif [[ $2 == "l" || $2 == "lm" ]]; then
+                qualities="medium_replay-medium";
+            elif [[ $2 == "h" || $2 == "hm" ]]; then
+                qualities="medium_expert-medium";
             fi
             shift 2
             ;;

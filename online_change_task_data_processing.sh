@@ -41,7 +41,6 @@ for algorithm1 in "${algorithms_all[@]}"; do
                     has_online=1
                     copy_buffer_list=( "none" "copy" "mix_all" "mix_same" "ewc_same" "ewc_all" )
                 fi
-                echo ${algorithm1}_${algorithm2}_${quality1_list}_${quality2_list}
                 if [[ $has_online -eq 1 ]]; then
                     buffer_list=( "20000" "2000000" )
                 else
