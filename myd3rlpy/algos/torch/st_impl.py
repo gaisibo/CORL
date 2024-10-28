@@ -406,7 +406,6 @@ class STImpl():
         else:
             pass
         for t in range(len(iterator) if not test else 2):
-            print(f"inner ewc update {t}/{len(iterator) if not test else 2}")
             if isinstance(iterator, TransitionIterator):
                 batch = next(iterator)
             else:

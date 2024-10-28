@@ -35,12 +35,13 @@ def get_o2o_dict(algo, quality):
             o2o_dict['alpha'] = 2.5
             #o2o_dict['scaler'] = 'standard'
     elif algo in ['iql', 'iqln', 'iql_online', 'iqln_online']:
-        reward_scaler = d3rlpy.preprocessing.ReturnBasedRewardScaler(multiplier=1000.0)
+        if algo in ['iql', 'iqln']:
+            reward_scaler = d3rlpy.preprocessing.ReturnBasedRewardScaler(multiplier=1000.0)
+            o2o_dict["reward_scaler"] = reward_scaler
         o2o_dict["actor_learning_rate"] = 3e-4
         o2o_dict["critic_learning_rate"] = 3e-4
         o2o_dict["weight_temp"] = 3.0
         o2o_dict["max_weight"] = 100.0
-        o2o_dict["reward_scaler"] = reward_scaler
         if algo in ['iqln', 'iqln_online']:
             o2o_dict["n_ensemble"] = 10
     elif algo in ['ppo', 'bppo']:
