@@ -111,11 +111,11 @@ while true; do
             elif [[ $2 == "m" || $2 == "mm" ]]; then
                 qualities="medium-medium";
             elif [[ $2 == "r" || $2 == "rr" ]]; then
-                qualities="random-random";
+                qualities="random-medium";
             elif [[ $2 == "l" || $2 == "ll" ]]; then
-                qualities="medium_replay-medium_replay";
+                qualities="medium_replay-medium";
             elif [[ $2 == "h" || $2 == "hh" ]]; then
-                qualities="medium_expert-medium_expert";
+                qualities="medium_expert-medium";
             fi
             shift 2
             ;;
