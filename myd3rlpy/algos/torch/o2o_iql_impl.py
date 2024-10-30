@@ -30,9 +30,9 @@ class O2OIQLImpl(STIQLImpl, O2OImpl):
             self._actor_optim.load_state_dict(self._actor_optim.state_dict())
             self._critic_optim.load_state_dict(self._critic_optim.state_dict())
 
-    def copy_from_iqln(self, iql_impl: STIQLImpl, copy_optim: bool):
-        self.copy_from_iql(iql_impl, copy_optim)
-        #raise NotImplementedError, "iql cannot load iqln"
+    #   def copy_from_iqln(self, iql_impl: STIQLImpl, copy_optim: bool):
+    #       self.copy_from_iql(iql_impl, copy_optim)
+    #       #raise NotImplementedError, "iql cannot load iqln"
 
     def copy_from_sac(self, sac_impl: STSACImpl, copy_optim: bool):
         assert self._policy is not None
