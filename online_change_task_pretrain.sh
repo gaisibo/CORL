@@ -73,7 +73,7 @@ done
 #    fi
 #done
 
-algorithms_offline=( "iql" "cql" "cal" "td3_plus_bc" )
+algorithms_offline=( "iql" "iqln" "cql" "cal" "td3_plus_bc" )
 echo "${algorithms_offline[@]}" | grep -wq ${algorithms}
 if [[ $? == 0 ]]; then
     output_file_name=logs/online_change_task_${dataset}_${qualities}_${algorithms}_${n_critics}_${first_n_steps}.${expand_str}.log

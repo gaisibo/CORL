@@ -75,6 +75,7 @@ def main(args, use_gpu):
         #else:
         o2o0_path = "save_algos/" + load_name + '.pt'
         print(f"o2o0_path: {o2o0_path}")
+        assert False
         assert os.path.exists(o2o0_path)
         print(f'Start Loading Algo 0')
         loaded_data = torch.load(o2o0_path, map_location="cuda:" + str(use_gpu))
@@ -124,8 +125,8 @@ def main(args, use_gpu):
                         loaded_buffer.append_episode(episode)
             else:
                 raise NotImplementedError
-            # For making scalers
-            o2o1.make_transitions(loaded_mdp)
+            ## For making scalers
+            #o2o1.make_transitions(loaded_mdp)
             if args.continual_type in ['copy']:
                 buffer = loaded_buffer
                 old_buffer = None
