@@ -74,8 +74,6 @@ def main(args, use_gpu):
         #    o2o0_path = "save_algos/" + load_name + '.pt.test'
         #else:
         o2o0_path = "save_algos/" + load_name + '.pt'
-        print(f"o2o0_path: {o2o0_path}")
-        assert False
         assert os.path.exists(o2o0_path)
         print(f'Start Loading Algo 0')
         loaded_data = torch.load(o2o0_path, map_location="cuda:" + str(use_gpu))
@@ -146,6 +144,8 @@ def main(args, use_gpu):
             n_steps_per_epoch = args.n_steps_per_epoch
             scorers_env = {'evaluation': evaluate_on_environment(online_offline_wrapper(env))}
             scorers_list = [scorers_env]
+            if old_buffer is not None:
+                o2o1.after_learn(old_buffer, args.continual_type, args.buffer_mix_type, args.test)
             o2o1.fit_online(
                 env,
                 eval_env,
@@ -157,7 +157,7 @@ def main(args, use_gpu):
                 n_steps_per_epoch = args.n_steps_per_epoch,
                 save_steps=args.save_steps,
                 save_path=o2o1_path,
-                random_step=0 if args.explore else 100000,
+                random_step=100000 if args.non_explore else 100000,
                 test = args.test,
                 start_epoch = args.first_n_steps // args.n_steps_per_epoch + 1,
                 experiment_name=experiment_name + "_1",
@@ -283,7 +283,7 @@ if __name__ == '__main__':
     parser.add_argument('--continual_type', type=str, choices=['none', 'copy', 'mix_same', 'mix_all', 'ewc_same', 'ewc_all'], required=True)
     parser.add_argument('--buffer_mix_type', type=str, choices=['all', 'policy', 'value'], default='all')
     parser.add_argument("--dataset", default='halfcheetah', type=str)
-    parser.add_argument('--explore', action='store_true')
+    parser.add_argument('--non_explore', action='store_true')
 
     parser.add_argument('--experience_type', default='random_episode', type=str, choices=['all', 'none', 'single', 'online', 'generate', 'model_prob', 'model_next', 'model', 'model_this', 'coverage', 'random_transition', 'random_episode', 'max_reward', 'max_match', 'max_supervise', 'max_model', 'max_reward_end', 'max_reward_mean', 'max_match_end', 'max_match_mean', 'max_supervise_end', 'max_supervise_mean', 'max_model_end', 'max_model_mean', 'min_reward', 'min_match', 'min_supervise', 'min_model', 'min_reward_end', 'min_reward_mean', 'min_match_end', 'min_match_mean', 'min_supervise_end', 'min_supervise_mean', 'min_model_end', 'min_model_mean'])
     parser.add_argument('--max_export_step', default=1000, type=int)
@@ -321,7 +321,7 @@ if __name__ == '__main__':
     #if args.algorithms[1] not in ['ppo', 'bppo']:
     #    args.second_n_steps = 1000000
     #    args.n_steps_per_epoch = 1000
-    args.save_steps = [args.first_n_steps, 300000, 100000]
+    args.save_steps = [args.second_n_steps, 300000, 100000]
     #else:
     #args.second_n_steps = 100
     #args.n_steps_per_epoch = 10
@@ -350,5 +350,4 @@ if __name__ == '__main__':
     np.random.seed(seeds[args.seed])
     torch.manual_seed(seeds[args.seed])
     torch.cuda.manual_seed(seeds[args.seed])
-    print(f"use_gpu: {use_gpu}")
     main(args, use_gpu)

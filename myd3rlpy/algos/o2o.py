@@ -1,4 +1,4 @@
-from typing import Dict, Optional, List, Callable, Any, Union
+from typing import Dict, Optional, List, Callable, Any, Union, Tuple
 from tqdm.auto import trange
 import numpy as np
 from collections import defaultdict
@@ -373,8 +373,6 @@ class O2OBase(STBase):
             exploit_observation, _ = eval_env.reset()
         rollout_return = 0.0
 
-        if old_buffer is not None:
-            self.after_learn(old_buffer, continual_type, buffer_mix_type, test)
         for total_step in xrange(1, n_steps + 1):
             if total_step > 2000 and test:
                 break
@@ -489,8 +487,14 @@ class O2OBase(STBase):
                 if scorers_list and eval_episodes_list:
                     for scorer_num, (scorers, eval_episodes) in enumerate(zip(scorers_list, eval_episodes_list)):
                         rename_scorers = dict()
-                        for name, scorer in scorers.items():
-                            rename_scorers[str(scorer_num) + '_' + name] = scorer
+                        for names, scorer in scorers.items():
+                            names = names.split('-')
+                            new_name = ""
+                            for name_id, name in enumerate(names):
+                                new_name += str(scorer_num) + '_' + name
+                                if name_id != len(names) - 1:
+                                    new_name += "-"
+                            rename_scorers[new_name] = scorer
                         #print("test predict: {self._impl.predict_best_action()}")
                         self._evaluate(eval_episodes, rename_scorers, logger)
 
@@ -525,3 +529,25 @@ class O2OBase(STBase):
             self._impl.copy_from_cql(impl, copy_optim)
         else:
             raise NotImplementedError
+
+    def _evaluate(
+        self,
+        episodes: List[Episode],
+        scorers: Dict[str, Callable[[Any, List[Episode]], Union[float, List[float]]]],
+        logger: D3RLPyLogger,
+    ) -> None:
+        for names, scorer in scorers.items():
+            names = names.split('-')
+            # evaluation with test data
+            test_scores = scorer(self, episodes)
+            if not isinstance(test_scores, list):
+                test_scores = [test_scores]
+            assert len(names) == len(test_scores)
+            for name, test_score in zip(names, test_scores):
+
+                # logging metrics
+                logger.add_metric(name, test_score)
+
+                # store metric locally
+                if test_score is not None:
+                    self._eval_results[name].append(test_score)

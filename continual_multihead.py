@@ -17,13 +17,13 @@ def generate_scorers(args, env, envs, datasets, learned_tasks):
         origin_scorers = dict(zip(['origin_env_' + str(n) for n in datasets.keys()], [evaluate_on_environment(envs[str(n)], test_id=str(n), mix='mix' in args.dataset and n == '0', add_on=args.add_on, clone_actor=args.clone_actor) for n in learned_tasks]))
     else:
         raise NotImplementedError
-    if env is not None:
-        online_update_scorers = dict(zip(['online_update_env_' + str(n) for n in datasets.keys()], [online_update_evaluate_on_environment(env, test_id=str(n), mix='mix' in args.dataset and n == '0', add_on=args.add_on, clone_actor=args.clone_actor, task_id_dim=0 if not args.single_head else len(datasets.keys())) for n in learned_tasks]))
-    elif envs is not None:
-        online_update_scorers = dict(zip(['online_update_env_' + str(n) for n in datasets.keys()], [online_update_evaluate_on_environment(envs[str(n)], test_id=str(n), mix='mix' in args.dataset and n == '0', add_on=args.add_on, clone_actor=args.clone_actor) for n in learned_tasks]))
-    else:
-        raise NotImplementedError
-    origin_scorers.update(online_update_scorers)
+    #if env is not None:
+    #    online_update_scorers = dict(zip(['online_update_env_' + str(n) for n in datasets.keys()], [online_update_evaluate_on_environment(env, test_id=str(n), mix='mix' in args.dataset and n == '0', add_on=args.add_on, clone_actor=args.clone_actor, task_id_dim=0 if not args.single_head else len(datasets.keys())) for n in learned_tasks]))
+    #elif envs is not None:
+    #    online_update_scorers = dict(zip(['online_update_env_' + str(n) for n in datasets.keys()], [online_update_evaluate_on_environment(envs[str(n)], test_id=str(n), mix='mix' in args.dataset and n == '0', add_on=args.add_on, clone_actor=args.clone_actor) for n in learned_tasks]))
+    #else:
+    #    raise NotImplementedError
+    #origin_scorers.update(online_update_scorers)
     return origin_scorers
 
 def main(args, device):
@@ -57,7 +57,7 @@ def main(args, device):
 		#else:
 		#	inner_paths = ['dataset/macaw/' + args.inner_path.replace('num', str(i)).replace('dataset', args.dataset) for i in range(args.task_nums) for dataset in ['cheetah_dir', 'walker_dir', 'cheetah_vel']]
 		#	env_paths = ['dataset/macaw/' + args.env_path.replace('num', str(i)).replace('dataset', args.dataset) for i in range(args.task_nums) for dataset in ['cheetah_dir', 'walker_dir', 'cheetah_vel']]
-    #    origin_datasets, taskid_datasets, indexes_euclids, distances_euclids, env, real_action_size, real_observation_size, obs_space_dim, act_space_dim = split_macaw(args.top_euclid, args.dataset, inner_paths, env_paths, ask_indexes=ask_indexes, device=device)
+    #    origin_datasets, taskid_datasets, indexes_euclids, distances_euclids, env, real_action_size, real_observation_size, _, _ = split_macaw(args.top_euclid, args.dataset, inner_paths, env_paths, ask_indexes=ask_indexes, device=device)
     #    if args.single_head:
     #        datasets = taskid_datasets
     #    else:
@@ -86,10 +86,10 @@ def main(args, device):
         else:
             inner_paths = ['dataset/macaw/' + args.inner_path.replace('num', str(i)).replace('dataset', args.dataset) for i in range(args.task_nums) for dataset in ['cheetah_dir', 'walker_dir', 'cheetah_vel']]
             env_paths = ['dataset/macaw/' + args.env_path.replace('num', str(i)).replace('dataset', args.dataset) for i in range(args.task_nums) for dataset in ['cheetah_dir', 'walker_dir', 'cheetah_vel']]
-        origin_datasets, taskid_datasets, indexes_euclids, distances_euclids, env, real_action_size, real_observation_size, obs_space_dim, act_space_dim = split_macaw(args.top_euclid, args.dataset, inner_paths, env_paths, ask_indexes=ask_indexes, online=args.online_or_offline == 'online', device=device)
+        origin_datasets, taskid_datasets, indexes_euclids, distances_euclids, env, real_action_size, real_observation_size, _, _ = split_macaw(args.top_euclid, args.dataset, inner_paths, env_paths, ask_indexes=ask_indexes, online=args.online_or_offline == 'online', device=device)
     else:
         from dataset.continual_world import read_continual_world
-        origin_datasets, taskid_datasets, indexes_euclids, distances_euclids, env, real_action_size, real_observation_size, obs_space_dim, act_space_dim = read_continual_world(args.top_euclid, ask_indexes, online=args.online_or_offline == 'online', device=device)
+        origin_datasets, taskid_datasets, indexes_euclids, distances_euclids, env, real_action_size, real_observation_size, _, _ = read_continual_world(tasks, args.randomization)
     if args.single_head:
         datasets = taskid_datasets
     else:
@@ -427,6 +427,9 @@ if __name__ == '__main__':
     parser.add_argument('--gpu', type=str, default='0')
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--read_policy', type=int, default=-1)
+
+    # For online continual world
+    parser.add_argument('--randomization', type=str, default="random_init_all")
     args = parser.parse_args()
     if args.dataset != 'continual_world':
         args.env_path = f"dataset/env_dataset_train_tasknum.pkl"

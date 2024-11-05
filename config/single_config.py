@@ -1,5 +1,4 @@
 import d3rlpy
-from d3rlpy.preprocessing.reward_scalers import ConstantShiftRewardScaler
 
 
 def get_st_dict(args, dataset, algo, quality):
@@ -168,7 +167,7 @@ def get_st_dict(args, dataset, algo, quality):
             st_dict['weight_temp'] = 10.0
             st_dict['max_weight'] = 100.0
             st_dict['expectile'] = 0.9
-            reward_scaler = ConstantShiftRewardScaler(shift=-1)
+            reward_scaler = d3rlpy.preprocessing.ReturnBasedRewardScaler(multiplier=1000.0)
             st_dict['reward_scaler'] = reward_scaler
             if algo in ['iqln', 'iqln2', 'iqln3', 'iqln4']:
                 st_dict['n_ensemble'] = 10

@@ -274,25 +274,39 @@ def evaluate_on_environment(
     env: gym.Env, test_id: str=None, clone_actor: bool = False, n_trials: int = 100, epsilon: float = 0.0, render: bool = False, mix: bool = False, obs_pad_dim: int = 0, add_on: bool = False, task_id_dim: int = 0,
 ) -> Callable[..., float]:
     """Returns scorer function of evaluation on environment.
+
     This function returns scorer function, which is suitable to the standard
     scikit-learn scorer function style.
     The metrics of the scorer function is ideal metrics to evaluate the
     resulted policies.
+
     .. code-block:: python
+
         import gym
+
         from d3rlpy.algos import DQN
         from d3rlpy.metrics.scorer import evaluate_on_environment
+
+
         env = gym.make('CartPole-v0')
+
         scorer = evaluate_on_environment(env)
+
         cql = CQL()
+
         mean_episode_return = scorer(cql)
+
+
     Args:
         env: gym-styled environment.
         n_trials: the number of trials.
         epsilon: noise factor for epsilon-greedy policy.
         render: flag to render environment.
+
     Returns:
         scoerer function.
+
+
     """
 
     # for image observation
@@ -300,13 +314,6 @@ def evaluate_on_environment(
     is_image = len(observation_shape) == 3
 
     def scorer(algo: AlgoProtocol, *args: Any) -> float:
-        if test_id is not None:
-            try:
-                env.reset_task(int(test_id))
-            except:
-                pass
-            save_id = algo._impl._impl_id
-            algo._impl.change_task(test_id)
         if is_image:
             stacked_observation = StackedObservation(
                 observation_shape, algo.n_frames
@@ -314,10 +321,7 @@ def evaluate_on_environment(
 
         episode_rewards = []
         for _ in range(n_trials):
-            observation = env.reset()
-            if mix:
-                observation = np.concatenate([observation, np.zeros([observation.shape[0], obs_pad_dim - observation.shape[1]], dtype=np.float32)], axis=1)
-            observation = torch.from_numpy(observation).to(algo._impl.device).unsqueeze(dim=0).to(torch.float32)
+            observation, _ = env.reset()
             episode_reward = 0.0
 
             # frame stacking
@@ -325,45 +329,29 @@ def evaluate_on_environment(
                 stacked_observation.clear()
                 stacked_observation.append(observation)
 
-            i = 0
             while True:
-                if test_id is not None and task_id_dim != 0:
-                    task_id_tensor = torch.zeros(observation.shape[0], task_id_dim).to(observation.device).to(torch.float32)
-                    task_id_tensor[:, test_id] = 1
-                    observation = torch.cat([observation, task_id_tensor])
                 # take action
                 if np.random.random() < epsilon:
                     action = env.action_space.sample()
                 else:
-                    if test_id is not None and clone_actor and int(save_id) != 0:
-                        action = algo._impl._clone_policy(observation)
-                        action = action.squeeze().cpu().detach().numpy()
+                    if is_image:
+                        action = algo.predict([stacked_observation.eval()])[0]
                     else:
-                        action = algo._impl._policy(observation)
-                        action = action.squeeze().cpu().detach().numpy()
-                        if mix:
-                            action = action[:env.action_space.sample.shape[0]]
+                        action = algo.predict([observation])[0]
 
-                observation, reward, done, pos = env.step(action)
+                observation, reward, done, truncate, _ = env.step(action)
                 episode_reward += reward
-                observation = torch.from_numpy(observation).to(algo._impl.device).unsqueeze(dim=0).to(torch.float32)
+
+                if is_image:
+                    stacked_observation.append(observation)
 
                 if render:
                     env.render()
 
-                if done:
+                if done or truncate:
                     break
-                if i > 1000:
-                    break
-
-                i += 1
             episode_rewards.append(episode_reward)
-        if test_id is not None:
-            algo._impl.change_task(save_id)
-        if add_on:
-            return float(np.mean(episode_rewards))
-        else:
-            return float(np.max(episode_rewards))
+        return float(np.mean(episode_rewards))
 
     return scorer
 
@@ -400,7 +388,7 @@ def merge_evaluate_on_environment(
         device = algo1._impl.device
         episode_rewards = []
         for _ in range(n_trials):
-            observation = env.reset()
+            observation, _ = env.reset()
             observation = torch.from_numpy(observation).to(device).unsqueeze(dim=0).to(torch.float32)
             episode_reward = 0.0
 
@@ -418,14 +406,14 @@ def merge_evaluate_on_environment(
                     j2 += 1
                     action = action2.squeeze().cpu().detach().numpy()
 
-                observation, reward, done, pos = env.step(action)
+                observation, reward, done, truncate, _ = env.step(action)
                 episode_reward += reward
                 observation = torch.from_numpy(observation).to(device).unsqueeze(dim=0).to(torch.float32)
 
                 if render:
                     env.render()
 
-                if done:
+                if done or truncate:
                     break
                 if i > 1000:
                     break
@@ -720,3 +708,165 @@ def dataset_value_scorer(
             values = algo.predict_value(batch.observations, batch.actions)
             total_values += cast(np.ndarray, values).tolist()
     return float(np.mean(total_values))
+
+def critic_actor_diff(env: gym.Env, n_trials: int = 100, epsilon: float = 0.0, render: bool = False) -> Callable[..., List[float]]:
+    """Returns scorer function of evaluation on environment.
+    This function returns scorer function, which is suitable to the standard
+    scikit-learn scorer function style.
+    The metrics of the scorer function is ideal metrics to evaluate the
+    resulted policies.
+    .. code-block:: python
+        import gym
+        from d3rlpy.algos import DQN
+        from d3rlpy.metrics.scorer import evaluate_on_environment
+        env = gym.make('CartPole-v0')
+        scorer = evaluate_on_environment(env)
+        cql = CQL()
+        mean_episode_return = scorer(cql)
+    Args:
+        env: gym-styled environment.
+        n_trials: the number of trials.
+        epsilon: noise factor for epsilon-greedy policy.
+        render: flag to render environment.
+    Returns:
+        scoerer function.
+    """
+
+    # for image observation
+    observation_shape = env.observation_space.shape
+    is_image = len(observation_shape) == 3
+
+    def scorer(algo: AlgoProtocol, old_algo: AlgoProtocol) -> List[float]:
+        if is_image:
+            stacked_observation = StackedObservation(
+                observation_shape, algo.n_frames
+            )
+
+        episode_rewards = []
+        episode_q_diff = []
+        episode_action_diff = []
+        for _ in range(n_trials):
+            observation, _ = env.reset()
+            episode_reward = 0.0
+            q_diff = 0.0
+            action_diff = 0.0
+
+            # frame stacking
+            if is_image:
+                stacked_observation.clear()
+                stacked_observation.append(observation)
+
+            while True:
+                # take action
+                if np.random.random() < epsilon:
+                    action = env.action_space.sample()
+                else:
+                    if is_image:
+                        action = algo.predict([stacked_observation.eval()])[0]
+                    else:
+                        action = algo.predict([observation])[0]
+                    observation_torch = torch.from_numpy(observation).to(algo._impl._device).to(torch.float32)
+                    action_torch = torch.from_numpy(action).to(algo._impl._device).to(torch.float32)
+                    q = algo._impl._q_func(observation_torch, action_torch)
+                    old_q = old_algo._impl._q_func(observation_torch, action_torch)
+                    q_diff += torch.abs(q - old_q)
+
+                    old_action = old_algo._impl._policy(observation_torch)
+                    action_diff += torch.abs(action_torch - old_action)
+
+                observation, reward, done, truncate, _ = env.step(action)
+                episode_reward += reward
+
+                if is_image:
+                    stacked_observation.append(observation)
+
+                if render:
+                    env.render()
+
+                if done or truncate:
+                    break
+            episode_q_diff.append(q_diff.cpu().detach().numpy())
+            episode_action_diff.append(action_diff.cpu().detach().numpy())
+            episode_rewards.append(episode_reward)
+        return [float(np.mean(episode_rewards)), float(np.mean(episode_q_diff)), float(np.mean(episode_action_diff))]
+    return scorer
+
+def old_critic_actor_diff(env: gym.Env, n_trials: int = 100, epsilon: float = 0.0, render: bool = False) -> Callable[..., List[float]]:
+    """Returns scorer function of evaluation on environment.
+    This function returns scorer function, which is suitable to the standard
+    scikit-learn scorer function style.
+    The metrics of the scorer function is ideal metrics to evaluate the
+    resulted policies.
+    .. code-block:: python
+        import gym
+        from d3rlpy.algos import DQN
+        from d3rlpy.metrics.scorer import evaluate_on_environment
+        env = gym.make('CartPole-v0')
+        scorer = evaluate_on_environment(env)
+        cql = CQL()
+        mean_episode_return = scorer(cql)
+    Args:
+        env: gym-styled environment.
+        n_trials: the number of trials.
+        epsilon: noise factor for epsilon-greedy policy.
+        render: flag to render environment.
+    Returns:
+        scoerer function.
+    """
+
+    # for image observation
+    observation_shape = env.observation_space.shape
+    is_image = len(observation_shape) == 3
+
+    def scorer(algo: AlgoProtocol, old_algo: AlgoProtocol) -> List[float]:
+        if is_image:
+            stacked_observation = StackedObservation(
+                observation_shape, algo.n_frames
+            )
+
+        episode_q_diff = []
+        episode_action_diff = []
+        for _ in range(n_trials):
+            observation, _ = env.reset()
+            episode_reward = 0.0
+            q_diff = 0.0
+            action_diff = 0.0
+
+            # frame stacking
+            if is_image:
+                stacked_observation.clear()
+                stacked_observation.append(observation)
+
+            while True:
+                # take action
+                if np.random.random() < epsilon:
+                    action = env.action_space.sample()
+                else:
+                    if is_image:
+                        action = old_algo.predict([stacked_observation.eval()])[0]
+                    else:
+                        action = old_algo.predict([observation])[0]
+                    observation_torch = torch.from_numpy(observation).to(algo._impl._device).to(torch.float32)
+                    action_torch = torch.from_numpy(action).to(algo._impl._device).to(torch.float32)
+                    q = algo._impl._q_func(observation_torch, action_torch)
+                    old_q = old_algo._impl._q_func(observation_torch, action_torch)
+                    q_diff += torch.abs(q - old_q)
+
+                    old_action = old_algo._impl._policy(observation_torch)
+                    action_diff += torch.abs(action_torch - old_action)
+
+                observation, reward, done, truncate, _ = env.step(action)
+                episode_reward += reward
+
+                if is_image:
+                    stacked_observation.append(observation)
+
+                if render:
+                    env.render()
+
+                if done or truncate:
+                    break
+            episode_q_diff.append(q_diff.cpu().detach().numpy())
+            episode_action_diff.append(action_diff.cpu().detach().numpy())
+        return [float(np.mean(episode_q_diff)), float(np.mean(episode_action_diff))]
+    return scorer
