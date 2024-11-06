@@ -89,6 +89,10 @@ class STBase():
     """
     _sample_type: str
 
+    def change_task(self, task_id):
+        assert self._impl is not None, IMPL_NOT_INITIALIZED_ERROR
+        self._impl.change_task(task_id)
+
     def update(self, batch: TransitionMiniBatch, online: bool = False, batch_num: int=0, total_step: int=0, replay_batch: TransitionMiniBatch=None) -> Dict[int, float]:
     # def update(self, batch: TransitionMiniBatch, online: bool = False, batch_num: int=0, total_step: int=0, replay_batch: Optional[List[Tensor]]=None) -> Dict[int, float]:
         """Update parameters with mini-batch of data.

@@ -36,13 +36,13 @@ TASK_SEQS = {
         "window-close-v2",
         "peg-unplug-side-v2",
     ],
-    "SI10": [
-        "ALE/SpaceInvaders-v5",
-    ],
+    "ASI6": ("ALE/SpaceInvaders-v5", list(range(6))),
+    "ASI12": ("ALE/SpaceInvaders-v5", list(range(6)) + list(range(6))),
 }
 
 TASK_SEQS["CW20"] = TASK_SEQS["CW10"] + TASK_SEQS["CW10"]
 continual_world_datasets = ["CW10", "CW20"]
+atari_datasets = ["ASI6", "ASI12"]
 
 def read_dict(state_dict, prename):
     for key, value in state_dict.items():
@@ -66,9 +66,9 @@ def main(args, device):
         else:
             raise NotImplementedError
     elif args.dataset_kind == "atari":
-        tasks = TASK_SEQS[args.dataset]
-        envs = get_atari_envs(tasks, task_nums=list(range(args.dataset_num)) + list(range(args.dataset_num)), args.randomization)
-        eval_envs = get_atari_envs(tasks, task_nums=list(range(args.dataset_num)) + list(range(args.dataset_num)), args.randomization)
+        task, dataset_num = TASK_SEQS[args.dataset]
+        envs = get_atari_envs(task, task_nums=dataset_num, randomization=args.randomization)
+        eval_envs = get_atari_envs(task, task_nums=dataset_num, randomization=args.randomization)
         if args.dataset == 'SI20':
             env_ids = list(range(10)) + list(range(10))
         else:
@@ -86,14 +86,16 @@ def main(args, device):
     algo_dict = get_o2o_dict(args.algo, None)
     algo_dict["use_gpu"] = use_gpu
     algo_dict['impl_name'] = args.algo
+    algo_dict["actor_replay_type"] = args.actor_replay_type
+    algo_dict["critic_replay_type"] = args.critic_replay_type
     algo = O2O(**algo_dict)
 
     experiment_name = "Online" + '_'
     algos_name = args.algo
-    algos_name += "_" + args.continual_type
-    #algos_name += '_' + args.actor_replay_type
+    #algos_name += "_" + args.continual_type
+    algos_name += '_' + args.actor_replay_type
     #algos_name += '_' + str(args.actor_replay_lambda)
-    #algos_name += '_' + args.critic_replay_type
+    algos_name += '_' + args.critic_replay_type
     #algos_name += '_' + str(args.critic_replay_lambda)
     algos_name += '_' + args.dataset
     algos_name += '_' + str(args.max_save_num)
@@ -109,12 +111,11 @@ def main(args, device):
         for task_id, (env, eval_env, env_id) in enumerate(zip(envs, eval_envs, env_ids)):
             if args.clear_network:
                 algo = O2O(**algo_dict)
-            algo.change_task(task_id)
             if task_id > 0:
-                if args.continual_type == "bc":
+                if args.actor_replay_type == "bc" or args.critic_replay_type == "bc":
                     old_buffer = buffer
                     buffer = ReplayBuffer(args.n_buffer, env)
-                elif args.continual_type != "prefect_memory":
+                elif args.actor_replay_type != "prefect_memory" and args.critic_replay_type != "prefect_memory":
                     old_buffer = None
                     buffer = ReplayBuffer(args.n_buffer, env)
             if env_id not in learned_env_id:
@@ -148,7 +149,7 @@ def main(args, device):
                 raise NotImplementedError
 
             print(f'Start Training {task_id}')
-            algo.before_learn(buffer, args.continual_type, args.buffer_mix_type, args.test)
+            algo.before_learn(buffer, args.actor_replay_type, args.critic_replay_type, args.test)
             if task_id <= args.read_policy:
                 if args.read_policy == 0:
                     pretrain_path = "pretrained_network/" + "ST_" + args.algo_kind + '_' + args.dataset + '.pt'
@@ -157,6 +158,7 @@ def main(args, device):
                     pretrain_path = args.model_path + algos_name + '_' + args.dataset + " " + str(task_id) + '.pt'
 
                 algo.build_with_env(env)
+                algo.change_task(task_id)
                 algo._impl.save_clone_data()
                 algo.load_model(pretrain_path)
                 algo._impl.save_clone_data()
@@ -170,6 +172,7 @@ def main(args, device):
                 # train
                 print(f'learning {task_id}')
                 algo.build_with_env(env)
+                algo.change_task(task_id)
                 #for param_group in st._impl._actor_optim.param_groups:
                 #    param_group["lr"] = st_dict['actor_learning_rate']
                 #for param_group in st._impl._critic_optim.param_groups:
@@ -179,7 +182,8 @@ def main(args, device):
                     env,
                     eval_env,
                     buffer,
-                    continual_type = args.continual_type,
+                    args.actor_replay_type,
+                    args.critic_replay_type,
                     old_buffer = old_buffer,
                     #buffer_mix_type = args.buffer_mix_type,
                     n_steps = args.n_steps,
@@ -201,7 +205,6 @@ if __name__ == '__main__':
     parser.add_argument('--add_name', default='', type=str)
     parser.add_argument('--epoch', default='500', type=int)
     parser.add_argument("--dataset", default='CW20', type=str)
-    parser.add_argument("--dataset_num", default='6', type=str)
     parser.add_argument('--inner_path', default='', type=str)
     parser.add_argument('--env_path', default=None, type=str)
     parser.add_argument('--inner_buffer_size', default=-1, type=int)
@@ -232,9 +235,9 @@ if __name__ == '__main__':
     parser.add_argument("--n_action_samples", default=10, type=int)
     parser.add_argument('--top_euclid', default=64, type=int)
 
-    parser.add_argument('--critic_replay_type', default='bc', type=str, choices=['orl', 'bc', 'lwf', 'ewc', 'gem', 'agem', 'rwalk', 'si', 'none'])
+    parser.add_argument('--critic_replay_type', default='bc', type=str, choices=['orl', 'bc', 'er', 'prefect_memory', 'lwf', 'ewc', 'gem', 'agem', 'rwalk', 'si', 'none'])
     parser.add_argument('--critic_replay_lambda', default=100, type=float)
-    parser.add_argument('--actor_replay_type', default='orl', type=str, choices=['orl', 'bc', 'lwf', 'lwf_orl', 'ewc', 'gem', 'agem', 'rwalk', 'si', 'none'])
+    parser.add_argument('--actor_replay_type', default='orl', type=str, choices=['orl', 'bc', 'er', 'prefect_memory', 'lwf', 'lwf_orl', 'ewc', 'gem', 'agem', 'rwalk', 'si', 'none'])
     parser.add_argument('--actor_replay_lambda', default=1, type=float)
 
     parser.add_argument("--continual_type", default="ewc", type=str)
@@ -275,6 +278,8 @@ if __name__ == '__main__':
         args.algo_kind = 'cql'
     if args.dataset in continual_world_datasets:
         args.dataset_kind = "continual_world"
+    elif args.dataset in atari_datasets:
+        args.dataset_kind = "atari"
 
     args.model_path = 'd3rlpy' + '_' + args.dataset
     if not os.path.exists(args.model_path):

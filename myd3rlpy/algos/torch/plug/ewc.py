@@ -7,7 +7,7 @@ class EWC(Plug):
         # Store current parameters for the next task
         self.older_params = [{n: p.clone().detach() for n, p in network.named_parameters() if p.requires_grad} for network in networks]
         # Store fisher information weight importance
-        self.fisher = [{n: torch.zeros(p.shape).to(self.device) for n, p in network.named_parameters() if p.requires_grad} for network in networks]
+        self.fisher = [{n: torch.zeros(p.shape).to(p.device) for n, p in network.named_parameters() if p.requires_grad} for network in networks]
 
     def _add_ewc_loss(self, networks):
         replay_ewc_loss = 0

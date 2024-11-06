@@ -16,7 +16,10 @@ from d3rlpy.dataset import TransitionMiniBatch
 from myd3rlpy.iterators.base import TransitionIterator
 
 from myd3rlpy.algos.torch.plug.ewc import EWC
-from myd3rlpy.algos.torch.plug.r_walk import RWalk
+from myd3rlpy.algos.torch.plug.rwalk import RWalk
+from myd3rlpy.algos.torch.plug.si import SI
+from myd3rlpy.algos.torch.plug.gem import GEM
+from myd3rlpy.algos.torch.plug.agem import AGEM
 
 
 replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'terminals', 'policy_actions', 'qs']
@@ -56,16 +59,16 @@ class STImpl():
         self._clone_q_func = None
         self._clone_policy = None
 
-        self.task_id = 0
+        self._impl_id = 0
 
     def change_task(self, new_id):
-        self.task_id = new_id
+        self._impl_id = new_id
 
     def save_task(self):
-        self.save_task_id = self.task_id
+        self._save_impl_id = self._impl_id
 
     def load_task(self):
-        self.task_id = self.save_task_id
+        self._impl_id = self._save_impl_id
 
     def build(self):
         super().build()
@@ -86,7 +89,10 @@ class STImpl():
             self.critic_plug = GEM()
         elif self._critic_replay_type == 'agem':
             self.critic_plug = AGEM()
-        self.critic_plug.build(self._critic_networks)
+        else:
+            self.critic_plug = None
+        if self.critic_plug != None:
+            self.critic_plug.build(self._critic_networks)
 
         if self._actor_replay_type == "ewc":
             self.actor_plug = EWC()
@@ -98,7 +104,10 @@ class STImpl():
             self.actor_plug = GEM()
         elif self._actor_replay_type == 'agem':
             self.actor_plug = AGEM()
-        self.actor_plug.build(self._actor_networks)
+        else:
+            self.actor_plug = None
+        if self.actor_plug != None:
+            self.actor_plug.build(self._actor_networks)
 
     @train_api
     @torch_api(reward_scaler_targets=["batch", "replay_batch"])

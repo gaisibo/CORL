@@ -10,9 +10,9 @@ class RWalk(Plug):
         # Store current parameters for the next task
         older_params = [{n: p.clone().detach() for n, p in network.named_parameters() if p.requires_grad} for network in networks]
         # Store fisher information weight importance
-        fisher = [{n: torch.zeros(p.shape).to(self.device) for n, p in network.named_parameters() if p.requires_grad} for network in networks]
-        W = [{n: torch.zeros(p.shape).to(self.device) for n, p in network.named_parameters() if p.requires_grad} for network in networks]
-        scores = [{n: torch.zeros(p.shape).to(self.device) for n, p in network.named_parameters() if p.requires_grad} for network in networks]
+        fisher = [{n: torch.zeros(p.shape).to(p.device) for n, p in network.named_parameters() if p.requires_grad} for network in networks]
+        W = [{n: torch.zeros(p.shape).to(p.device) for n, p in network.named_parameters() if p.requires_grad} for network in networks]
+        scores = [{n: torch.zeros(p.shape).to(p.device) for n, p in network.named_parameters() if p.requires_grad} for network in networks]
         return older_params, fisher
 
     def _add_ewc_loss(self, networks):
@@ -39,7 +39,6 @@ class RWalk(Plug):
                     W[n] -= grad[n] * (p.detach() - curr_feat_ext[n])
 
     def _ewc_rwalk_post_train_process(self, networks, iterator, optim, update, batch_size=None, n_frames=None, n_steps=None, gamma=None, test=False):
-        looper = 
         for i, (network, fisher, score, W, older_param) in enumerate(zip(networks, self.fishers, self.scores, self.Ws, self.older_params)):
             curr_fisher = self.compute_fisher_matrix_diag(iterator, network, optim, update, batch_size, n_frames=n_frames, n_steps=n_steps, gamma=gamma, test=test)
             # merge fisher information, we do not want to keep fisher information for each task in memory
@@ -48,7 +47,7 @@ class RWalk(Plug):
                 fisher[n] = (self._ewc_rwalk_alpha * fisher[n] + (1 - self._ewc_rwalk_alpha) * curr_fisher[n])
 
             # Page 7: Optimization Path-based Parameter Importance: importance scores computation
-            curr_critic_score = {n: torch.zeros(p.shape).to(self.device) for n, p in network.named_parameters() if p.requires_grad}
+            curr_critic_score = {n: torch.zeros(p.shape).to(p.device) for n, p in network.named_parameters() if p.requires_grad}
             with torch.no_grad():
                 curr_critic_params = {n: p for n, p in network.named_parameters() if p.requires_grad}
                 for n, p in score.items():

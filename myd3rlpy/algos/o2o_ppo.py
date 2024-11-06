@@ -44,6 +44,8 @@ class O2OBPPO(O2OBase, AlgoBase):
     def __init__(
         self,
         *,
+        actor_replay_type: float = 3e-4,
+        critic_replay_type: float = 3e-4,
         actor_learning_rate: float = 3e-4,
         critic_learning_rate: float = 3e-4,
         actor_optim_factory: OptimizerFactory = AdamFactory(),
@@ -86,6 +88,8 @@ class O2OBPPO(O2OBase, AlgoBase):
             reward_scaler=reward_scaler,
             kwargs=kwargs,
         )
+        self._actor_replay_type = actor_replay_type
+        self._critic_replay_type = critic_replay_type
         self._actor_learning_rate = actor_learning_rate
         self._critic_learning_rate = critic_learning_rate
         self._actor_optim_factory = actor_optim_factory
@@ -118,8 +122,12 @@ class O2OBPPO(O2OBase, AlgoBase):
         impl_dict = {
             'observation_shape':observation_shape,
             'action_size':action_size,
+            'actor_replay_type':self._actor_replay_type,
+            'critic_replay_type':self._critic_replay_type,
             'actor_learning_rate':self._actor_learning_rate,
             'critic_learning_rate':self._critic_learning_rate,
+            'actor_replay_lambda':self._actor_replay_lambda,
+            'critic_replay_lambda':self._critic_replay_lambda,
             'temp_learning_rate':self._temp_learning_rate,
             'actor_optim_factory':self._actor_optim_factory,
             'critic_optim_factory':self._critic_optim_factory,
@@ -127,10 +135,6 @@ class O2OBPPO(O2OBase, AlgoBase):
             'actor_encoder_factory':self._actor_encoder_factory,
             'critic_encoder_factory':self._critic_encoder_factory,
             'q_func_factory':self._q_func_factory,
-            'critic_replay_type':self._critic_replay_type,
-            'critic_replay_lambda':self._critic_replay_lambda,
-            'actor_replay_type':self._actor_replay_type,
-            'actor_replay_lambda':self._actor_replay_lambda,
             'gamma':self._gamma,
             'gem_alpha':self._gem_alpha,
             'agem_alpha':self._agem_alpha,

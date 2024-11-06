@@ -56,6 +56,7 @@ class OneHotAdder(gym.Wrapper):
         if orig_one_hot_dim > 0:
             orig_obs_low = orig_obs_low[:-orig_one_hot_dim]
             orig_obs_high = orig_obs_high[:-orig_one_hot_dim]
+        print(f"self.observation_shape: {self.observation_shape}")
         self.observation_space = Box(
             np.concatenate([orig_obs_low, np.zeros(one_hot_len)]),
             np.concatenate([orig_obs_high, np.ones(one_hot_len)]),

@@ -37,9 +37,9 @@ class O2OBase(STBase):
         dataset: Optional[Union[List[Episode], MDPDataset]] = None,
         iterator: Optional[TransitionIterator] = None,
         old_iterator: Optional[TransitionIterator] = None,
-        continual_type: str = "er",
+        actor_replay_type: str = "er",
+        critic_replay_type: str = "er",
         buffer_mix_ratio: float = 0.5,
-        buffer_mix_type: str = "all",
         n_epochs: int = 1000,
         n_steps_per_epoch: int = 1000,
         save_metrics: bool = True,
@@ -98,10 +98,10 @@ class O2OBase(STBase):
                 self._process_observation_shape(observation_shape),
                 dataset.get_action_size(),
             )
-            self._impl._impl_id = 0
+            #self._impl._impl_id = 0
             LOG.debug("Models have been built.")
         else:
-            self._impl._impl_id = 0
+            #self._impl._impl_id = 0
             # self._impl.rebuild_critic()
             LOG.warning("Skip building models since they're already built.")
 
@@ -160,7 +160,7 @@ class O2OBase(STBase):
                 with logger.measure_time("step"):
                     # pick transitions
                     with logger.measure_time("sample_batch"):
-                        if old_iterator is not None and continual_type == "er":
+                        if old_iterator is not None and (actor_replay_type == "er" or critic_replay_type == "er"):
                             new_batch = next(iterator)
                             try:
                                 old_batch = next(old_iterator)
@@ -171,16 +171,14 @@ class O2OBase(STBase):
                             mix_batch = TransitionMiniBatch(
                                     part_new_batch.transitions + old_batch.transitions
                                     )
-                            if buffer_mix_type == 'all':
-                                value_batch = policy_batch = mix_batch
-                            elif buffer_mix_type == 'policy':
+                            if actor_replay_type == 'er':
                                 policy_batch = mix_batch
-                                value_batch = new_batch
-                            elif buffer_mix_type == 'value':
+                            else:
                                 policy_batch = new_batch
+                            if critic_replay_type == 'er':
                                 value_batch = mix_batch
                             else:
-                                raise NotImplementedError
+                                value_batch = new_batch
                         else:
                             policy_batch = next(iterator)
                             value_batch = policy_batch
@@ -266,10 +264,10 @@ class O2OBase(STBase):
         env: gym.envs,
         eval_env: gym.envs,
         buffer: Optional[Buffer],
+        actor_replay_type: str = "er",
+        critic_replay_type: str = "er",
         old_buffer: Optional[Buffer] = None,
         buffer_mix_ratio: float = 0.5,
-        continual_type: str = "er",
-        buffer_mix_type: str = "all",
         n_steps: int = 1000000,
         n_steps_per_epoch: int = 10000,
         start_epoch: int = 0,
@@ -347,11 +345,11 @@ class O2OBase(STBase):
                 self._process_observation_shape(observation_shape),
                 dataset.get_action_size(),
             )
-            self._impl._impl_id = 0
+            #self._impl._impl_id = 0
             LOG.debug("Models have been built.")
         else:
             # self._impl.rebuild_critic()
-            self._impl._impl_id = 0
+            #self._impl._impl_id = 0
             LOG.warning("Skip building models since they're already built.")
 
         # save hyperparameters
@@ -434,7 +432,7 @@ class O2OBase(STBase):
                     if total_step % update_interval == 0:
                         # sample mini-batch
                         with logger.measure_time("sample_batch"):
-                            if old_buffer is not None:
+                            if old_buffer is not None and (actor_replay_type == "er" or critic_replay_type == "er"):
                                 new_batch = buffer.sample(
                                     batch_size=self._batch_size,#round((1 - buffer_mix_ratio) * self._batch_size),
                                     n_frames=self._n_frames,
@@ -451,16 +449,14 @@ class O2OBase(STBase):
                                 mix_batch = OldTransitionMiniBatch(
                                         part_new_batch.transitions + old_batch.transitions
                                         )
-                                if buffer_mix_type == 'all':
-                                    value_batch = policy_batch = mix_batch
-                                elif buffer_mix_type == 'policy':
+                                if actor_replay_type == 'er':
                                     policy_batch = mix_batch
-                                    value_batch = new_batch
-                                elif buffer_mix_type == 'value':
+                                else:
                                     policy_batch = new_batch
+                                if critic_replay_type == 'er':
                                     value_batch = mix_batch
                                 else:
-                                    raise NotImplementedError
+                                    value_batch = new_batch
                             else:
                                 policy_batch = buffer.sample(
                                     batch_size=self._batch_size,
@@ -510,16 +506,16 @@ class O2OBase(STBase):
         # close logger
         logger.close()
 
-    def before_learn(self, iterator, continual_type, buffer_mix_type, test):
-        if continual_type in ['packnet'] and buffer_mix_type in ['all', 'value']:
+    def before_learn(self, iterator, actor_replay_type, critic_replay_type, test):
+        if critic_replay_type in ['packnet']:
             self._impl.critic_packnet_pre_train_process(iterator, self._batch_size, self._n_frames, self._n_steps, self._gamma, test=test)
-        if continual_type in ['packnet'] and buffer_mix_type in ['all', 'policy']:
+        if actor_replay_type in ['packnet']:
             self._impl.actor_packnet_pre_train_process(iterator, self._batch_size, self._n_frames, self._n_steps, self._gamma, test=test)
 
-    def after_learn(self, iterator, continual_type, buffer_mix_type, test):
-        if continual_type in ['rwalk_same', 'rwalk_all', 'ewc_same', 'ewc_all'] and buffer_mix_type in ['all', 'value']:
+    def after_learn(self, iterator, actor_replay_type, critic_replay_type, test):
+        if critic_replay_type in ['rwalk', 'ewc']:
             self._impl.critic_ewc_rwalk_post_train_process(iterator, self._batch_size, self._n_frames, self._n_steps, self._gamma, test=test)
-        if continual_type in ['rwalk_same', 'rwalk_all', 'ewc_same', 'ewc_all'] and buffer_mix_type in ['all', 'policy']:
+        if actor_replay_type in ['rwalk', 'ewc']:
             self._impl.actor_ewc_rwalk_post_train_process(iterator, self._batch_size, self._n_frames, self._n_steps, self._gamma, test=test)
 
     def copy_from_past(self, arg0: str, impl: STImpl, copy_optim: bool):

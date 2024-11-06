@@ -67,8 +67,8 @@ class GEM(Plug):
     def build(self, networks):
         # Allocate temporary synaptic memory
         self.grad_dims = [[pp.data.numel() for pp in network.parameters()] for network in networks]
-        self.grads_cs = [torch.zeros(np.sum(grad_dims)).to(self.device) for grad_dims in self.grad_dims]
-        self.grads_da = [torch.zeros(np.sum(grad_dims)).to(self.device) for grad_dims in self.grad_dims]
+        self.grads_cs = [torch.zeros(np.sum(grad_dims)).to(networks[0].device) for grad_dims in self.grad_dims]
+        self.grads_da = [torch.zeros(np.sum(grad_dims)).to(networks[0].device) for grad_dims in self.grad_dims]
 
     def _pre_gem_loss(self, networks):
         for network, grads_cs, grad_dim in zip(networks, self.grads_cs, self.grad_dims):
