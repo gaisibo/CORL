@@ -128,7 +128,6 @@ class O2OBase(STBase):
         print(f'train policy')
         if old_iterator is not None:
             old_iterator.reset()
-            self.after_learn(old_buffer, continual_type, buffer_mix_type, test)
         for epoch in range(1, n_epochs + 1):
             if epoch > 1 and test:
                 break
@@ -510,6 +509,12 @@ class O2OBase(STBase):
 
         # close logger
         logger.close()
+
+    def before_learn(self, iterator, continual_type, buffer_mix_type, test):
+        if continual_type in ['packnet'] and buffer_mix_type in ['all', 'value']:
+            self._impl.critic_packnet_pre_train_process(iterator, self._batch_size, self._n_frames, self._n_steps, self._gamma, test=test)
+        if continual_type in ['packnet'] and buffer_mix_type in ['all', 'policy']:
+            self._impl.actor_packnet_pre_train_process(iterator, self._batch_size, self._n_frames, self._n_steps, self._gamma, test=test)
 
     def after_learn(self, iterator, continual_type, buffer_mix_type, test):
         if continual_type in ['rwalk_same', 'rwalk_all', 'ewc_same', 'ewc_all'] and buffer_mix_type in ['all', 'value']:

@@ -258,7 +258,7 @@ class ContinualLearningEnv(gym.Env):
         self._check_steps_bound()
         return self.envs[self.cur_seq_idx].reset()
 
-def get_atari_envs(tasks: List[Union[int, str]], randomization: str = "random_init_all") -> List[gym.Env]:
+def get_atari_envs(task: str, task_nums: List[int], randomization: str = "random_init_all") -> List[gym.Env]:
     """Returns continual learning environment.
 
     Args:
@@ -269,12 +269,11 @@ def get_atari_envs(tasks: List[Union[int, str]], randomization: str = "random_in
     Returns:
       gym.Env: continual learning environment
     """
-    task_names = [get_task_name(task) for task in tasks]
-    num_tasks = len(task_names)
+    num_tasks = len(task_nums)
     envs = []
     env_ids = []
-    for i, task_name in enumerate(task_names):
-        env = gym.make(task_name)
+    for i, task_num in enumerate(task_nums):
+        env = gym.make(task, mode=task_num)
         #env = RandomizationWrapper(env, get_subtasks(task_name), randomization)
         env = OneHotAdder(env, one_hot_idx=i, one_hot_len=num_tasks)
         env.name = task_name

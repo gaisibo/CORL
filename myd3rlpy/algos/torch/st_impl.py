@@ -15,8 +15,8 @@ from myd3rlpy.torch_utility import torch_api
 from d3rlpy.dataset import TransitionMiniBatch
 from myd3rlpy.iterators.base import TransitionIterator
 
-from myd3rlpy.algos.torch.gem import overwrite_grad, store_grad, project2cone2
-from myd3rlpy.algos.torch.agem import project
+from myd3rlpy.algos.torch.plug.ewc import EWC
+from myd3rlpy.algos.torch.plug.r_walk import RWalk
 
 
 replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'terminals', 'policy_actions', 'qs']
@@ -56,134 +56,49 @@ class STImpl():
         self._clone_q_func = None
         self._clone_policy = None
 
+        self.task_id = 0
+
+    def change_task(self, new_id):
+        self.task_id = new_id
+
+    def save_task(self):
+        self.save_task_id = self.task_id
+
+    def load_task(self):
+        self.task_id = self.save_task_id
+
     def build(self):
         super().build()
 
         self._critic_networks = [self._q_func]
         self._actor_networks = [self._policy]
+        self._continual_build()
 
+    def _continual_build(self):
         assert self._q_func is not None
-        if self._critic_replay_type in ['ewc', 'rwalk', 'si']:
-            # Store current parameters for the next task
-            self._critic_older_params = [{n: p.clone().detach() for n, p in network.named_parameters() if p.requires_grad} for network in self._critic_networks]
-            if self._critic_replay_type in ['ewc', 'rwalk']:
-                # Store fisher information weight importance
-                self._critic_fisher = [{n: torch.zeros(p.shape).to(self.device) for n, p in network.named_parameters() if p.requires_grad} for network in self._critic_networks]
-            if self._critic_replay_type == 'rwalk':
-                # Page 7: "task-specific parameter importance over the entire training trajectory."
-                self._critic_W = [{n: torch.zeros(p.shape).to(self.device) for n, p in network.named_parameters() if p.requires_grad} for network in self._critic_networks]
-                self._critic_scores = [{n: torch.zeros(p.shape).to(self.device) for n, p in network.named_parameters() if p.requires_grad} for network in self._critic_networks]
-            elif self._critic_replay_type == 'si':
-                self._critic_W = [{n: p.clone().detach().zero_() for n, p in network.named_parameters() if p.requires_grad} for network in self._critic_networks]
-                self._critic_omega = [{n: p.clone().detach().zero_() for n, p in network.named_parameters() if p.requires_grad} for network in self._critic_networks]
+        if self._critic_replay_type == "ewc":
+            self.critic_plug = EWC()
+        elif self._critic_replay_type == "rwalk":
+            self.critic_plug = RWalk(self._damping)
+        elif self._critic_replay_type == 'si':
+            self.critic_plug = SI(self._epsilon)
         elif self._critic_replay_type == 'gem':
-            # Allocate temporary synaptic memory
-            self._critic_grad_dims = [[pp.data.numel() for pp in network.parameters()] for network in self._critic_networks]
-            self._critic_grads_cs = [torch.zeros(np.sum(critic_grad_dims)).to(self.device) for critic_grad_dims in self._critic_grad_dims]
-            self._critic_grads_da = [torch.zeros(np.sum(critic_grad_dims)).to(self.device) for critic_grad_dims in self._critic_grad_dims]
+            self.critic_plug = GEM()
         elif self._critic_replay_type == 'agem':
-            self._critic_grad_dims = [[pp.data.numel() for pp in network.parameters()] for network in self._critic_networks]
-            self._critic_grad_xy = [torch.zeros(np.sum(critic_grad_dims)).to(self.device) for critic_grad_dims in self._critic_grad_dims]
-            self._critic_grad_er = [torch.zeros(np.sum(critic_grad_dims)).to(self.device) for critic_grad_dims in self._critic_grad_dims]
+            self.critic_plug = AGEM()
+        self.critic_plug.build(self._critic_networks)
 
-        if self._actor_replay_type in ['ewc', 'rwalk', 'si']:
-            # Store current parameters for the next task
-            self._actor_older_params = [{n: p.clone().detach() for n, p in network.named_parameters() if p.requires_grad} for network in self._actor_networks]
-            if self._actor_replay_type in ['ewc', 'rwalk']:
-                # Store fisher information weight importance
-                self._actor_fisher = [{n: torch.zeros(p.shape).to(self.device) for n, p in network.named_parameters() if p.requires_grad} for network in self._actor_networks]
-            if self._actor_replay_type == 'rwalk':
-                # Page 7: "task-specific parameter importance over the entire training trajectory."
-                self._actor_W = [{n: torch.zeros(p.shape).to(self.device) for n, p in network.named_parameters() if p.requires_grad} for network in self._actor_networks]
-                self._actor_scores = [{n: torch.zeros(p.shape).to(self.device) for n, p in network.named_parameters() if p.requires_grad} for network in self._actor_networks]
-            elif self._actor_replay_type == 'si':
-                self._actor_W = [{n: p.clone().detach().zero_() for n, p in network.named_parameters() if p.requires_grad} for network in self._actor_networks]
-                self._actor_omega = [{n: p.clone().detach().zero_() for n, p in network.named_parameters() if p.requires_grad} for network in self._actor_networks]
+        if self._actor_replay_type == "ewc":
+            self.actor_plug = EWC()
+        elif self._actor_replay_type == "rwalk":
+            self.actor_plug = RWalk(self._damping)
+        elif self._actor_replay_type == 'si':
+            self.actor_plug = SI(self._epsilon)
         elif self._actor_replay_type == 'gem':
-            # Allocate temporary synaptic memory
-            self._actor_grad_dims = [[pp.data.numel() for pp in network.parameters()] for network in self._actor_networks]
-            self._actor_grads_cs = [torch.zeros(np.sum(actor_grad_dims)).to(self.device) for actor_grad_dims in self._actor_grad_dims]
-            self._actor_grads_da = [torch.zeros(np.sum(actor_grad_dims)).to(self.device) for actor_grad_dims in self._actor_grad_dims]
+            self.actor_plug = GEM()
         elif self._actor_replay_type == 'agem':
-            self._actor_grad_dims = [[pp.data.numel() for pp in network.parameters()] for network in self._actor_networks]
-            self._actor_grad_xy = [torch.zeros(np.sum(actor_grad_dims)).to(self.device) for actor_grad_dims in self._actor_grad_dims]
-            self._actor_grad_er = [torch.zeros(np.sum(actor_grad_dims)).to(self.device) for actor_grad_dims in self._actor_grad_dims]
-
-    def _add_ewc_loss(self, networks, fishers, older_params):
-        replay_ewc_loss = 0
-        for network, fisher, older_param in zip(networks, fishers, older_params):
-            for n, p in network.named_parameters():
-                if n in fisher.keys():
-                    replay_ewc_loss += torch.mean(fisher[n] * (p - older_param[n]).pow(2)) / 2
-        return replay_ewc_loss
-
-    def _pre_rwalk_loss(self, networks, fishers, scores, older_params):
-        unreg_grads = [{n: p.grad.clone().detach() for n, p in network.named_parameters() if p.grad is not None} for network in networks]
-        replay_rwalk_loss = 0
-        for network, fisher, score, older_param in zip(networks, fishers, scores, older_params):
-            for n, p in network.named_parameters():
-                if n in fisher.keys():
-                    replay_rwalk_loss += torch.mean((fisher[n] + score[n]) * (p - older_param[n]).pow(2)) / 2
-        return unreg_grads, replay_rwalk_loss
-
-    def _add_si_loss(self, networks, older_params, Ws, omegas):
-        for network, older_param, W, omega in zip(networks, older_params, Ws, omegas):
-            for n, p in network.named_parameters():
-                if p.grad is not None and n in W.keys():
-                    p_change = p.detach().clone() - older_param[n]
-                    W[n].add_(-p.grad * p_change)
-                    omega_add = W[n] / (p_change ** 2 + self._epsilon)
-                    omega_old = omega[n]
-                    omega_new = omega_old + omega_add
-                    omega[n] = omega_new
-        replay_si_loss = 0
-        for network, omega, older_param in zip(networks, omegas, older_params):
-            for n, p in network.named_parameters():
-                if p.requires_grad:
-                    replay_si_loss += torch.mean(omega[n] * (p - older_param[n]) ** 2)
-                older_param[n].data = p.data.clone()
-        return replay_si_loss
-
-    def _pre_gem_loss(self, networks, grads_cs, grad_dims):
-        for network, grads_cs, grad_dim in zip(networks, grads_cs, grad_dims):
-            store_grad(network.parameters(), grads_cs, grad_dim)
-
-    def _pre_agem_loss(self, networks, grad_xys, grad_dims):
-        for network, grad_xy, grad_dim in zip(networks, grad_xys, grad_dims):
-            store_grad(network.parameters(), grad_xy, grad_dim)
-
-    def _pos_agem_loss(self, networks, grad_ers, grad_dims, grad_xys):
-        for network, grad_er, grad_dim, grad_xy in zip(networks, grad_ers, grad_dims, grad_xys):
-            store_grad(network.parameters(), grad_er, grad_dim)
-            dot_prod = torch.dot(grad_xy, grad_er)
-            if dot_prod.item() < 0:
-                g_tilde = project(gxy=grad_xy, ger=grad_er)
-                overwrite_grad(network.parameters, g_tilde, grad_dim)
-            else:
-                overwrite_grad(network.parameters, grad_xy, grad_dim)
-
-    def _pos_gem_loss(self, networks, grads_das, grad_dims, grads_css):
-        for network, grads_da, grad_dim, grads_cs in zip(networks, grads_das, grad_dims, grads_css):
-            # copy gradient
-            store_grad(network.parameters(), grads_da, grad_dim)
-            dot_prod = torch.dot(grads_da, grads_cs)
-            if (dot_prod < 0).sum() != 0:
-                # project2cone2(self._actor_grads_da.unsqueeze(1),
-                #               torch.stack(list(self._actor_grads_cs).values()).T, margin=self._gem_alpha)
-                project2cone2(grads_da.unsqueeze(dim=1), grads_cs.unsqueeze(dim=1), margin=self._gem_alpha)
-                # copy gradients back
-                overwrite_grad(network.parameters, grads_da, grad_dims)
-
-    def _pos_rwalk_loss(self, networks, unreg_grads, Ws, curr_feat_exts):
-        for network, grad, W, curr_feat_ext in zip(networks, unreg_grads, Ws, curr_feat_exts):
-            for n, p in network.named_parameters():
-                if n in grad.keys():
-                    W[n] -= grad[n] * (p.detach() - curr_feat_ext[n])
-
-    #@eval_api
-    #@torch_api(scaler_targets=["x"])
-    #def predict_best_action(self, x: torch.Tensor) -> np.ndarray:
-    #    return super().predict_best_action(x)
+            self.actor_plug = AGEM()
+        self.actor_plug.build(self._actor_networks)
 
     @train_api
     @torch_api(reward_scaler_targets=["batch", "replay_batch"])
@@ -213,7 +128,7 @@ class STImpl():
                     replay_bc_loss += F.mse_loss(clone_value, value)
                 replay_loss = replay_loss + replay_bc_loss
             elif self._critic_replay_type == "ewc":
-                replay_ewc_loss = self._add_ewc_loss(self._critic_networks, self._critic_fisher, self._critic_older_params)
+                replay_ewc_loss = self.critic_plug._add_ewc_loss(self._critic_networks, self._critic_plug.fisher, self._critic_plug.older_params)
                 replay_loss = replay_loss + replay_ewc_loss
             elif self._critic_replay_type == 'rwalk':
                 curr_feat_ext = [{n: p.clone().detach() for n, p in network.named_parameters() if p.requires_grad} for network in self._critic_networks]
@@ -223,18 +138,18 @@ class STImpl():
                 loss = self.compute_critic_loss(batch, q_tpn, clone_critic=clone_critic, online=online, first_time=replay_batch==None)
                 loss.backward(retain_graph=True)
 
-                unreg_grads, replay_rwalk_loss = self._pre_rwalk_loss(self._critic_networks, self._critic_fisher, self._critic_scores, self._critic_older_params)
+                unreg_grads, replay_rwalk_loss = self.critic_plug._pre_rwalk_loss(self._critic_networks, self._critic_plug.fisher, self._critic_plug.scorers, self._critic_plug.older_params)
                 replay_loss = replay_loss + replay_rwalk_loss
             elif self._critic_replay_type == 'si':
-                replay_si_loss = self._add_si_loss(self._critic_networks, self._critic_older_params, self._critic_W, self._critic_omega)
+                replay_si_loss = self._add_si_loss(self._critic_networks)
                 replay_loss = replay_loss + replay_si_loss
             elif self._critic_replay_type == 'gem':
                 q_tpn = self.compute_target(replay_batch)
                 replay_loss = self.compute_critic_loss(replay_batch, q_tpn, clone_critic=clone_critic)
                 replay_loss.backward()
-                self._pre_gem_loss(self._critic_networks, self._critic_grads_cs, self._critic_grad_dims)
+                self._pre_gem_loss(self._critic_networks)
             elif self._critic_replay_type == "agem":
-                self._pre_agem_loss(self._critic_networks, self._critic_grad_xy, self._critic_grad_dims)
+                self._pre_agem_loss(self._critic_networks)
                 q_tpn = self.compute_target(replay_batch)
                 replay_agem_loss += self.compute_critic_loss(replay_batch, q_tpn, clone_critic=clone_critic)
                 replay_loss = replay_loss + replay_agem_loss
@@ -249,9 +164,9 @@ class STImpl():
             if self._critic_replay_type == 'agem':
                 self._critic_optim.zero_grad()
                 replay_loss.backward()
-                self._pos_agem_loss(self._critic_networks, self._critic_grad_er, self._critic_grad_dims, self._critic_grad_xy)
+                self._pos_agem_loss(self._critic_networks)
             elif self._critic_replay_type == 'gem':
-                self._pos_gem_loss(self._critic_networks, self._critic_grads_da, self._critic_grad_dims, self._critic_grads_cs)
+                self._pos_gem_loss(self._critic_networks)
         self._critic_optim.step()
 
         if replay_batch is not None and not online:
@@ -259,7 +174,7 @@ class STImpl():
                 assert unreg_grads is not None
                 assert curr_feat_ext is not None
                 with torch.no_grad():
-                    self._pos_rwalk_loss(self._critic_networks, unreg_grads, self._critic_W, curr_feat_ext)
+                    self.critic_plug._pos_rwalk_loss(self._critic_networks, unreg_grads, self._critic_plug.W, curr_feat_ext)
 
         loss = loss.cpu().detach().numpy()
         if not isinstance(replay_loss, int):
@@ -341,7 +256,7 @@ class STImpl():
                 replay_loss_ = -q_t.mean()
                 replay_loss = replay_loss + replay_loss_
             elif self._actor_replay_type == "ewc":
-                replay_ewc_loss = self._add_ewc_loss(self._actor_networks, self._actor_fisher, self._actor_older_params)
+                replay_ewc_loss = self.actor_plug._add_ewc_loss(self._actor_networks, self._actor_plug.fisher, self._actor_plug.older_params)
                 replay_loss = replay_loss + replay_ewc_loss
             elif self._actor_replay_type == 'rwalk':
                 curr_feat_ext = {n: p.clone().detach() for n, p in self._policy.named_parameters() if p.requires_grad}
@@ -349,18 +264,18 @@ class STImpl():
                 loss = self.compute_actor_loss(batch, clone_actor=clone_actor)
                 loss.backward(retain_graph=True)
                 # Eq. 3: elastic weight consolidation quadratic penalty
-                unreg_grads, replay_rwalk_loss = self._pre_rwalk_loss(self._actor_networks, self._actor_fisher, self._critic_scores, self._critic_older_params)
+                unreg_grads, replay_rwalk_loss = self._pre_rwalk_loss(self._actor_networks, self._actor_plug.fisher, self._critic_plug.scorers, self._critic_plug.older_params)
                 replay_loss = replay_loss + replay_rwalk_loss
             elif self._actor_replay_type == 'si':
-                replay_si_loss = self._add_si_loss(self._actor_networks, self._actor_older_params, self._actor_W, self._actor_omega)
+                replay_si_loss = self._add_si_loss(self._actor_networks)
                 replay_loss = replay_loss + replay_si_loss
             elif self._actor_replay_type == 'gem':
                 replay_loss_ = self.compute_actor_loss(replay_batch, clone_actor=clone_actor)
                 replay_loss = replay_loss_
                 replay_loss.backward()
-                self._pre_gem_loss(self._actor_networks, self._actor_grads_cs, self._actor_grad_dims)
+                self._pre_gem_loss(self._actor_networks)
             elif self._actor_replay_type == "agem":
-                self._pre_agem_loss(self._actor_networks, self._actor_grad_xy, self._actor_grad_dims)
+                self._pre_agem_loss(self._actor_networks)
                 replay_loss_ = self.compute_actor_loss(replay_batch, clone_actor=clone_actor)
                 replay_loss = replay_loss + replay_loss_
 
@@ -374,9 +289,9 @@ class STImpl():
             if self._actor_replay_type == 'agem':
                 self._actor_optim.zero_grad()
                 replay_loss.backward()
-                self._pos_agem_loss(self._actor_networks, self._actor_grad_er, self._actor_grad_dims, self._actor_grad_xy)
+                self._pos_agem_loss(self._actor_networks)
             elif self._actor_replay_type == 'gem':
-                self._pos_gem_loss(self._actor_networks, self._actor_grads_da, self._actor_grad_dims, self._actor_grads_cs)
+                self._pos_gem_loss(self._actor_networks)
 
         self._actor_optim.step()
 
@@ -385,7 +300,7 @@ class STImpl():
                 assert unreg_grads is not None
                 assert curr_feat_ext is not None
                 with torch.no_grad():
-                    self._pos_rwalk_loss(self._actor_networks, unreg_grads, self._actor_W, curr_feat_ext)
+                    self.actor_plug._pos_rwalk_loss(self._actor_networks, unreg_grads, self._actor_plug.W, curr_feat_ext)
 
         if not isinstance(loss, int):
             loss = loss.cpu().detach().numpy()
@@ -423,38 +338,6 @@ class STImpl():
         fisher = {n: (p / len(iterator)) for n, p in fisher.items()}
         return fisher
 
-    def _ewc_rwalk_post_train_process(self, networks, fishers, older_params, iterator, optim, update, scores=None, Ws=None, batch_size=None, n_frames=None, n_steps=None, gamma=None, test=False):
-        if self._critic_replay_type == 'rwalk':
-            looper = zip(networks, fishers, scores, Ws, older_params)
-        else:
-            looper = zip(networks, fishers, older_params)
-        for i, elems in enumerate(looper):
-            if self._critic_replay_type == 'rwalk':
-                network, fisher, score, W, older_param = elems
-            else:
-                network, fisher, older_param = elems
-            curr_fisher = self.compute_fisher_matrix_diag(iterator, network, optim, update, batch_size, n_frames=n_frames, n_steps=n_steps, gamma=gamma, test=test)
-            # merge fisher information, we do not want to keep fisher information for each task in memory
-            for n in fisher.keys():
-                # Added option to accumulate fisher over time with a pre-fixed growing self._ewc_rwalk_alpha
-                fisher[n] = (self._ewc_rwalk_alpha * fisher[n] + (1 - self._ewc_rwalk_alpha) * curr_fisher[n])
-
-            if self._critic_replay_type == 'rwalk':
-                # Page 7: Optimization Path-based Parameter Importance: importance scores computation
-                curr_critic_score = {n: torch.zeros(p.shape).to(self.device) for n, p in network.named_parameters() if p.requires_grad}
-                with torch.no_grad():
-                    curr_critic_params = {n: p for n, p in network.named_parameters() if p.requires_grad}
-                    for n, p in score.items():
-                        curr_critic_score[n] = W[n] / (
-                                fisher[n] * ((curr_critic_params[n] - older_param[n]) ** 2) + self._damping)
-                        W[n].zero_()
-                        # Page 7: "Since we care about positive influence of the parameters, negative scores are set to zero."
-                        curr_critic_score[n] = torch.nn.functional.relu(curr_critic_score[n])
-                        older_param[n].data = curr_critic_params[n].data.clone()
-                # Page 8: alleviating regularization getting increasingly rigid by averaging scores
-                for n, p in score.items():
-                    score[n] = (p + curr_critic_score[n]) / 2
-
     def critic_ewc_rwalk_post_train_process(self, iterator, batch_size, n_frames, n_steps, gamma, test=False):
         # calculate Fisher information
         @train_api
@@ -464,9 +347,9 @@ class STImpl():
             loss = self.compute_critic_loss(batch, q_tpn)
             loss.backward()
         if self._critic_replay_type == 'rwalk':
-            self._ewc_rwalk_post_train_process(self._critic_networks, self._critic_fisher, self._critic_older_params, iterator, self._critic_optim, update, scores=self._critic_scores, Ws=self._critic_W, batch_size=batch_size, n_frames=n_frames, n_steps=n_steps, gamma=gamma, test=test)
+            self.critic_plug._ewc_rwalk_post_train_process(self._critic_networks, self._critic_plug.fisher, self._critic_plug.older_params, iterator, self._critic_optim, update, scores=self._critic_plug.scorers, Ws=self._critic_plug.W, batch_size=batch_size, n_frames=n_frames, n_steps=n_steps, gamma=gamma, test=test)
         else:
-            self._ewc_rwalk_post_train_process(self._critic_networks, self._critic_fisher, self._critic_older_params, iterator, self._critic_optim, update, batch_size=batch_size, n_frames=n_frames, n_steps=n_steps, gamma=gamma, test=test)
+            self.critic_plug._ewc_rwalk_post_train_process(self._critic_networks, self._critic_plug.fisher, self._critic_plug.older_params, iterator, self._critic_optim, update, batch_size=batch_size, n_frames=n_frames, n_steps=n_steps, gamma=gamma, test=test)
 
     def actor_ewc_rwalk_post_train_process(self, iterator, batch_size, n_frames, n_steps, gamma, test=False):
         @train_api
@@ -475,9 +358,9 @@ class STImpl():
             loss = self.compute_actor_loss(batch)
             loss.backward()
         if self._actor_replay_type == 'rwalk':
-            self._ewc_rwalk_post_train_process(self._actor_networks, self._actor_fisher, self._actor_older_params, iterator, self._actor_optim, update, scores=self._actor_scores, Ws=self._actor_W, batch_size=batch_size, n_frames=n_frames, n_steps=n_steps, gamma=gamma, test=test)
+            self.actor_plug._ewc_rwalk_post_train_process(self._actor_networks, self._actor_plug.fisher, self._actor_plug.older_params, iterator, self._actor_optim, update, scores=self._actor_plug.scorers, Ws=self._actor_plug.W, batch_size=batch_size, n_frames=n_frames, n_steps=n_steps, gamma=gamma, test=test)
         else:
-            self._ewc_rwalk_post_train_process(self._actor_networks, self._actor_fisher, self._actor_older_params, iterator, self._actor_optim, update, batch_size=batch_size, n_frames=n_frames, n_steps=n_steps, gamma=gamma, test=test)
+            self.actor_plug._ewc_rwalk_post_train_process(self._actor_networks, self._actor_plug.fisher, self._actor_plug.older_params, iterator, self._actor_optim, update, batch_size=batch_size, n_frames=n_frames, n_steps=n_steps, gamma=gamma, test=test)
     def fine_tuned_action(self, observation):
         assert self._policy is not None
         assert self._q_func is not None
@@ -536,31 +419,31 @@ class STImpl():
     #    self._build_critic_optim()
     #    assert self._q_func is not None
     #    assert self._policy is not None
-    #    if self._critic_replay_type in ['ewc', 'rwalk', 'si'] and '_critic_older_params' not in self.__dict__.keys():
+    #    if self._critic_replay_type in ['ewc', 'rwalk', 'si'] and '_critic_plug.older_params' not in self.__dict__.keys():
     #        # Store current parameters for the next task
-    #        self._critic_older_params = {n: p.clone().detach() for n, p in self._q_func.named_parameters() if p.requires_grad}
-    #        if self._critic_replay_type in ['ewc', 'rwalk'] and '_critic_fisher' not in self.__dict__.keys():
+    #        self._critic_plug.older_params = {n: p.clone().detach() for n, p in self._q_func.named_parameters() if p.requires_grad}
+    #        if self._critic_replay_type in ['ewc', 'rwalk'] and '_critic_plug.fisher' not in self.__dict__.keys():
     #            # Store fisher information weight importance
-    #            self._critic_fisher = {n: torch.zeros(p.shape).to(self.device) for n, p in self._q_func.named_parameters() if p.requires_grad}
-    #        if self._critic_replay_type == 'rwalk' and '_critic_W' not in self.__dict__.keys():
+    #            self._critic_plug.fisher = {n: torch.zeros(p.shape).to(self.device) for n, p in self._q_func.named_parameters() if p.requires_grad}
+    #        if self._critic_replay_type == 'rwalk' and '_critic_plug.W' not in self.__dict__.keys():
     #            # Page 7: "task-specific parameter importance over the entire training trajectory."
-    #            self._critic_W = {n: torch.zeros(p.shape).to(self.device) for n, p in self._q_func.named_parameters() if p.requires_grad}
-    #            self._critic_scores = {n: torch.zeros(p.shape).to(self.device) for n, p in self._q_func.named_parameters() if p.requires_grad}
-    #        elif self._critic_replay_type == 'si' and '_critic_W' not in self.__dict__.keys():
-    #            self._critic_W = {n: p.clone().detach().zero_() for n, p in self._q_func.named_parameters() if p.requires_grad}
+    #            self._critic_plug.W = {n: torch.zeros(p.shape).to(self.device) for n, p in self._q_func.named_parameters() if p.requires_grad}
+    #            self._critic_plug.scorers = {n: torch.zeros(p.shape).to(self.device) for n, p in self._q_func.named_parameters() if p.requires_grad}
+    #        elif self._critic_replay_type == 'si' and '_critic_plug.W' not in self.__dict__.keys():
+    #            self._critic_plug.W = {n: p.clone().detach().zero_() for n, p in self._q_func.named_parameters() if p.requires_grad}
     #            self._critic_omega = {n: p.clone().detach().zero_() for n, p in self._q_func.named_parameters() if p.requires_grad}
-    #    if self._actor_replay_type in ['ewc', 'rwalk', 'si'] and '_actor_older_params' not in self.__dict__.keys():
+    #    if self._actor_replay_type in ['ewc', 'rwalk', 'si'] and '_actor_plug.older_params' not in self.__dict__.keys():
     #        # Store current parameters for the next task
-    #        self._actor_older_params = {n: p.clone().detach() for n, p in self._policy.named_parameters() if p.requires_grad}
-    #        if self._actor_replay_type in ['ewc', 'rwalk'] and '_actor_fisher' not in self.__dict__.keys():
+    #        self._actor_plug.older_params = {n: p.clone().detach() for n, p in self._policy.named_parameters() if p.requires_grad}
+    #        if self._actor_replay_type in ['ewc', 'rwalk'] and '_actor_plug.fisher' not in self.__dict__.keys():
     #            # Store fisher information weight importance
-    #            self._actor_fisher = {n: torch.zeros(p.shape).to(self.device) for n, p in self._policy.named_parameters() if p.requires_grad}
+    #            self._actor_plug.fisher = {n: torch.zeros(p.shape).to(self.device) for n, p in self._policy.named_parameters() if p.requires_grad}
     #        if self._actor_replay_type == 'rwalk' and '_actor_w' not in self.__dict__.keys():
     #            # Page 7: "task-specific parameter importance over the entire training trajectory."
     #            self._actor_w = {n: torch.zeros(p.shape).to(self.device) for n, p in self._policy.named_parameters() if p.requires_grad}
-    #            self._actor_scores = {n: torch.zeros(p.shape).to(self.device) for n, p in self._policy.named_parameters() if p.requires_grad}
-    #        elif self._critic_replay_type == 'si' and '_actor_W' not in self.__dict__.keys():
-    #            self._actor_W = {n: p.clone().detach().zero_() for n, p in self._policy.named_parameters() if p.requires_grad}
+    #            self._actor_plug.scorers = {n: torch.zeros(p.shape).to(self.device) for n, p in self._policy.named_parameters() if p.requires_grad}
+    #        elif self._critic_replay_type == 'si' and '_actor_plug.W' not in self.__dict__.keys():
+    #            self._actor_plug.W = {n: p.clone().detach().zero_() for n, p in self._policy.named_parameters() if p.requires_grad}
     #            self._actor_omega = {n: p.clone().detach().zero_() for n, p in self._policy.named_parameters() if p.requires_grad}
     #    elif self._critic_replay_type == 'gem':
     #        # Allocate temporary synaptic memory

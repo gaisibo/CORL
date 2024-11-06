@@ -38,15 +38,6 @@ TASK_SEQS = {
     ],
     "SI10": [
         "ALE/SpaceInvaders-v5",
-        "push-wall-v2",
-        "faucet-close-v2",
-        "push-back-v2",
-        "stick-pull-v2",
-        "handle-press-side-v2",
-        "push-v2",
-        "shelf-place-v2",
-        "window-close-v2",
-        "peg-unplug-side-v2",
     ],
 }
 
@@ -76,8 +67,8 @@ def main(args, device):
             raise NotImplementedError
     elif args.dataset_kind == "atari":
         tasks = TASK_SEQS[args.dataset]
-        envs = get_atari_envs(tasks, args.randomization)
-        eval_envs = get_atari_envs(tasks, args.randomization)
+        envs = get_atari_envs(tasks, task_nums=list(range(args.dataset_num)) + list(range(args.dataset_num)), args.randomization)
+        eval_envs = get_atari_envs(tasks, task_nums=list(range(args.dataset_num)) + list(range(args.dataset_num)), args.randomization)
         if args.dataset == 'SI20':
             env_ids = list(range(10)) + list(range(10))
         else:
@@ -118,6 +109,7 @@ def main(args, device):
         for task_id, (env, eval_env, env_id) in enumerate(zip(envs, eval_envs, env_ids)):
             if args.clear_network:
                 algo = O2O(**algo_dict)
+            algo.change_task(task_id)
             if task_id > 0:
                 if args.continual_type == "bc":
                     old_buffer = buffer
@@ -156,6 +148,7 @@ def main(args, device):
                 raise NotImplementedError
 
             print(f'Start Training {task_id}')
+            algo.before_learn(buffer, args.continual_type, args.buffer_mix_type, args.test)
             if task_id <= args.read_policy:
                 if args.read_policy == 0:
                     pretrain_path = "pretrained_network/" + "ST_" + args.algo_kind + '_' + args.dataset + '.pt'
@@ -207,7 +200,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Experimental evaluation of lifelong PG learning')
     parser.add_argument('--add_name', default='', type=str)
     parser.add_argument('--epoch', default='500', type=int)
-    parser.add_argument("--dataset", default='antmaze-large-play-v2', type=str)
+    parser.add_argument("--dataset", default='CW20', type=str)
+    parser.add_argument("--dataset_num", default='6', type=str)
     parser.add_argument('--inner_path', default='', type=str)
     parser.add_argument('--env_path', default=None, type=str)
     parser.add_argument('--inner_buffer_size', default=-1, type=int)
@@ -243,7 +237,7 @@ if __name__ == '__main__':
     parser.add_argument('--actor_replay_type', default='orl', type=str, choices=['orl', 'bc', 'lwf', 'lwf_orl', 'ewc', 'gem', 'agem', 'rwalk', 'si', 'none'])
     parser.add_argument('--actor_replay_lambda', default=1, type=float)
 
-    parser.add_argument("--continual_type", default="none", type=str)
+    parser.add_argument("--continual_type", default="ewc", type=str)
 
     parser.add_argument('--n_critics', default=2, type=int)
     parser.add_argument('--eta', default=1.0, type=int)

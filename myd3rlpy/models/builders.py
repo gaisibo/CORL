@@ -5,8 +5,8 @@ from torch import nn
 
 from d3rlpy.models.encoders import EncoderFactory
 from d3rlpy.models.q_functions import QFunctionFactory
-from d3rlpy.models.torch import EnsembleContinuousQFunction 
-from myd3rlpy.models.torch.q_functions.ensemble_q_function import ParallelEnsembleContinuousQFunction 
+from d3rlpy.models.torch import EnsembleContinuousQFunction
+from myd3rlpy.models.torch.q_functions.ensemble_q_function import ParallelEnsembleContinuousQFunction
 from myd3rlpy.models.torch.v_functions import EnsembleValueFunction
 from myd3rlpy.models.torch.siamese import Phi, Psi
 from myd3rlpy.models.torch.embed import Embed
