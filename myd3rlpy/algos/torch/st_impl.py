@@ -60,9 +60,12 @@ class STImpl():
         self._clone_policy = None
 
         self._impl_id = 0
+        self._learned_id = []
 
     def change_task(self, new_id):
         self._impl_id = new_id
+        if new_id not in self._learned_id:
+            self._learned_id.append(new_id)
 
     def save_task(self):
         self._save_impl_id = self._impl_id
