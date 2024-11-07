@@ -27,6 +27,8 @@ class O2OIQL(O2OBase, STIQL):
 
     def _create_impl(
         self, observation_shape: Sequence[int], action_size: int) -> None:
+        #print(f"self._actor_replay_type: {self._actor_replay_type}")
+        #assert False
         impl_dict = {
             'observation_shape':observation_shape,
             'action_size':action_size,

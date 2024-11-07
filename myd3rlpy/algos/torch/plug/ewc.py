@@ -7,7 +7,7 @@ class EWC(Plug):
         # Store current parameters for the next task
         self.older_params = [{n: p.clone().detach() for n, p in network.named_parameters() if p.requires_grad} for network in networks]
         # Store fisher information weight importance
-        self.fisher = [{n: torch.zeros(p.shape).to(p.device) for n, p in network.named_parameters() if p.requires_grad} for network in networks]
+        self.fishers = [{n: torch.zeros(p.shape).to(p.device) for n, p in network.named_parameters() if p.requires_grad} for network in networks]
 
     def _add_ewc_loss(self, networks):
         replay_ewc_loss = 0
@@ -16,6 +16,35 @@ class EWC(Plug):
                 if n in fisher.keys():
                     replay_ewc_loss += torch.mean(fisher[n] * (p - older_param[n]).pow(2)) / 2
         return replay_ewc_loss
+
+    def compute_fisher_matrix_diag(self, iterator, network, optim, update, batch_size=None, n_frames=None, n_steps=None, gamma=None, test=False):
+        # Store Fisher Information
+        fisher = {n: torch.zeros(p.shape).to(self.device) for n, p in network.named_parameters()
+                  if p.requires_grad}
+        # Do forward and backward pass to compute the fisher information
+        network.train()
+        replay_loss = 0
+        if isinstance(iterator, TransitionIterator):
+            iterator.reset()
+        else:
+            pass
+        for t in range(len(iterator) if not test else 2):
+            if isinstance(iterator, TransitionIterator):
+                batch = next(iterator)
+            else:
+                batch = iterator.sample(batch_size=batch_size,
+                        n_frames=n_frames,
+                        n_steps=n_steps,
+                        gamma=gamma)
+            optim.zero_grad()
+            update(self, batch)
+            # Accumulate all gradients from loss with regularization
+            for n, p in network.named_parameters():
+                if p.grad is not None:
+                    fisher[n] += p.grad.pow(2)
+        # Apply mean across all samples
+        fisher = {n: (p / len(iterator)) for n, p in fisher.items()}
+        return fisher
 
     def _ewc_rwalk_post_train_process(self, networks, iterator, optim, update, batch_size=None, n_frames=None, n_steps=None, gamma=None, test=False):
         for i, (network, fisher, older_param) in enumerate(zip(networks, self.fishers, self.older_params)):

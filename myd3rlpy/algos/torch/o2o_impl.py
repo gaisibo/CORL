@@ -14,6 +14,6 @@ class O2OImpl(ABC):
     @abstractmethod
     def copy_from_iql(self, sac_impl, copy_optim):
         pass
-    @abstractmethod
-    def copy_from_iqln(self, sac_impl, copy_optim):
-        pass
+    #@abstractmethod
+    #def copy_from_iqln(self, sac_impl, copy_optim):
+    #    pass

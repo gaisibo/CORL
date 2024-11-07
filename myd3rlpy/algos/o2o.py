@@ -264,8 +264,6 @@ class O2OBase(STBase):
         env: gym.envs,
         eval_env: gym.envs,
         buffer: Optional[Buffer],
-        actor_replay_type: str = "er",
-        critic_replay_type: str = "er",
         old_buffer: Optional[Buffer] = None,
         buffer_mix_ratio: float = 0.5,
         n_steps: int = 1000000,
@@ -351,6 +349,8 @@ class O2OBase(STBase):
         else:
             # self._impl.rebuild_critic()
             #self._impl._impl_id = 0
+            if not hasattr(self, "critic_plug") and not hasattr(self, "actor_plug"):
+                self._impl._continual_build()
             LOG.warning("Skip building models since they're already built.")
 
         # save hyperparameters
@@ -438,7 +438,7 @@ class O2OBase(STBase):
                     for _ in range(this_epoch_sample_step):
                         # sample mini-batch
                         with logger.measure_time("sample_batch"):
-                            if old_buffer is not None and (actor_replay_type == "er" or critic_replay_type == "er"):
+                            if old_buffer is not None and (self._actor_replay_type == "er" or self._critic_replay_type == "er"):
                                 new_batch = buffer.sample(
                                     batch_size=self._batch_size,#round((1 - buffer_mix_ratio) * self._batch_size),
                                     n_frames=self._n_frames,
@@ -455,11 +455,11 @@ class O2OBase(STBase):
                                 mix_batch = OldTransitionMiniBatch(
                                         part_new_batch.transitions + old_batch.transitions
                                         )
-                                if actor_replay_type == 'er':
+                                if self._actor_replay_type == 'er':
                                     policy_batch = mix_batch
                                 else:
                                     policy_batch = new_batch
-                                if critic_replay_type == 'er':
+                                if self._critic_replay_type == 'er':
                                     value_batch = mix_batch
                                 else:
                                     value_batch = new_batch
@@ -512,16 +512,16 @@ class O2OBase(STBase):
         # close logger
         logger.close()
 
-    def before_learn(self, iterator, actor_replay_type, critic_replay_type, test):
-        if critic_replay_type in ['packnet']:
+    def before_learn(self, iterator, test):
+        if self._critic_replay_type in ['packnet']:
             self._impl.critic_packnet_pre_train_process(iterator, self._batch_size, self._n_frames, self._n_steps, self._gamma, test=test)
-        if actor_replay_type in ['packnet']:
+        if self._actor_replay_type in ['packnet']:
             self._impl.actor_packnet_pre_train_process(iterator, self._batch_size, self._n_frames, self._n_steps, self._gamma, test=test)
 
-    def after_learn(self, iterator, actor_replay_type, critic_replay_type, test):
-        if critic_replay_type in ['rwalk', 'ewc']:
+    def after_learn(self, iterator, test):
+        if self._critic_replay_type in ['rwalk', 'ewc']:
             self._impl.critic_ewc_rwalk_post_train_process(iterator, self._batch_size, self._n_frames, self._n_steps, self._gamma, test=test)
-        if actor_replay_type in ['rwalk', 'ewc']:
+        if self._actor_replay_type in ['rwalk', 'ewc']:
             self._impl.actor_ewc_rwalk_post_train_process(iterator, self._batch_size, self._n_frames, self._n_steps, self._gamma, test=test)
 
     def copy_from_past(self, arg0: str, impl: STImpl, copy_optim: bool):

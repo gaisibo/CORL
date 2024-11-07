@@ -182,8 +182,6 @@ def main(args, device):
                     env,
                     eval_env,
                     buffer,
-                    args.actor_replay_type,
-                    args.critic_replay_type,
                     old_buffer = old_buffer,
                     #buffer_mix_type = args.buffer_mix_type,
                     n_steps = args.n_steps,
@@ -197,7 +195,7 @@ def main(args, device):
                     scorers_list = scorers_list,
                     eval_episodes_list = eval_episodes_list,
                 )
-            algo.after_learn(buffer, args.continual_type, args.buffer_mix_type, args.test)
+            algo.after_learn(buffer, args.buffer_mix_type, args.test)
     print('finish')
 
 if __name__ == '__main__':

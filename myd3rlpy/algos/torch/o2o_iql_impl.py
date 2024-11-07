@@ -15,12 +15,12 @@ class O2OIQLImpl(STIQLImpl, O2OImpl):
     # td3 critic: _encoder
     # iql critic: q._encoder, value._encoder
     # According to AWAC, use the same modules as SAC
-    def _build_actor(self) -> None:
-        self._policy = create_squashed_normal_policy(
-            self._observation_shape,
-            self._action_size,
-            self._actor_encoder_factory,
-        )
+    #def _build_actor(self) -> None:
+    #    self._policy = create_squashed_normal_policy(
+    #        self._observation_shape,
+    #        self._action_size,
+    #        self._actor_encoder_factory,
+    #    )
 
     def copy_from_iql(self, iql_impl: STIQLImpl, copy_optim: bool):
         self._q_func.load_state_dict(iql_impl._q_func.state_dict())
@@ -29,6 +29,9 @@ class O2OIQLImpl(STIQLImpl, O2OImpl):
         if copy_optim:
             self._actor_optim.load_state_dict(self._actor_optim.state_dict())
             self._critic_optim.load_state_dict(self._critic_optim.state_dict())
+
+    #def copy_from_iqln(self, iqln_impl: STIQLNImpl, copy_optim: bool):
+    #    raise NotImplementedError
 
     #   def copy_from_iqln(self, iql_impl: STIQLImpl, copy_optim: bool):
     #       self.copy_from_iql(iql_impl, copy_optim)

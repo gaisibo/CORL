@@ -86,11 +86,8 @@ def main(args, use_gpu):
         # Each algo a half.
         o2o1_dict['use_gpu'] = use_gpu
         o2o1_dict['impl_name'] = args.algorithms[1]
-        if args.continual_type in ['ewc_same', 'ewc_all']:
-            if args.buffer_mix_type in ['all', 'value']:
-                o2o1_dict['critic_replay_type'] = 'ewc'
-            if args.buffer_mix_type in ['all', 'policy']:
-                o2o1_dict['actor_replay_type'] = 'ewc'
+        o2o1_dict["critic_replay_type"] = args.continual_type
+        o2o1_dict["actor_replay_type"] = args.continual_type
         if args.algorithms[1] in ['td3', 'td3_plus_bc']:
             o2o1 = O2OTD3(**o2o1_dict)
         elif args.algorithms[1] == 'sac':
@@ -114,9 +111,9 @@ def main(args, use_gpu):
             elif args.algorithms[0] in offline_algos:
                 if isinstance(dataset0, MDPDataset):
                     loaded_mdp = OldMDPDataset(dataset0.observations, dataset0.actions, dataset0.rewards, dataset0.terminals, dataset0.episode_terminals)
-                if args.continual_type in ['copy', 'mix_same', 'ewc_same']:
+                if args.continual_type in ['copy', 'mix_same']:
                     loaded_buffer = ReplayBuffer(args.n_buffer, env)
-                elif args.continual_type in ['mix_all', 'ewc_all']:
+                elif args.continual_type in ['mix_all', 'ewc']:
                     loaded_buffer = ReplayBuffer(dataset0.observations.shape[0], env)
                 if args.continual_type != 'none':
                     for episode in loaded_mdp.episodes:
@@ -128,7 +125,7 @@ def main(args, use_gpu):
             if args.continual_type in ['copy']:
                 buffer = loaded_buffer
                 old_buffer = None
-            elif args.continual_type in ['mix_same', 'mix_all', 'ewc_same', 'ewc_all']:
+            elif args.continual_type in ['mix_same', 'mix_all', 'ewc']:
                 buffer = ReplayBuffer(args.n_buffer, env)
                 old_buffer = loaded_buffer
             elif args.continual_type == 'none':
@@ -145,19 +142,17 @@ def main(args, use_gpu):
             scorers_env = {'evaluation': evaluate_on_environment(online_offline_wrapper(env))}
             scorers_list = [scorers_env]
             if old_buffer is not None:
-                o2o1.after_learn(old_buffer, args.continual_type, args.buffer_mix_type, args.test)
+                o2o1.after_learn(old_buffer, args.test)
             o2o1.fit_online(
                 env,
                 eval_env,
                 buffer,
-                continual_type = args.continual_type,
                 old_buffer = old_buffer,
-                buffer_mix_type = args.buffer_mix_type,
                 n_steps = args.second_n_steps,
                 n_steps_per_epoch = args.n_steps_per_epoch,
                 save_steps=args.save_steps,
                 save_path=o2o1_path,
-                random_step=100000 if args.non_explore else 100000,
+                random_step=0,
                 test = args.test,
                 start_epoch = args.first_n_steps // args.n_steps_per_epoch + 1,
                 experiment_name=experiment_name + "_1",
@@ -280,10 +275,10 @@ if __name__ == '__main__':
     parser.add_argument('--copy_optim', action='store_true')
     parser.add_argument('--algorithms', type=str, required=True)
     parser.add_argument('--qualities', type=str, default="medium-medium")
-    parser.add_argument('--continual_type', type=str, choices=['none', 'copy', 'mix_same', 'mix_all', 'ewc_same', 'ewc_all'], required=True)
+    parser.add_argument('--continual_type', type=str, choices=['none', 'copy', 'mix_same', 'mix_all', 'ewc'], required=True)
     parser.add_argument('--buffer_mix_type', type=str, choices=['all', 'policy', 'value'], default='all')
     parser.add_argument("--dataset", default='halfcheetah', type=str)
-    parser.add_argument('--non_explore', action='store_true')
+    parser.add_argument('--explore', action='store_true')
 
     parser.add_argument('--experience_type', default='random_episode', type=str, choices=['all', 'none', 'single', 'online', 'generate', 'model_prob', 'model_next', 'model', 'model_this', 'coverage', 'random_transition', 'random_episode', 'max_reward', 'max_match', 'max_supervise', 'max_model', 'max_reward_end', 'max_reward_mean', 'max_match_end', 'max_match_mean', 'max_supervise_end', 'max_supervise_mean', 'max_model_end', 'max_model_mean', 'min_reward', 'min_match', 'min_supervise', 'min_model', 'min_reward_end', 'min_reward_mean', 'min_match_end', 'min_match_mean', 'min_supervise_end', 'min_supervise_mean', 'min_model_end', 'min_model_mean'])
     parser.add_argument('--max_export_step', default=1000, type=int)

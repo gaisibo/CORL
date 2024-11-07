@@ -5,12 +5,13 @@ from myd3rlpy.algos.torch.st_iqln_impl import STIQLNImpl
 
 
 class O2OIQLNImpl(STIQLNImpl, O2OIQLImpl):
-    def _build_actor(self) -> None:
-        self._policy = create_squashed_normal_policy(
-            self._observation_shape,
-            self._action_size,
-            self._actor_encoder_factory,
-        )
+    pass
+    #def _build_actor(self) -> None:
+    #    self._policy = create_squashed_normal_policy(
+    #        self._observation_shape,
+    #        self._action_size,
+    #        self._actor_encoder_factory,
+    #    )
     #def copy_from_iql(self, iqln_impl: STIQLImpl, copy_optim: bool):
     #    super().copy_from_iql(iqln_impl, copy_optim)
     #def copy_from_iql(self, iqln_impl: STIQLImpl, copy_optim: bool):

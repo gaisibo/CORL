@@ -1,8 +1,9 @@
 import torch
 from myd3rlpy.algos.torch.plug.plug import Plug
+from myd3rlpy.algos.torch.plug.ewc import EWC
 
 
-class RWalk(Plug):
+class RWalk(EWC):
     def __init__(self, damping):
         self._damping = damping
 
