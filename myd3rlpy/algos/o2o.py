@@ -270,6 +270,7 @@ class O2OBase(STBase):
         buffer_mix_ratio: float = 0.5,
         n_steps: int = 1000000,
         n_steps_per_epoch: int = 10000,
+        sample_step_per_epoch: int = 1000,
         start_epoch: int = 0,
         update_interval: int = 1,
         update_start_step: int = 0,
@@ -370,66 +371,71 @@ class O2OBase(STBase):
             exploit_observation, _ = eval_env.reset()
         rollout_return = 0.0
 
-        for total_step in xrange(1, n_steps + 1):
+        total_step = 1
+
+        while total_step < n_steps + 1:
             if total_step > 2000 and test:
                 break
             with logger.measure_time("step"):
                 #observation = observation.astype("f4")
                 #fed_observation = observation
 
-                # sample exploration action
-                with logger.measure_time("inference"):
-                    if total_step < random_step and not test:
-                        action = env.action_space.sample()
-                    else:
-                        action = self.sample_action(observation[np.newaxis, :])
-                        action = action[0]
-                    #exploit_action = self.predict(observation[np.newaxis, :])
-                    #exploit_action = exploit_action[0]
+                this_epoch_sample_step = min(sample_step_per_epoch, n_steps + 1 - total_step)
+                for _ in range(this_epoch_sample_step):
+                    # sample exploration action
+                    with logger.measure_time("inference"):
+                        if total_step < random_step and not test:
+                            action = env.action_space.sample()
+                        else:
+                            action = self.sample_action(observation[np.newaxis, :])
+                            action = action[0]
+                        #exploit_action = self.predict(observation[np.newaxis, :])
+                        #exploit_action = exploit_action[0]
 
-                # step environment
-                episode_length = 0
-                with logger.measure_time("environment_step"):
-                    #exploit_next_observation, exploit_reward, exploit_terminal, exploit_truncated, exploit_info = eval_env.step(exploit_action)
-                    next_observation, reward, terminal, truncated, info = env.step(action)
-                    rollout_return += reward
-                    episode_length += 1
-
-                # special case for TimeLimit wrapper
-                if truncated:
-                    clip_episode = True
-                    terminal = False
+                    # step environment
                     episode_length = 0
-                else:
-                    episode_length += 1
-                    if episode_length == 1000 - 1:
-                        terminal = True
+                    with logger.measure_time("environment_step"):
+                        #exploit_next_observation, exploit_reward, exploit_terminal, exploit_truncated, exploit_info = eval_env.step(exploit_action)
+                        next_observation, reward, terminal, truncated, info = env.step(action)
+                        rollout_return += reward
+                        episode_length += 1
+
+                    # special case for TimeLimit wrapper
+                    if truncated:
+                        clip_episode = True
+                        terminal = False
                         episode_length = 0
-                    clip_episode = terminal
+                    else:
+                        episode_length += 1
+                        if episode_length == 1000 - 1:
+                            terminal = True
+                            episode_length = 0
+                        clip_episode = terminal
 
-                # store observation
-                buffer.append(
-                    observation=observation,
-                    action=action,
-                    reward=reward,
-                    terminal=terminal,
-                    clip_episode=clip_episode,
-                )
+                    # store observation
+                    buffer.append(
+                        observation=observation,
+                        action=action,
+                        reward=reward,
+                        terminal=terminal,
+                        clip_episode=clip_episode,
+                    )
 
-                # reset if terminated
-                if clip_episode:
-                    observation, _ = env.reset()
-                    logger.add_metric("rollout_return", rollout_return)
-                    rollout_return = 0.0
-                    # for image observation
-                else:
-                    observation = next_observation
+                    # reset if terminated
+                    if clip_episode:
+                        observation, _ = env.reset()
+                        logger.add_metric("rollout_return", rollout_return)
+                        rollout_return = 0.0
+                        # for image observation
+                    else:
+                        observation = next_observation
+                total_step += this_epoch_sample_step
 
                 # psuedo epoch count
                 epoch = total_step // n_steps_per_epoch + start_epoch
 
                 if total_step > update_start_step and len(buffer) > self._batch_size:
-                    if total_step % update_interval == 0:
+                    for _ in range(this_epoch_sample_step):
                         # sample mini-batch
                         with logger.measure_time("sample_batch"):
                             if old_buffer is not None and (actor_replay_type == "er" or critic_replay_type == "er"):
@@ -478,7 +484,7 @@ class O2OBase(STBase):
                 if callback:
                     callback(self, epoch, total_step)
 
-            if epoch > start_epoch and total_step % n_steps_per_epoch == 0:
+            if epoch > start_epoch:
                 if scorers_list and eval_episodes_list:
                     for scorer_num, (scorers, eval_episodes) in enumerate(zip(scorers_list, eval_episodes_list)):
                         rename_scorers = dict()
