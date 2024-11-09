@@ -13,7 +13,6 @@ import torch.nn.functional as F
 from d3rlpy.torch_utility import train_api, eval_api
 from myd3rlpy.torch_utility import torch_api
 from d3rlpy.dataset import TransitionMiniBatch
-from myd3rlpy.iterators.base import TransitionIterator
 
 from myd3rlpy.algos.torch.plug.ewc import EWC
 from myd3rlpy.algos.torch.plug.rwalk import RWalk
@@ -61,11 +60,15 @@ class STImpl():
 
         self._impl_id = 0
         self._learned_id = []
+        self._new_task = True
 
     def change_task(self, new_id):
         self._impl_id = new_id
         if new_id not in self._learned_id:
             self._learned_id.append(new_id)
+            self._new_task = True
+        else:
+            self._new_task = False
 
     def save_task(self):
         self._save_impl_id = self._impl_id
@@ -75,42 +78,42 @@ class STImpl():
 
     def build(self):
         super().build()
-
-        self._critic_networks = [self._q_func]
-        self._actor_networks = [self._policy]
         self._continual_build()
 
     def _continual_build(self):
+
+        self._critic_networks = [self._q_func]
+        self._actor_networks = [self._policy]
         assert self._q_func is not None
         if self._critic_replay_type == "ewc":
-            self.critic_plug = EWC()
+            self.critic_plug = EWC(self, self._critic_networks)
         elif self._critic_replay_type == "rwalk":
-            self.critic_plug = RWalk(self._damping)
+            self.critic_plug = RWalk(self, self._critic_networks)
         elif self._critic_replay_type == 'si':
-            self.critic_plug = SI(self._epsilon)
+            self.critic_plug = SI(self, self._critic_networks)
         elif self._critic_replay_type == 'gem':
-            self.critic_plug = GEM()
+            self.critic_plug = GEM(self, self._critic_networks)
         elif self._critic_replay_type == 'agem':
-            self.critic_plug = AGEM()
+            self.critic_plug = AGEM(self, self._critic_networks)
         else:
             self.critic_plug = None
         if self.critic_plug != None:
-            self.critic_plug.build(self._critic_networks)
+            self.critic_plug.build()
 
         if self._actor_replay_type == "ewc":
-            self.actor_plug = EWC()
+            self.actor_plug = EWC(self, self._actor_networks)
         elif self._actor_replay_type == "rwalk":
-            self.actor_plug = RWalk(self._damping)
+            self.actor_plug = RWalk(self, self._actor_networks)
         elif self._actor_replay_type == 'si':
-            self.actor_plug = SI(self._epsilon)
+            self.actor_plug = SI(self, self._actor_networks)
         elif self._actor_replay_type == 'gem':
-            self.actor_plug = GEM()
+            self.actor_plug = GEM(self, self._actor_networks)
         elif self._actor_replay_type == 'agem':
-            self.actor_plug = AGEM()
+            self.actor_plug = AGEM(self, self._actor_networks)
         else:
             self.actor_plug = None
         if self.actor_plug != None:
-            self.actor_plug.build(self._actor_networks)
+            self.actor_plug.build()
 
     @train_api
     @torch_api(reward_scaler_targets=["batch", "replay_batch"])
@@ -326,18 +329,18 @@ class STImpl():
         @train_api
         @torch_api()
         def update(self, batch):
-            q_tpn = self.compute_target(batch)
-            loss = self.compute_critic_loss(batch, q_tpn)
+            q_tpn = self._algo.compute_target(batch)
+            loss = self._algo.compute_critic_loss(batch, q_tpn)
             loss.backward()
-        self.critic_plug._ewc_rwalk_post_train_process(self._critic_networks, iterator, self._critic_optim, update, batch_size=batch_size, n_frames=n_frames, n_steps=n_steps, gamma=gamma, test=test)
+        self.critic_plug._ewc_rwalk_post_train_process(iterator, self._critic_optim, update, batch_size=batch_size, n_frames=n_frames, n_steps=n_steps, gamma=gamma, test=test)
 
     def actor_ewc_rwalk_post_train_process(self, iterator, batch_size, n_frames, n_steps, gamma, test=False):
         @train_api
         @torch_api()
         def update(self, batch):
-            loss = self.compute_actor_loss(batch)
+            loss = self._algo.compute_actor_loss(batch)
             loss.backward()
-        self.actor_plug._ewc_rwalk_post_train_process(self._actor_networks, iterator, self._actor_optim, update, batch_size=batch_size, n_frames=n_frames, n_steps=n_steps, gamma=gamma, test=test)
+        self.actor_plug._ewc_rwalk_post_train_process(iterator, self._actor_optim, update, batch_size=batch_size, n_frames=n_frames, n_steps=n_steps, gamma=gamma, test=test)
     def fine_tuned_action(self, observation):
         assert self._policy is not None
         assert self._q_func is not None

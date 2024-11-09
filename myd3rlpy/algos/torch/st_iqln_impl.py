@@ -168,22 +168,11 @@ class STIQLNImpl(STImpl, IQLImpl):
 
     def compute_critic_loss(self, batch, q_tpn, clone_critic: bool=True, online: bool = False, replay=False, first_time=False):
         assert self._q_func is not None
-        if not online:
-            critic_loss = self._compute_critic_loss(batch, q_tpn)
-            value_loss = self._compute_value_loss(batch, clone_critic=clone_critic, replay=replay, first_time=False)
-            if not replay:
-                self._q_loss = critic_loss.mean()
-                self._v_loss = value_loss.mean()
-            else:
-                self._replay_q_loss = critic_loss.mean()
-                self._replay_v_loss = value_loss.mean()
-            # self._str += str(replay) + ' ' + str(critic_loss) + ' ' + str(value_loss) + '\n'
-            # self._test_i += 1
-            # if self._test_i > 1000:
-            #     raise NotImplementedError(self._str)
-            return critic_loss + value_loss
-        else:
-            return self._compute_critic_loss(batch, q_tpn)
+        critic_loss = self._compute_critic_loss(batch, q_tpn)
+        value_loss = self._compute_value_loss(batch, clone_critic=clone_critic, replay=replay, first_time=False)
+        self._q_loss = critic_loss.mean()
+        self._v_loss = value_loss.mean()
+        return critic_loss + value_loss
 
     def compute_generate_critic_loss(self, batch, clone_critic: bool=True):
         assert self._q_func is not None

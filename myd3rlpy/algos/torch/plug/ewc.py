@@ -1,17 +1,21 @@
 import torch
 from myd3rlpy.algos.torch.plug.plug import Plug
+from myd3rlpy.iterators.base import TransitionIterator
 
 
 class EWC(Plug):
-    def build(self, networks):
+    def __init__(self, algo, networks):
+        super().__init__(algo, networks)
+        self._ewc_rwalk_alpha = algo._ewc_rwalk_alpha
+    def build(self):
         # Store current parameters for the next task
-        self.older_params = [{n: p.clone().detach() for n, p in network.named_parameters() if p.requires_grad} for network in networks]
+        self.older_params = [{n: p.clone().detach() for n, p in network.named_parameters() if p.requires_grad} for network in self._networks]
         # Store fisher information weight importance
-        self.fishers = [{n: torch.zeros(p.shape).to(p.device) for n, p in network.named_parameters() if p.requires_grad} for network in networks]
+        self.fishers = [{n: torch.zeros(p.shape).to(p.device) for n, p in network.named_parameters() if p.requires_grad} for network in self._networks]
 
-    def _add_ewc_loss(self, networks):
+    def _add_ewc_loss(self):
         replay_ewc_loss = 0
-        for network, fisher, older_param in zip(networks, self.fishers, self.older_params):
+        for network, fisher, older_param in zip(self._networks, self.fishers, self.older_params):
             for n, p in network.named_parameters():
                 if n in fisher.keys():
                     replay_ewc_loss += torch.mean(fisher[n] * (p - older_param[n]).pow(2)) / 2
@@ -19,7 +23,7 @@ class EWC(Plug):
 
     def compute_fisher_matrix_diag(self, iterator, network, optim, update, batch_size=None, n_frames=None, n_steps=None, gamma=None, test=False):
         # Store Fisher Information
-        fisher = {n: torch.zeros(p.shape).to(self.device) for n, p in network.named_parameters()
+        fisher = {n: torch.zeros(p.shape).to(p.device) for n, p in network.named_parameters()
                   if p.requires_grad}
         # Do forward and backward pass to compute the fisher information
         network.train()
@@ -46,8 +50,8 @@ class EWC(Plug):
         fisher = {n: (p / len(iterator)) for n, p in fisher.items()}
         return fisher
 
-    def _ewc_rwalk_post_train_process(self, networks, iterator, optim, update, batch_size=None, n_frames=None, n_steps=None, gamma=None, test=False):
-        for i, (network, fisher, older_param) in enumerate(zip(networks, self.fishers, self.older_params)):
+    def _ewc_rwalk_post_train_process(self, iterator, optim, update, batch_size=None, n_frames=None, n_steps=None, gamma=None, test=False):
+        for i, (network, fisher, older_param) in enumerate(zip(self._networks, self.fishers, self.older_params)):
             curr_fisher = self.compute_fisher_matrix_diag(iterator, network, optim, update, batch_size, n_frames=n_frames, n_steps=n_steps, gamma=gamma, test=test)
             # merge fisher information, we do not want to keep fisher information for each task in memory
             for n in fisher.keys():

@@ -15,12 +15,15 @@ class O2OIQLImpl(STIQLImpl, O2OImpl):
     # td3 critic: _encoder
     # iql critic: q._encoder, value._encoder
     # According to AWAC, use the same modules as SAC
-    #def _build_actor(self) -> None:
-    #    self._policy = create_squashed_normal_policy(
-    #        self._observation_shape,
-    #        self._action_size,
-    #        self._actor_encoder_factory,
-    #    )
+    def _build_actor(self) -> None:
+        self._policy = create_squashed_normal_policy(
+            self._observation_shape,
+            self._action_size,
+            self._actor_encoder_factory,
+            min_logstd = -6,
+            max_logstd = 0,
+            use_std_parameter = True,
+        )
 
     def copy_from_iql(self, iql_impl: STIQLImpl, copy_optim: bool):
         self._q_func.load_state_dict(iql_impl._q_func.state_dict())

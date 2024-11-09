@@ -15,6 +15,13 @@ class O2OIQL(O2OBase, STIQL):
         critic_loss, replay_critic_loss = self._impl.update_critic(value_batch, None, clone_critic=self._clone_critic, online=online)
         metrics.update({"critic_loss": critic_loss})
         metrics.update({"replay_critic_loss": replay_critic_loss})
+        #print(f"self._impl._q_loss: {self._impl._q_loss}")
+        #print(f"self._impl._v_loss: {self._impl._v_loss}")
+        #assert False
+        if hasattr(self._impl, "_q_loss"):
+            metrics.update({"q_loss": self._impl._q_loss.cpu().detach().numpy()})
+        if hasattr(self._impl, "_v_loss"):
+            metrics.update({"v_loss": self._impl._v_loss.cpu().detach().numpy()})
 
         actor_loss, replay_actor_loss = self._impl.update_actor(policy_batch, None, clone_actor=self._clone_actor, online=online)
         # actor_loss, replay_actor_loss = self._impl.update_actor(batch, replay_batch, online=online)
@@ -59,6 +66,7 @@ class O2OIQL(O2OBase, STIQL):
             'action_scaler':self._action_scaler,
             'reward_scaler':self._reward_scaler,
             'fine_tuned_step': self._fine_tuned_step,
+            "policy_noise": self._policy_noise,
         }
         if self._impl_name in ['iql', 'iql_online']:
             from myd3rlpy.algos.torch.o2o_iql_impl import O2OIQLImpl as O2OImpl

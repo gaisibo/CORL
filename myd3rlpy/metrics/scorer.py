@@ -829,6 +829,8 @@ def old_critic_actor_diff(env: gym.Env, n_trials: int = 100, epsilon: float = 0.
         old_algo.save_task()
         algo.change_task(task_num)
         old_algo.change_task(task_num)
+        algo.before_evaluation()
+        old_algo.before_evaluation()
         if is_image:
             stacked_observation = StackedObservation(
                 observation_shape, algo.n_frames

@@ -121,6 +121,7 @@ class STIQL(STBase, IQL):
         log_prob_topk = 10,
         experience_type = 'random_transition',
         sample_type = 'retrain',
+        policy_noise = 0.2,
         match_prop_quantile = 0.5,
         match_epsilon = 0.1,
         random_sample_times = 10,
@@ -160,6 +161,7 @@ class STIQL(STBase, IQL):
         self._log_prob_topk = log_prob_topk
         self._experience_type = experience_type
         self._sample_type = sample_type
+        self._policy_noise = policy_noise
 
         self._begin_grad_step = 0
 
@@ -217,6 +219,7 @@ class STIQL(STBase, IQL):
             'action_scaler':self._action_scaler,
             'reward_scaler':self._reward_scaler,
             'fine_tuned_step': self._fine_tuned_step,
+            "policy_noise": self._policy_noise,
         }
         if self._impl_name in ['iql', 'iql_online']:
             from myd3rlpy.algos.torch.st_iql_impl import STIQLImpl as STImpl
@@ -245,20 +248,27 @@ class STIQL(STBase, IQL):
             coldstart_step = self._coldstart_step
         assert self._impl is not None, IMPL_NOT_INITIALIZED_ERROR
         metrics = {}
-        if not self._merge or total_step < coldstart_step:
-            critic_loss, replay_critic_loss = self._impl.update_critic(batch, replay_batch, clone_critic=self._clone_critic, online=online)
-            metrics.update({"critic_loss": critic_loss})
-            metrics.update({"replay_critic_loss": replay_critic_loss})
+        #if not self._merge or total_step < coldstart_step:
+        critic_loss, replay_critic_loss = self._impl.update_critic(batch, replay_batch, clone_critic=self._clone_critic, online=online)
+        metrics.update({"critic_loss": critic_loss})
+        print(f"self._impl._q_loss: {self._impl._q_loss}")
+        print(f"self._impl._v_loss: {self._impl._v_loss}")
+        assert False
+        if hasattr(self._impl, "_q_loss"):
+            metrics.update({"q_loss": q_loss})
+        if hasattr(self._impl, "_v_loss"):
+            metrics.update({"v_loss": v_loss})
+        metrics.update({"replay_critic_loss": replay_critic_loss})
 
-            if (total_step > self._critic_update_step and total_step < coldstart_step) or self._impl._impl_id == 0:
-                actor_loss, replay_actor_loss = self._impl.update_actor(batch, replay_batch, clone_actor=self._clone_actor, online=online)
-                # actor_loss, replay_actor_loss = self._impl.update_actor(batch, replay_batch, online=online)
-                metrics.update({"actor_loss": actor_loss})
-                metrics.update({"replay_actor_loss": replay_actor_loss})
+        if (total_step > self._critic_update_step and total_step < coldstart_step) or self._impl._impl_id == 0:
+            actor_loss, replay_actor_loss = self._impl.update_actor(batch, replay_batch, clone_actor=self._clone_actor, online=online)
+            # actor_loss, replay_actor_loss = self._impl.update_actor(batch, replay_batch, online=online)
+            metrics.update({"actor_loss": actor_loss})
+            metrics.update({"replay_actor_loss": replay_actor_loss})
 
-            self._impl.update_critic_target()
-        elif not online:
-            self._merge_update(batch, replay_batch)
+        self._impl.update_critic_target()
+        #elif not online:
+        #    self._merge_update(batch, replay_batch)
 
         return metrics
 

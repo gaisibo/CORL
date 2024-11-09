@@ -44,6 +44,12 @@ def get_o2o_dict(algo, quality):
         o2o_dict["max_weight"] = 100.0
         if algo in ['iqln', 'iqln_online']:
             o2o_dict["n_ensemble"] = 10
+            if algo == "iqln":
+                o2o_dict["expectile"] = 0.99
+            else:
+                o2o_dict["expectile"] = 0.99
+        else:
+            o2o_dict["expectile"] = 0.7
     elif algo in ['ppo', 'bppo']:
         reward_scaler = d3rlpy.preprocessing.ReturnBasedRewardScaler(multiplier=1000.0)
         o2o_dict["actor_learning_rate"] = 3e-4

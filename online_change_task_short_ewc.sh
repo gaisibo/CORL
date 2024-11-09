@@ -7,14 +7,13 @@ copy_optim_arg=""
 copy_optim_str=""
 dataset=''
 qualities=''
-n_critics="2"
 first_n_steps=1000000
 second_n_steps=1000000
 n_buffer=0
 seed=0
 
 #ARGS=`getopt -o +tcn:a:q:d: --long test,copy_optim,algorithms:,qualities:,dataset:,n_buffer: -n "$0" -- "$@"`
-ARGS=`getopt -o +tca:m:q:d:l: --long test,copy_optim,algorithms:,qualities:,n_critics:,dataset: -n "$0" -- "$@"`
+ARGS=`getopt -o +tca:m:q:d:l: --long test,copy_optim,algorithms:,qualities:,dataset: -n "$0" -- "$@"`
 if [ $? != 0 ]; then
     echo "Terminating..."
     exit 1
@@ -131,19 +130,19 @@ while true; do
             fi
             shift 2
             ;;
-        -m|--n_critics)
-            if [[ $2 == "s" ]]; then
-                n_critics="2";
-            elif [[ $2 == "b" ]]; then
-                n_critics="10";
-            fi
-            shift 2
-            ;;
-        -c|--copy_optim)
-            copy_optim_arg="--copy_optim"
-            copy_optim_str="_copy_optim"
-            shift
-            ;;
+        #-m|--n_critics)
+        #    if [[ $2 == "s" ]]; then
+        #        n_critics="2";
+        #    elif [[ $2 == "b" ]]; then
+        #        n_critics="10";
+        #    fi
+        #    shift 2
+        #    ;;
+        #-c|--copy_optim)
+        #    copy_optim_arg="--copy_optim"
+        #    copy_optim_str="_copy_optim"
+        #    shift
+        #    ;;
         --)
             shift
             break
@@ -160,34 +159,34 @@ done
 if [[ ${algorithms} != "other" && ${algorithms:0:4} != "iqln" ]]; then
         export LD_LIBRARY_PATH=/root/.mujoco/mujoco210/bin;
 
-        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --qualities=${qualities} --n_critics=${n_critics} --copy_optim --n_buffer=20000 --continual_type=ewc_all --gpu 0 ${test_arg} &
-        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --qualities=${qualities} --n_critics=${n_critics} --copy_optim --n_buffer=20000 --continual_type=ewc_same --gpu 1 ${test_arg} &
-        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --qualities=${qualities} --n_critics=${n_critics} --copy_optim --n_buffer=20000 --continual_type=ewc_same --buffer_mix_type=policy --gpu 2 ${test_arg} &
-        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --qualities=${qualities} --n_critics=${n_critics} --copy_optim --n_buffer=20000 --continual_type=ewc_same --buffer_mix_type=value --gpu 3 ${test_arg} &
-        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --qualities=${qualities} --n_critics=${n_critics} --copy_optim --n_buffer=2000000 --continual_type=ewc_all --gpu 4 ${test_arg} &
-        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --qualities=${qualities} --n_critics=${n_critics} --copy_optim --n_buffer=2000000 --continual_type=ewc_same --gpu 5 ${test_arg} &
-        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --qualities=${qualities} --n_critics=${n_critics} --copy_optim --n_buffer=2000000 --continual_type=ewc_same --buffer_mix_type=policy --gpu 6 ${test_arg} &
-        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --qualities=${qualities} --n_critics=${n_critics} --copy_optim --n_buffer=2000000 --continual_type=ewc_same --buffer_mix_type=value --gpu 7 ${test_arg} &
+        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --qualities=${qualities} --n_critics=2 --copy_optim --n_buffer=20000 --continual_type=ewc --buffer_replay_type=all --gpu 0 ${test_arg} &
+        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --qualities=${qualities} --n_critics=2 --copy_optim --n_buffer=20000 --continual_type=ewc --buffer_replay_type=same --gpu 1 ${test_arg} &
+        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --qualities=${qualities} --n_critics=2 --copy_optim --n_buffer=2000000 --continual_type=ewc --buffer_replay_type=all --gpu 2 ${test_arg} &
+        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --qualities=${qualities} --n_critics=2 --copy_optim --n_buffer=2000000 --continual_type=ewc --buffer_replay_type=same --gpu 3 ${test_arg} &
+        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --qualities=${qualities} --n_critics=2 --copy_optim --n_buffer=20000 --actor_replay_type=ewc --buffer_replay_type=all --gpu 4 ${test_arg} &
+        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --qualities=${qualities} --n_critics=2 --copy_optim --n_buffer=20000 --actor_replay_type=ewc --buffer_replay_type=same --gpu 5 ${test_arg} &
+        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --qualities=${qualities} --n_critics=2 --copy_optim --n_buffer=2000000 --actor_replay_type=ewc --buffer_replay_type=all --gpu 6 ${test_arg} &
+        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --qualities=${qualities} --n_critics=2 --copy_optim --n_buffer=2000000 --actor_replay_type=ewc --buffer_replay_type=same --gpu 7 ${test_arg} &
 
-        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --n_critics=10 --qualities=${qualities} --n_critics=${n_critics} --copy_optim --n_buffer=20000 --continual_type=ewc_all --gpu 0 ${test_arg} &
-        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --n_critics=10 --qualities=${qualities} --n_critics=${n_critics} --copy_optim --n_buffer=20000 --continual_type=ewc_same --gpu 1 ${test_arg} &
-        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --n_critics=10 --qualities=${qualities} --n_critics=${n_critics} --copy_optim --n_buffer=20000 --continual_type=ewc_same --buffer_mix_type=policy --gpu 2 ${test_arg} &
-        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --n_critics=10 --qualities=${qualities} --n_critics=${n_critics} --copy_optim --n_buffer=20000 --continual_type=ewc_same --buffer_mix_type=value --gpu 3 ${test_arg} &
-        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --n_critics=10 --qualities=${qualities} --n_critics=${n_critics} --copy_optim --n_buffer=2000000 --continual_type=ewc_all --gpu 4 ${test_arg} &
-        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --n_critics=10 --qualities=${qualities} --n_critics=${n_critics} --copy_optim --n_buffer=2000000 --continual_type=ewc_same --gpu 5 ${test_arg} &
-        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --n_critics=10 --qualities=${qualities} --n_critics=${n_critics} --copy_optim --n_buffer=2000000 --continual_type=ewc_same --buffer_mix_type=policy --gpu 6 ${test_arg} &
-        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --n_critics=10 --qualities=${qualities} --n_critics=${n_critics} --copy_optim --n_buffer=2000000 --continual_type=ewc_same --buffer_mix_type=value --gpu 7 ${test_arg} &
+        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --n_critics=10 --qualities=${qualities} --copy_optim --n_buffer=20000 --continual_type=ewc --buffer_replay_type=all --gpu 0 ${test_arg} &
+        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --n_critics=10 --qualities=${qualities} --copy_optim --n_buffer=20000 --continual_type=ewc --buffer_replay_type=same --gpu 1 ${test_arg} &
+        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --n_critics=10 --qualities=${qualities} --copy_optim --n_buffer=2000000 --continual_type=ewc --buffer_replay_type=all --gpu 2 ${test_arg} &
+        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --n_critics=10 --qualities=${qualities} --copy_optim --n_buffer=2000000 --continual_type=ewc --buffer_replay_type=same --gpu 3 ${test_arg} &
+        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --n_critics=10 --qualities=${qualities} --copy_optim --n_buffer=20000 --actor_replay_type=ewc --buffer_replay_type=all --gpu 4 ${test_arg} &
+        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --n_critics=10 --qualities=${qualities} --copy_optim --n_buffer=20000 --actor_replay_type=ewc --buffer_replay_type=same --gpu 5 ${test_arg} &
+        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --n_critics=10 --qualities=${qualities} --copy_optim --n_buffer=2000000 --actor_replay_type=ewc --buffer_replay_type=all --gpu 6 ${test_arg} &
+        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --n_critics=10 --qualities=${qualities} --copy_optim --n_buffer=2000000 --actor_replay_type=ewc --buffer_replay_type=same --gpu 7 ${test_arg} &
         wait
 elif [[ ${algorithms} != "other" ]]; then
         export LD_LIBRARY_PATH=/root/.mujoco/mujoco210/bin;
 
-        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --qualities=${qualities} --n_critics=2 --copy_optim --n_buffer=20000 --continual_type=ewc_all --gpu 0 ${test_arg} &
-        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --qualities=${qualities} --n_critics=2 --copy_optim --n_buffer=20000 --continual_type=ewc_same --gpu 1 ${test_arg} &
-        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --qualities=${qualities} --n_critics=2 --copy_optim --n_buffer=20000 --continual_type=ewc_same --buffer_mix_type=policy --gpu 2 ${test_arg} &
-        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --qualities=${qualities} --n_critics=2 --copy_optim --n_buffer=20000 --continual_type=ewc_same --buffer_mix_type=value --gpu 3 ${test_arg} &
-        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --qualities=${qualities} --n_critics=2 --copy_optim --n_buffer=2000000 --continual_type=ewc_all --gpu 4 ${test_arg} &
-        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --qualities=${qualities} --n_critics=2 --copy_optim --n_buffer=2000000 --continual_type=ewc_same --gpu 5 ${test_arg} &
-        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --qualities=${qualities} --n_critics=2 --copy_optim --n_buffer=2000000 --continual_type=ewc_same --buffer_mix_type=policy --gpu 6 ${test_arg} &
-        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --qualities=${qualities} --n_critics=2 --copy_optim --n_buffer=2000000 --continual_type=ewc_same --buffer_mix_type=value --gpu 7 ${test_arg} &
+        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --qualities=${qualities} --n_critics=2 --copy_optim --n_buffer=20000 --continual_type=ewc --buffer_replay_type=all --gpu 0 ${test_arg} &
+        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --qualities=${qualities} --n_critics=2 --copy_optim --n_buffer=20000 --continual_type=ewc --buffer_replay_type=same --gpu 1 ${test_arg} &
+        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --qualities=${qualities} --n_critics=2 --copy_optim --n_buffer=2000000 --continual_type=ewc --buffer_replay_type=all --gpu 2 ${test_arg} &
+        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --qualities=${qualities} --n_critics=2 --copy_optim --n_buffer=2000000 --continual_type=ewc --buffer_replay_type=same --gpu 3 ${test_arg} &
+        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --qualities=${qualities} --n_critics=2 --copy_optim --n_buffer=20000 --actor_replay_type=ewc --buffer_replay_type=all --gpu 4 ${test_arg} &
+        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --qualities=${qualities} --n_critics=2 --copy_optim --n_buffer=20000 --actor_replay_type=ewc --buffer_replay_type=same --gpu 5 ${test_arg} &
+        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --qualities=${qualities} --n_critics=2 --copy_optim --n_buffer=2000000 --actor_replay_type=ewc --buffer_replay_type=all --gpu 6 ${test_arg} &
+        bash online_change_task.sh --dataset=${dataset} --algorithms=${algorithms} --qualities=${qualities} --n_critics=2 --copy_optim --n_buffer=2000000 --actor_replay_type=ewc --buffer_replay_type=same --gpu 7 ${test_arg} &
         wait
 fi

@@ -160,7 +160,7 @@ class O2OBase(STBase):
                 with logger.measure_time("step"):
                     # pick transitions
                     with logger.measure_time("sample_batch"):
-                        if old_iterator is not None and (actor_replay_type == "er" or critic_replay_type == "er"):
+                        if old_iterator is not None and (self._actor_replay_type == "mix" or self._critic_replay_type == "mix"):
                             new_batch = next(iterator)
                             try:
                                 old_batch = next(old_iterator)
@@ -171,11 +171,11 @@ class O2OBase(STBase):
                             mix_batch = TransitionMiniBatch(
                                     part_new_batch.transitions + old_batch.transitions
                                     )
-                            if actor_replay_type == 'er':
+                            if self._actor_replay_type == 'mix':
                                 policy_batch = mix_batch
                             else:
                                 policy_batch = new_batch
-                            if critic_replay_type == 'er':
+                            if self._critic_replay_type == 'mix':
                                 value_batch = mix_batch
                             else:
                                 value_batch = new_batch
@@ -335,6 +335,7 @@ class O2OBase(STBase):
         )
 
         if buffer is None:
+            assert False
             buffer = ReplayBuffer(n_steps, env)
 
         if self._impl is None:
@@ -381,7 +382,8 @@ class O2OBase(STBase):
                 #fed_observation = observation
 
                 this_epoch_sample_step = min(sample_step_per_epoch, n_steps + 1 - total_step)
-                for _ in range(this_epoch_sample_step):
+                episode_length = 0
+                for sample_step in range(this_epoch_sample_step + 1):
                     # sample exploration action
                     with logger.measure_time("inference"):
                         if total_step < random_step and not test:
@@ -393,7 +395,6 @@ class O2OBase(STBase):
                         #exploit_action = exploit_action[0]
 
                     # step environment
-                    episode_length = 0
                     with logger.measure_time("environment_step"):
                         #exploit_next_observation, exploit_reward, exploit_terminal, exploit_truncated, exploit_info = eval_env.step(exploit_action)
                         next_observation, reward, terminal, truncated, info = env.step(action)
@@ -401,16 +402,23 @@ class O2OBase(STBase):
                         episode_length += 1
 
                     # special case for TimeLimit wrapper
-                    if truncated:
+                    #if truncated or sample_step == this_epoch_sample_step - 1:
+                    #    clip_episode = True
+                    #    print(1)
+                    #    episode_length = 0
+                    #else:
+                    #    episode_length += 1
+                    #    if episode_length == 1000:
+                    #        episode_length = 0
+                    #        clip_episode = True
+                    #        print(2)
+                    #    else:
+                    #        clip_episode = False
+                    #        print(3)
+                    if (sample_step + 1) % 1001 == 0 or sample_step == this_epoch_sample_step:
                         clip_episode = True
-                        terminal = False
-                        episode_length = 0
                     else:
-                        episode_length += 1
-                        if episode_length == 1000 - 1:
-                            terminal = True
-                            episode_length = 0
-                        clip_episode = terminal
+                        clip_episode = False
 
                     # store observation
                     buffer.append(
@@ -421,12 +429,10 @@ class O2OBase(STBase):
                         clip_episode=clip_episode,
                     )
 
-                    # reset if terminated
-                    if clip_episode:
+                    if (sample_step + 1) % 1001 == 0 or sample_step == this_epoch_sample_step:
                         observation, _ = env.reset()
                         logger.add_metric("rollout_return", rollout_return)
                         rollout_return = 0.0
-                        # for image observation
                     else:
                         observation = next_observation
                 total_step += this_epoch_sample_step
@@ -435,10 +441,10 @@ class O2OBase(STBase):
                 epoch = total_step // n_steps_per_epoch + start_epoch
 
                 if total_step > update_start_step and len(buffer) > self._batch_size:
-                    for _ in range(this_epoch_sample_step):
+                    for update_time in range(this_epoch_sample_step):
                         # sample mini-batch
                         with logger.measure_time("sample_batch"):
-                            if old_buffer is not None and (self._actor_replay_type == "er" or self._critic_replay_type == "er"):
+                            if old_buffer is not None and (self._actor_replay_type == "mix" or self._critic_replay_type == "mix"):
                                 new_batch = buffer.sample(
                                     batch_size=self._batch_size,#round((1 - buffer_mix_ratio) * self._batch_size),
                                     n_frames=self._n_frames,
@@ -455,11 +461,11 @@ class O2OBase(STBase):
                                 mix_batch = OldTransitionMiniBatch(
                                         part_new_batch.transitions + old_batch.transitions
                                         )
-                                if self._actor_replay_type == 'er':
+                                if self._actor_replay_type == 'mix':
                                     policy_batch = mix_batch
                                 else:
                                     policy_batch = new_batch
-                                if self._critic_replay_type == 'er':
+                                if self._critic_replay_type == 'mix':
                                     value_batch = mix_batch
                                 else:
                                     value_batch = new_batch
@@ -513,16 +519,32 @@ class O2OBase(STBase):
         logger.close()
 
     def before_learn(self, iterator, test):
-        if self._critic_replay_type in ['packnet']:
-            self._impl.critic_packnet_pre_train_process(iterator, self._batch_size, self._n_frames, self._n_steps, self._gamma, test=test)
-        if self._actor_replay_type in ['packnet']:
-            self._impl.actor_packnet_pre_train_process(iterator, self._batch_size, self._n_frames, self._n_steps, self._gamma, test=test)
+        if self._critic_replay_type in ['piggyback']:
+            self._impl._critic_plug._pre_piggyback_task()
+        if self._actor_replay_type in ['piggyback']:
+            self._impl._actor_plug._pre_piggyback_task()
 
     def after_learn(self, iterator, test):
         if self._critic_replay_type in ['rwalk', 'ewc']:
             self._impl.critic_ewc_rwalk_post_train_process(iterator, self._batch_size, self._n_frames, self._n_steps, self._gamma, test=test)
+        elif self._critic_replay_type in ['piggyback']:
+            self._impl._critic_plug._post_piggyback_task()
         if self._actor_replay_type in ['rwalk', 'ewc']:
             self._impl.actor_ewc_rwalk_post_train_process(iterator, self._batch_size, self._n_frames, self._n_steps, self._gamma, test=test)
+        elif self._actor_replay_type in ['piggyback']:
+            self._impl._actor_plug._post_piggyback_task()
+
+    def before_evaluation(self):
+        if self._critic_replay_type in ['piggyback']:
+            self._impl._critic_plug._pre_piggyback_evaluation()
+        if self._actor_replay_type in ['piggyback']:
+            self._impl._actor_plug._pre_piggyback_evaluation()
+
+    def after_evaluation(self):
+        if self._critic_replay_type in ['piggyback']:
+            self._impl._critic_plug._post_piggyback_evaluation()
+        if self._actor_replay_type in ['piggyback']:
+            self._impl._actor_plug._post_piggyback_evaluation()
 
     def copy_from_past(self, arg0: str, impl: STImpl, copy_optim: bool):
         assert self._impl is not None

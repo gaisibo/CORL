@@ -1,6 +1,7 @@
 from typing import Tuple
 import torch
 import numpy as np
+from d3rlpy.models.builders import create_squashed_normal_policy
 from myd3rlpy.algos.torch.st_td3_impl import STTD3Impl
 from myd3rlpy.algos.torch.st_sac_impl import STSACImpl
 from myd3rlpy.algos.torch.st_iql_impl import STIQLImpl
@@ -17,6 +18,15 @@ class O2OSACImpl(STSACImpl, O2OImpl):
     # sac critic: _encoder
     # td3 critic: _encoder
     # iql critic: q._encoder, value._encoder
+    def _build_actor(self) -> None:
+        self._policy = create_squashed_normal_policy(
+            self._observation_shape,
+            self._action_size,
+            self._actor_encoder_factory,
+            min_logstd = -6,
+            max_logstd = 0,
+            use_std_parameter = True,
+        )
 
     def copy_from_sac(self, sac_impl: STSACImpl, copy_optim: bool):
         self._q_func.load_state_dict(sac_impl._q_func.state_dict())

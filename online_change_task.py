@@ -86,8 +86,8 @@ def main(args, use_gpu):
         # Each algo a half.
         o2o1_dict['use_gpu'] = use_gpu
         o2o1_dict['impl_name'] = args.algorithms[1]
-        o2o1_dict["critic_replay_type"] = args.continual_type
-        o2o1_dict["actor_replay_type"] = args.continual_type
+        o2o1_dict["critic_replay_type"] = args.critic_replay_type
+        o2o1_dict["actor_replay_type"] = args.actor_replay_type
         if args.algorithms[1] in ['td3', 'td3_plus_bc']:
             o2o1 = O2OTD3(**o2o1_dict)
         elif args.algorithms[1] == 'sac':
@@ -111,9 +111,9 @@ def main(args, use_gpu):
             elif args.algorithms[0] in offline_algos:
                 if isinstance(dataset0, MDPDataset):
                     loaded_mdp = OldMDPDataset(dataset0.observations, dataset0.actions, dataset0.rewards, dataset0.terminals, dataset0.episode_terminals)
-                if args.continual_type in ['copy', 'mix_same']:
+                if args.continual_type in ['copy'] or (args.buffer_replay_type == 'same' and args.continual_type in ['mix', 'ewc']):
                     loaded_buffer = ReplayBuffer(args.n_buffer, env)
-                elif args.continual_type in ['mix_all', 'ewc']:
+                elif args.buffer_replay_type == 'all' and args.continual_type in ['mix', 'ewc']:
                     loaded_buffer = ReplayBuffer(dataset0.observations.shape[0], env)
                 if args.continual_type != 'none':
                     for episode in loaded_mdp.episodes:
@@ -125,7 +125,7 @@ def main(args, use_gpu):
             if args.continual_type in ['copy']:
                 buffer = loaded_buffer
                 old_buffer = None
-            elif args.continual_type in ['mix_same', 'mix_all', 'ewc']:
+            elif args.continual_type in ['mix', 'ewc']:
                 buffer = ReplayBuffer(args.n_buffer, env)
                 old_buffer = loaded_buffer
             elif args.continual_type == 'none':
@@ -207,7 +207,7 @@ def main(args, use_gpu):
         #        iterator,
         #        continual_type = args.continual_type,
         #        old_iterator = old_iterator,
-        #        buffer_mix_type = args.buffer_mix_type,
+        #        buffer_replay_type = args.buffer_replay_type,
         #        n_epochs=n_epochs,
         #        experiment_name=experiment_name + "_1",
         #        scorers_list = scorers_list,
@@ -275,8 +275,8 @@ if __name__ == '__main__':
     parser.add_argument('--copy_optim', action='store_true')
     parser.add_argument('--algorithms', type=str, required=True)
     parser.add_argument('--qualities', type=str, default="medium-medium")
-    parser.add_argument('--continual_type', type=str, choices=['none', 'copy', 'mix_same', 'mix_all', 'ewc'], required=True)
-    parser.add_argument('--buffer_mix_type', type=str, choices=['all', 'policy', 'value'], default='all')
+    parser.add_argument('--continual_type', type=str, choices=['none', 'copy', 'mix', 'ewc'], default="diff")
+    parser.add_argument('--buffer_replay_type', type=str, choices=['all', 'same'], default='all')
     parser.add_argument("--dataset", default='halfcheetah', type=str)
     parser.add_argument('--explore', action='store_true')
 
@@ -288,7 +288,6 @@ if __name__ == '__main__':
     parser.add_argument('--gpu', type=int, default=0)
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--read_policy', type=int, default=-1)
-
 
     args = parser.parse_args()
 

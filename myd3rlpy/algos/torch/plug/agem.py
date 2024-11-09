@@ -8,7 +8,7 @@ def project(gxy: torch.Tensor, ger: torch.Tensor) -> torch.Tensor:
     return gxy - corr * ger
 
 class AGEM(Plug):
-    def build(self, networks):
+    def build(self):
         self.grad_dims = [[pp.data.numel() for pp in network.parameters()] for network in networks]
         self.grad_xy = [torch.zeros(np.sum(critic_grad_dims)).to(networks[0].device) for self.grad_dims in self.grad_dims]
         self.grad_er = [torch.zeros(np.sum(critic_grad_dims)).to(networks[0].device) for self.grad_dims in self.grad_dims]

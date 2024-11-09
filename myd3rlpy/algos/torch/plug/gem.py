@@ -64,10 +64,9 @@ def project2cone2(gradient, memories, margin=0.5, eps=1e-3):
     gradient.copy_(torch.from_numpy(x).view(-1, 1))
 
 class GEM(Plug):
-    def __init__(self, gem_alpha, algo, networks):
-        self._gem_alpha = gem_alpha
-        self._algo = algo
-        self._networks = networks
+    def __init__(self, algo, networks):
+        super().__init__(algo, networks)
+        self._gem_alpha = algo._gem_alpha
 
     def build(self):
         # Allocate temporary synaptic memory

@@ -1,11 +1,12 @@
 import torch
 
 from d3rlpy.models.builders import create_non_squashed_normal_policy, create_value_function
-from d3rlpy.torch_utility import TorchMiniBatch
+from d3rlpy.torch_utility import TorchMiniBatch, eval_api
 from d3rlpy.algos.torch.iql_impl import IQLImpl
 
 from myd3rlpy.algos.torch.st_impl import STImpl
 from myd3rlpy.models.builders import create_parallel_continuous_q_function
+from myd3rlpy.torch_utility import torch_api
 from utils.networks import ParallelizedEnsembleFlattenMLP
 
 
@@ -14,11 +15,13 @@ class STIQLImpl(STImpl, IQLImpl):
 
     def __init__(
         self,
+        policy_noise,
         **kwargs
     ):
         super().__init__(
             **kwargs
         )
+        self._policy_noise = policy_noise
 
     def _build_actor(self) -> None:
         self._policy = create_non_squashed_normal_policy(
@@ -64,15 +67,15 @@ class STIQLImpl(STImpl, IQLImpl):
         #     self._log_probs = log_probs.mean()
         # else:
         #     self._replay_log_probs = log_probs.mean()
-        if clone_actor and not online and self._clone_policy is not None:
-            # compute log probability
-            dist = self._clone_policy.dist(batch.observations)
-            log_probs = dist.log_prob(self._clone_policy(batch.observations))
+        #if clone_actor and not online and self._clone_policy is not None:
+        #    # compute log probability
+        #    dist = self._clone_policy.dist(batch.observations)
+        #    log_probs = dist.log_prob(self._clone_policy(batch.observations))
 
-            # compute weight
-            with torch.no_grad():
-                weight = self._compute_weight(batch.observations, self._clone_policy(batch.observations))
-            ret += -(weight * log_probs).mean()
+        #    # compute weight
+        #    with torch.no_grad():
+        #        weight = self._compute_weight(batch.observations, self._clone_policy(batch.observations))
+        #    ret += -(weight * log_probs).mean()
 
         return ret
 
@@ -82,6 +85,9 @@ class STIQLImpl(STImpl, IQLImpl):
         q_t = self._targ_q_func(observations, actions, "min")
         v_t = self._value_func(observations)
         adv = q_t - v_t
+        self.adv_mean = adv.mean()
+        self.adv_max = adv.max()
+        self.adv_min = adv.min()
         weight = (self._weight_temp * adv).exp().clamp(max=self._max_weight)
         return weight
 
@@ -121,18 +127,11 @@ class STIQLImpl(STImpl, IQLImpl):
 
     def compute_critic_loss(self, batch, q_tpn, clone_critic: bool=True, online: bool = False, replay=False, first_time=False):
         assert self._q_func is not None
-        if not online:
-            critic_loss = self._compute_critic_loss(batch, q_tpn)
-            value_loss = self._compute_value_loss(batch, clone_critic=clone_critic, replay=replay)
-            if not replay:
-                self._q_loss = critic_loss.mean()
-                self._v_loss = value_loss.mean()
-            else:
-                self._replay_q_loss = critic_loss.mean()
-                self._replay_v_loss = value_loss.mean()
-            return critic_loss + value_loss
-        else:
-            return self._compute_critic_loss(batch, q_tpn)
+        critic_loss = self._compute_critic_loss(batch, q_tpn)
+        value_loss = self._compute_value_loss(batch, clone_critic=clone_critic, replay=replay)
+        self._q_loss = critic_loss.mean()
+        self._v_loss = value_loss.mean()
+        return critic_loss + value_loss
 
     def compute_generate_critic_loss(self, batch, clone_critic: bool=True):
         assert self._q_func is not None
@@ -140,3 +139,11 @@ class STIQLImpl(STImpl, IQLImpl):
 
     def compute_actor_loss(self, batch, clone_actor: bool = False, online: bool = False, replay: bool = False):
         return self._compute_actor_loss(batch, clone_actor=clone_actor, online=online, replay=replay)
+
+    #@eval_api
+    #@torch_api(scaler_targets=["x"])
+    #def _sample_action(self, x: torch.Tensor) -> torch.Tensor:
+    #    action = super()._predict_best_action(x)
+    #    noise = torch.randn_like(action) * self._policy_noise
+    #    action = torch.clamp(action + noise, -1.0, 1.0)
+    #    return action#.cpu().detach().numpy()
