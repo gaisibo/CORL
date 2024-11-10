@@ -62,7 +62,7 @@ class STIQLImpl(STImpl, IQLImpl):
         # compute weight
         with torch.no_grad():
             weight = self._compute_weight(batch.observations, batch.actions)
-        ret = -(weight * log_probs).mean()
+        ret = (-weight * log_probs).mean()
         # if not replay:
         #     self._log_probs = log_probs.mean()
         # else:
@@ -85,10 +85,7 @@ class STIQLImpl(STImpl, IQLImpl):
         q_t = self._targ_q_func(observations, actions, "min")
         v_t = self._value_func(observations)
         adv = q_t - v_t
-        self.adv_mean = adv.mean()
-        self.adv_max = adv.max()
-        self.adv_min = adv.min()
-        weight = (self._weight_temp * adv).exp().clamp(max=self._max_weight)
+        weight = (self._weight_temp * adv).exp().clamp(max=self._max_weight).detach()
         return weight
 
     def compute_target(self, batch: TorchMiniBatch) -> torch.Tensor:

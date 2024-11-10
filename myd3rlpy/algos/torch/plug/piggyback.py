@@ -19,21 +19,24 @@ class Piggyback(Plug):
         self.piggyback_dims = [[pp.data.numel() for pp in piggyback_params] for piggyback_params in self._piggyback_params]
         self.soft_networks = []
         self.copy_networks = []
+        self.usable_networks = []
         for network_id, (network, piggyback_dim) in enumerate(self._networks, self.piggyback_dims):
             soft_param = torch.zeros(np.sum(piggyback_dim))
             copy_param = torch.zeros(np.sum(piggyback_dim)).to(self._networks[0].device)
+            usable_param = torch.ones(np.sum(piggyback_dim)).to(self._networks[0].device)
             torch.nn.init.normal_(soft_param)
             soft_param = torch.nn.Parameter(soft_param)
             self.soft_networks[network_id] = soft_param.to(self._networks[0].device)
             self._algo.critic_optim.add_param_group({"params": self.soft_networks[network_id], "lr": 0.001})
             self.copy_networks[network_id] = copy_param
+            self.usable_networks[network_id] = usable_param
         self.masks = [dict() for _ in self.piggyback_dims]
         #self.soft_optimizer = algo.
 
     # Change the param into mask * param
-    def _pre_soft_mask_networks(self, network, piggyback_dim, soft_param, copy_param):
+    def _pre_soft_mask_networks(self, network, piggyback_dim, soft_param, usable_param, copy_param):
         count = 0
-        #masks = []
+        soft_param = soft_param * usable_param
         for pp in network.parameters():
             if pp.numel() > self._smallest_threshold:
                 begin = 0 if count == 0 else sum(piggyback_dim[:count])
@@ -53,7 +56,6 @@ class Piggyback(Plug):
 
     def _pre_mask_networks(self, network, piggyback_dim, copy_param, mask):
         count = 0
-        masks = []
         for pp in network.parameters():
             if pp.numel() > self._smallest_threshold:
                 begin = 0 if count == 0 else sum(piggyback_dim[:count])
@@ -62,9 +64,8 @@ class Piggyback(Plug):
                 pp.data.copy_(pp.data * mask)
 
     # Change the mask * param into param, and assign the grad for masks and params
-    def _post_soft_mask_networks(self, network, piggyback_dim, soft_param, copy_param, mask):
+    def _post_soft_mask_networks(self, network, piggyback_dim, soft_param, usable_param, copy_param, mask):
         count = 0
-        masks = []
         for pp in network.parameters():
             if pp.numel() > self._smallest_threshold:
                 begin = 0 if count == 0 else sum(piggyback_dim[:count])
@@ -75,14 +76,15 @@ class Piggyback(Plug):
                 pp.data.copy_(copy_param[begin: end])
                 pp.grad.copy_(time_grad * mask[begin: end])
                 if self._new_task == "new":
-                    soft_param[begin: end].copy_(time_grad * pp.data)
+                    soft_param[begin: end].copy_(time_grad * pp.data * usable_param[begin: end])
                 else:
                     soft_param[begin: end].zeros_()
 
     # Change the param into mask * param
-    def _post_task_networks(self, network, piggyback_dim, soft_param, copy_param):
+    def _post_task_networks(self, network, piggyback_dim, soft_param, usable_param):
         count = 0
         masks = []
+        soft_param = soft_param * usable_param
         for pp in network.parameters():
             if pp.numel() > self._smallest_threshold:
                 begin = 0 if count == 0 else sum(piggyback_dim[:count])
@@ -95,7 +97,9 @@ class Piggyback(Plug):
                 mask = torch.threshold(soft_param_pp, soft_threshold, 0)
                 mask[mask > 0] = 1
                 masks.append(mask)
-        return torch.concatenate(masks, dim=0)
+        mask_param = torch.concatenate(masks, dim=0)
+        usable_param = torch.where(mask_param == 1, torch.zeros_like(usable_param), usable_param)
+        return mask_param, usable_param
 
     # Change the mask * param into param, and assign the grad for masks and params
     def _post_mask_networks(self, network, piggyback_dim, copy_param, mask):
@@ -111,19 +115,19 @@ class Piggyback(Plug):
 
     def _pre_piggyback_loss(self):
         if self._new_task:
-            for network_id, (network, soft_param, copy_param, masks, piggyback_dim) in enumerate(zip(self._networks, self.soft_networks, self.copy_networks, self.masks, self.piggyback_dims)):
+            for _, (network, soft_param, usable_param, copy_param, piggyback_dim) in enumerate(zip(self._networks, self.soft_networks, self.usable_networks, self.copy_networks, self.piggyback_dims)):
                 #self.masks[network_id][self._algo._impl_id] = self._pre_soft_mask_networks(network, piggyback_dim, soft_param, self.copy_networks[network_id][self._algo._impl_id])
-                self._pre_soft_mask_networks(network, piggyback_dim, soft_param, self.copy_networks[network_id])
+                self._pre_soft_mask_networks(network, piggyback_dim, soft_param, usable_param, copy_param)
         else:
-            for network_id, (network, soft_param, copy_param, masks, piggyback_dim) in enumerate(zip(self._networks, self.soft_networks, self.copy_networks, self.masks, self.piggyback_dims)):
-                _pre_mask_networks(network, piggyback_dim, copy_param, mask):
+            for _, (network, masks, copy_param, piggyback_dim) in enumerate(zip(self._networks, self.masks, self.copy_networks, self.piggyback_dims)):
+                self._pre_mask_networks(network, piggyback_dim, copy_param, masks[self._algo._impl_id])
 
     def _post_piggyback_loss(self):
-        for network_id, (network, soft_param, copy_param, masks, piggyback_dim) in enumerate(zip(self._networks, self.soft_networks, self.copy_networks, self.masks, self.piggyback_dims)):
-            _post_soft_mask_networks(network, piggyback_dim, soft_param, copy_param, mask)
+        for _, (network, soft_param, usable_param, copy_param, masks, piggyback_dim) in enumerate(zip(self._networks, self.soft_networks, self.usable_networks, self.copy_networks, self.masks, self.piggyback_dims)):
+            self._post_soft_mask_networks(network, piggyback_dim, soft_param, usable_param, copy_param, masks[self._algo._impl_id])
 
     def _pre_piggyback_task(self):
-        if self._algo._impl_id not in soft_networks.keys():
+        if self._algo._impl_id not in self.masks[0].keys():
             self._new_task = True
         else:
             self._new_task = False
@@ -131,15 +135,17 @@ class Piggyback(Plug):
     def _post_piggyback_task(self):
         if self._new_task:
             self._new_task = False
-            for network_id, (network, soft_param, copy_param, masks, piggyback_dim) in enumerate(zip(self._networks, self.soft_networks, self.copy_networks, self.masks, self.piggyback_dims)):
-                self.masks[network_id][self._algo._impl_id] = self._post_task_networks(network, piggyback_dim, soft_param, self.copy_networks[network_id])
+            for network_id, (network, soft_param, usable_param, piggyback_dim) in enumerate(zip(self._networks, self.soft_networks, self.usable_networks, self.piggyback_dims)):
+                self.masks[network_id][self._algo._impl_id] = self._post_task_networks(network, piggyback_dim, soft_param, usable_param)
 
     def _pre_piggyback_evaluation(self):
-        assert self._algo._impl_id in soft_networks.keys():
-            for network_id, (network, copy_param, masks, piggyback_dim) in enumerate(zip(self._networks, self.copy_networks, self.masks, self.piggyback_dims)):
-                _pre_mask_networks(network, piggyback_dim, copy_param, mask):
+        assert len(self.masks) > 0
+        assert self._algo._impl_id in self.masks[0].keys()
+        for _, (network, copy_param, masks, piggyback_dim) in enumerate(zip(self._networks, self.copy_networks, self.masks, self.piggyback_dims)):
+            self._pre_mask_networks(network, piggyback_dim, copy_param, masks[self._algo._impl_id])
 
     def _post_piggyback_evaluation(self):
-        assert self._algo._impl_id in soft_networks.keys():
-            for network_id, (network, copy_param, masks, piggyback_dim) in enumerate(zip(self._networks, self.copy_networks, self.masks, self.piggyback_dims)):
-                _post_mask_networks(network, piggyback_dim, mask, copy_param):
+        assert len(self.masks) > 0
+        assert self._algo._impl_id in self.masks[0].keys()
+        for _, (network, copy_param, masks, piggyback_dim) in enumerate(zip(self._networks, self.copy_networks, self.masks, self.piggyback_dims)):
+            self._post_mask_networks(network, piggyback_dim, copy_param, masks[self._algo._impl_id])
