@@ -8,7 +8,7 @@ from myd3rlpy.torch_utility import torch_api, TorchMiniBatch
 from d3rlpy.torch_utility import train_api
 
 
-class O2OCQLImpl(STCQLImpl, O2OSACImpl):
+class O2OCQLImpl(O2OSACImpl, STCQLImpl):
     # sac actor: _encoder, _mu.weight, _mu.bias, _logstd.weight, _logstd.bias
     # td3 actor: _encoder, _fc.weight, _fc.bias
     # iql actor: _logstd, _encoder, _fc.weight, _fc.bias

@@ -19,12 +19,13 @@ from d3rlpy.models.optimizers import OptimizerFactory
 from d3rlpy.models.q_functions import QFunctionFactory
 from d3rlpy.models.torch.policies import squash_action
 from d3rlpy.preprocessing import ActionScaler, RewardScaler, Scaler
-from d3rlpy.torch_utility import TorchMiniBatch, soft_sync, train_api, torch_api
+from d3rlpy.torch_utility import TorchMiniBatch, soft_sync, train_api, torch_api, eval_api
 from d3rlpy.dataset import TransitionMiniBatch
 from d3rlpy.algos.torch.iql_impl import IQLImpl
 
 from myd3rlpy.algos.torch.st_impl import STImpl
 from myd3rlpy.models.builders import create_parallel_continuous_q_function
+from myd3rlpy.torch_utility import torch_api
 from utils.utils import Struct
 from utils.networks import ParallelizedEnsembleFlattenMLP
 
@@ -180,3 +181,11 @@ class STIQLNImpl(STImpl, IQLImpl):
 
     def compute_actor_loss(self, batch, clone_actor: bool = False, online: bool = False, replay=False):
         return self._compute_actor_loss(batch, clone_actor=clone_actor, online=online, replay=replay)
+
+    #@eval_api
+    #@torch_api(scaler_targets=["x"])
+    #def _sample_action(self, x: torch.Tensor) -> torch.Tensor:
+    #    action = super()._sample_action(x)
+    #    noise = torch.randn_like(action) * self._policy_noise
+    #    action = torch.clamp(action + noise, -1.0, 1.0)
+    #    return action#.cpu().detach().numpy()

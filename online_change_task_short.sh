@@ -45,6 +45,10 @@ while true; do
                 algorithms="iqln-td3";
             elif [[ $2 == "ini" ]]; then
                 algorithms="iqln-iqln_online";
+            elif [[ $2 == "inie" ]]; then
+                algorithms="iqln-iqlne_online";
+            elif [[ $2 == "iie" ]]; then
+                algorithms="iql-iqle_online";
             elif [[ $2 == "cs" ]]; then
                 algorithms="cql-sac";
             elif [[ $2 == "ct" ]]; then

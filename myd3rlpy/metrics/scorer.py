@@ -741,6 +741,8 @@ def critic_actor_diff(env: gym.Env, task_num: int, n_trials: int = 100, epsilon:
         old_algo.save_task()
         algo.change_task(task_num)
         old_algo.change_task(task_num)
+        algo.before_evaluation()
+        old_algo.before_evaluation()
         if is_image:
             stacked_observation = StackedObservation(
                 observation_shape, algo.n_frames
@@ -792,12 +794,14 @@ def critic_actor_diff(env: gym.Env, task_num: int, n_trials: int = 100, epsilon:
             episode_q_diff.append(q_diff.cpu().detach().numpy())
             episode_action_diff.append(action_diff.cpu().detach().numpy())
             episode_rewards.append(episode_reward)
+        algo.after_evaluation()
+        old_algo.after_evaluation()
         algo.load_task()
         old_algo.load_task()
         return [float(np.mean(episode_rewards)), float(np.mean(episode_q_diff)), float(np.mean(episode_action_diff))]
     return scorer
 
-def old_critic_actor_diff(env: gym.Env, n_trials: int = 100, epsilon: float = 0.0, render: bool = False) -> Callable[..., List[float]]:
+def old_critic_actor_diff(env: gym.Env, task_num: int, n_trials: int = 100, epsilon: float = 0.0, render: bool = False) -> Callable[..., List[float]]:
     """Returns scorer function of evaluation on environment.
     This function returns scorer function, which is suitable to the standard
     scikit-learn scorer function style.
@@ -829,8 +833,6 @@ def old_critic_actor_diff(env: gym.Env, n_trials: int = 100, epsilon: float = 0.
         old_algo.save_task()
         algo.change_task(task_num)
         old_algo.change_task(task_num)
-        algo.before_evaluation()
-        old_algo.before_evaluation()
         if is_image:
             stacked_observation = StackedObservation(
                 observation_shape, algo.n_frames

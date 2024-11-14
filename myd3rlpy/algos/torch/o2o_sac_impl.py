@@ -11,7 +11,7 @@ from myd3rlpy.torch_utility import torch_api, TorchMiniBatch
 from d3rlpy.torch_utility import train_api
 
 
-class O2OSACImpl(STSACImpl, O2OImpl):
+class O2OSACImpl(O2OImpl, STSACImpl):
     # sac actor: _encoder, _mu.weight, _mu.bias, _logstd.weight, _logstd.bias
     # td3 actor: _encoder, _fc.weight, _fc.bias
     # iql actor: _logstd, _encoder, _fc.weight, _fc.bias
@@ -56,19 +56,19 @@ class O2OSACImpl(STSACImpl, O2OImpl):
         assert td3_impl._policy is not None
         assert td3_impl._targ_policy is not None
         policy_state_dict = td3_impl._policy.state_dict()
-        policy_state_dict['_mu.weight'] = policy_state_dict['_fc.weight']
-        policy_state_dict['_mu.bias'] = policy_state_dict['_fc.bias']
-        policy_state_dict['_logstd.weight'] = self._policy._logstd.weight.data
-        policy_state_dict['_logstd.bias'] = self._policy._logstd.bias.data
-        del policy_state_dict['_fc.weight']
-        del policy_state_dict['_fc.bias']
+        #policy_state_dict['_mu.weight'] = policy_state_dict['_fc.weight']
+        #policy_state_dict['_mu.bias'] = policy_state_dict['_fc.bias']
+        #policy_state_dict['_logstd.weight'] = self._policy._logstd.weight.data
+        #policy_state_dict['_logstd.bias'] = self._policy._logstd.bias.data
+        #del policy_state_dict['_fc.weight']
+        #del policy_state_dict['_fc.bias']
         targ_policy_state_dict = td3_impl._targ_policy.state_dict()
-        targ_policy_state_dict['_mu.weight'] = targ_policy_state_dict['_fc.weight']
-        targ_policy_state_dict['_mu.bias'] = targ_policy_state_dict['_fc.bias']
-        targ_policy_state_dict['_logstd.weight'] = self._targ_policy._logstd.weight.data
-        targ_policy_state_dict['_logstd.bias'] = self._targ_policy._logstd.bias.data
-        del targ_policy_state_dict['_fc.weight']
-        del targ_policy_state_dict['_fc.bias']
+        #targ_policy_state_dict['_mu.weight'] = targ_policy_state_dict['_fc.weight']
+        #targ_policy_state_dict['_mu.bias'] = targ_policy_state_dict['_fc.bias']
+        #targ_policy_state_dict['_logstd.weight'] = self._targ_policy._logstd.weight.data
+        #targ_policy_state_dict['_logstd.bias'] = self._targ_policy._logstd.bias.data
+        #del targ_policy_state_dict['_fc.weight']
+        #del targ_policy_state_dict['_fc.bias']
 
         self._q_func.load_state_dict(td3_impl._q_func.state_dict())
         self._policy.load_state_dict(policy_state_dict)

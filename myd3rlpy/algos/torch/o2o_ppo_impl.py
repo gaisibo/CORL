@@ -6,7 +6,7 @@ from myd3rlpy.algos.torch.st_ppo_impl import STPPOImpl
 from myd3rlpy.algos.torch.o2o_impl import O2OImpl
 
 
-class O2OPPOImpl(STPPOImpl, O2OImpl):
+class O2OPPOImpl(O2OImpl, STPPOImpl):
     def copy_from_sac(self, sac_impl: STSACImpl, copy_optim: bool):
         self._policy.load_state_dict(sac_impl._policy.state_dict())
         self._targ_policy.load_state_dict(sac_impl._policy.state_dict())

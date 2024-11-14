@@ -19,6 +19,7 @@ from myd3rlpy.algos.torch.plug.rwalk import RWalk
 from myd3rlpy.algos.torch.plug.si import SI
 from myd3rlpy.algos.torch.plug.gem import GEM
 from myd3rlpy.algos.torch.plug.agem import AGEM
+from myd3rlpy.algos.torch.plug.piggyback import Piggyback
 
 
 replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'terminals', 'policy_actions', 'qs']
@@ -61,6 +62,8 @@ class STImpl():
         self._impl_id = 0
         self._learned_id = []
         self._new_task = True
+        self._critic_plug = None
+        self._actor_plug = None
 
     def change_task(self, new_id):
         self._impl_id = new_id
@@ -78,7 +81,8 @@ class STImpl():
 
     def build(self):
         super().build()
-        self._continual_build()
+        if not hasattr(self, "critic_plug") and not hasattr(self, "actor_plug"):
+            self._continual_build()
 
     def _continual_build(self):
 
@@ -95,6 +99,8 @@ class STImpl():
             self.critic_plug = GEM(self, self._critic_networks)
         elif self._critic_replay_type == 'agem':
             self.critic_plug = AGEM(self, self._critic_networks)
+        elif self._critic_replay_type == 'piggyback':
+            self.critic_plug = Piggyback(self, self._critic_networks)
         else:
             self.critic_plug = None
         if self.critic_plug != None:
@@ -110,6 +116,8 @@ class STImpl():
             self.actor_plug = GEM(self, self._actor_networks)
         elif self._actor_replay_type == 'agem':
             self.actor_plug = AGEM(self, self._actor_networks)
+        elif self._actor_replay_type == 'piggyback':
+            self.actor_plug = Piggyback(self, self._actor_networks)
         else:
             self.actor_plug = None
         if self.actor_plug != None:
@@ -117,7 +125,7 @@ class STImpl():
 
     @train_api
     @torch_api(reward_scaler_targets=["batch", "replay_batch"])
-    def update_critic(self, batch: TransitionMiniBatch, replay_batch: TransitionMiniBatch=None, clone_critic: bool=False, online: bool=False):
+    def update_critic(self, batch: TransitionMiniBatch, replay_batch: TransitionMiniBatch=None, clone_critic: bool=False, online: bool=False, update: bool = True):
         assert self._critic_optim is not None
         assert self._q_func is not None
         assert self._policy is not None
@@ -182,7 +190,8 @@ class STImpl():
                 self._pos_agem_loss(self._critic_networks)
             elif self._critic_replay_type == 'gem':
                 self._pos_gem_loss(self._critic_networks)
-        self._critic_optim.step()
+        if update:
+            self._critic_optim.step()
 
         if replay_batch is not None and not online:
             if self._critic_replay_type == 'rwalk':
@@ -240,7 +249,7 @@ class STImpl():
 
     @train_api
     @torch_api(scaler_targets=["batch", "replay_batch"])
-    def update_actor(self, batch: TransitionMiniBatch, replay_batch: Optional[List[torch.Tensor]]=None, clone_actor: bool=False, online: bool=False) -> np.ndarray:
+    def update_actor(self, batch: TransitionMiniBatch, replay_batch: Optional[List[torch.Tensor]]=None, clone_actor: bool=False, online: bool=False, update: bool = True) -> np.ndarray:
         assert self._q_func is not None
         assert self._policy is not None
         assert self._actor_optim is not None
@@ -307,8 +316,8 @@ class STImpl():
                 self._pos_agem_loss(self._actor_networks)
             elif self._actor_replay_type == 'gem':
                 self._pos_gem_loss(self._actor_networks)
-
-        self._actor_optim.step()
+        if update:
+            self._actor_optim.step()
 
         if replay_batch is not None and not online:
             if self._actor_replay_type == 'rwalk':

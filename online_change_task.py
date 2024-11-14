@@ -14,6 +14,7 @@ from myd3rlpy.algos.o2o_td3 import O2OTD3
 from myd3rlpy.algos.o2o_sac import O2OSAC
 from myd3rlpy.algos.o2o_iql import O2OIQL
 from myd3rlpy.algos.o2o_cql import O2OCQL
+from myd3rlpy.algos.o2o_test import O2OTEST
 from mygym.envs.online_offline_wrapper import online_offline_wrapper
 from config.o2o_config import get_o2o_dict, online_algos, offline_algos
 
@@ -92,8 +93,10 @@ def main(args, use_gpu):
             o2o1 = O2OTD3(**o2o1_dict)
         elif args.algorithms[1] == 'sac':
             o2o1 = O2OSAC(**o2o1_dict)
-        elif args.algorithms[1] in ['iql', 'iqln', 'iql_online', 'iqln_online']:
+        elif args.algorithms[1] in ['iql', 'iqln', 'iql_online', 'iqle_online', 'iqln_online', 'iqlne_online']:
             o2o1 = O2OIQL(**o2o1_dict)
+        elif args.algorithms[1] in ['test_online']:
+            o2o1 = O2OTEST(**o2o1_dict)
         elif args.algorithms[1] in ['cql', 'cal']:
             o2o1 = O2OCQL(**o2o1_dict)
         else:
@@ -291,18 +294,16 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    #if args.dataset in ['HalfCheetah-v2', 'Hopper-v2', 'Walker2d-v2', 'Ant-v2']:
-    #    args.dataset_kind = 'd4rl'
-    #elif 'antmaze' in args.dataset:
-    #    args.dataset_kind = 'antmaze'
-    #    # args.maze = args.dataset.split('-')[1]
-    #    # assert args.maze in ['umaze', 'medium', 'large']
-    #    # args.part_times_num = 0 if len(args.dataset_nums) == 2 else 1
-    #else:
-    #    raise NotImplementedError
+    if args.dataset in ['halfcheetah', 'hopper', 'walker2d', 'ant']:
+        args.dataset_kind = 'd4rl'
+    elif 'antmaze' in args.dataset:
+        args.dataset_kind = 'antmaze'
+    else:
+        raise NotImplementedError
     args.algorithms_str = args.algorithms
     args.algorithms = args.algorithms.split('-')
     assert len(args.algorithms) == 2
+    print(f"args.algorithms: {args.algorithms}")
     for algo in args.algorithms:
         assert algo in offline_algos + online_algos
     if args.qualities is not None:

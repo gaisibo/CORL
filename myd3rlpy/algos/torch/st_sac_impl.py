@@ -9,7 +9,8 @@ import torch.nn.functional as F
 from torch.optim import Optimizer
 from d3rlpy.gpu import Device
 from d3rlpy.models.builders import create_continuous_q_function, create_squashed_normal_policy
-from d3rlpy.torch_utility import TorchMiniBatch, soft_sync, train_api, torch_api
+from d3rlpy.torch_utility import TorchMiniBatch, soft_sync, train_api, eval_api
+from myd3rlpy.torch_utility import torch_api
 from d3rlpy.models.encoders import EncoderFactory
 from d3rlpy.models.optimizers import OptimizerFactory
 from d3rlpy.models.q_functions import QFunctionFactory
@@ -82,3 +83,11 @@ class STSACImpl(STImpl, SACImpl):
         #q_t = torch.mean(self._q_func(batch.observations, action), dim=0)
         #loss = (entropy - q_t).mean()
         #return loss
+
+    @eval_api
+    @torch_api(scaler_targets=["x"])
+    def _sample_action(self, x: torch.Tensor) -> torch.Tensor:
+        action = super()._predict_best_action(x)
+        noise = torch.randn_like(action) * 0.2
+        action = torch.clamp(action + noise, -1.0, 1.0)
+        return action#.cpu().detach().numpy()

@@ -108,9 +108,11 @@ def main(args, device):
         old_algos = []
         buffer = ReplayBuffer(args.n_buffer, envs[0])
         old_buffer = None
+        algo.build_with_env(envs[0])
         for task_id, (env, eval_env, env_id) in enumerate(zip(envs, eval_envs, env_ids)):
             if args.clear_network:
                 algo = O2O(**algo_dict)
+                algo.build_with_env(env)
             if task_id > 0:
                 if args.actor_replay_type == "bc" or args.critic_replay_type == "bc":
                     old_buffer = buffer
@@ -135,21 +137,21 @@ def main(args, device):
                 scorers_env["environment_" + str(env_id)] = evaluate_on_environment(envs[env_id])
                 scorers_list = [scorers_env]
                 eval_episodes_list = [None]
+                print(f"learned_env_id: {learned_env_id}")
                 for old_id in learned_env_id[:-1]:
                     scorers_env = dict()
-                    scorers_env["environment_" + str(old_id) + '-critic_diff_' + str(old_id) + "-actor_diff_" + str(old_id)] = critic_actor_diff(envs[old_id])
+                    scorers_env["environment_" + str(old_id) + '-critic_diff_' + str(old_id) + "-actor_diff_" + str(old_id)] = critic_actor_diff(envs[old_id], old_id)
                     scorers_list.append(scorers_env)
                     eval_episodes_list.append(old_algos[old_id])
                 for old_id in learned_env_id[:-1]:
                     scorers_env = dict()
-                    scorers_env['old_critic_diff_' + str(old_id) + "-old_actor_diff_" + str(old_id)] = old_critic_actor_diff(envs[old_id])
+                    scorers_env['old_critic_diff_' + str(old_id) + "-old_actor_diff_" + str(old_id)] = old_critic_actor_diff(envs[old_id], old_id)
                     scorers_list.append(scorers_env)
                     eval_episodes_list.append(old_algos[old_id])
             else:
                 raise NotImplementedError
 
             print(f'Start Training {task_id}')
-            algo.before_learn(buffer, args.actor_replay_type, args.critic_replay_type, args.test)
             if task_id <= args.read_policy:
                 if args.read_policy == 0:
                     pretrain_path = "pretrained_network/" + "ST_" + args.algo_kind + '_' + args.dataset + '.pt'
@@ -157,8 +159,9 @@ def main(args, device):
                 else:
                     pretrain_path = args.model_path + algos_name + '_' + args.dataset + " " + str(task_id) + '.pt'
 
-                algo.build_with_env(env)
+                #algo.build_with_env(env)
                 algo.change_task(task_id)
+                #algo.before_learn(buffer, args.test)
                 algo._impl.save_clone_data()
                 algo.load_model(pretrain_path)
                 algo._impl.save_clone_data()
@@ -171,8 +174,9 @@ def main(args, device):
             elif task_id > args.read_policy:
                 # train
                 print(f'learning {task_id}')
-                algo.build_with_env(env)
+                #algo.build_with_env(env)
                 algo.change_task(task_id)
+                algo.before_learn(buffer, args.test)
                 #for param_group in st._impl._actor_optim.param_groups:
                 #    param_group["lr"] = st_dict['actor_learning_rate']
                 #for param_group in st._impl._critic_optim.param_groups:
@@ -195,7 +199,7 @@ def main(args, device):
                     scorers_list = scorers_list,
                     eval_episodes_list = eval_episodes_list,
                 )
-            algo.after_learn(buffer, args.buffer_mix_type, args.test)
+                algo.after_learn(buffer, args.test)
     print('finish')
 
 if __name__ == '__main__':
@@ -233,9 +237,9 @@ if __name__ == '__main__':
     parser.add_argument("--n_action_samples", default=10, type=int)
     parser.add_argument('--top_euclid', default=64, type=int)
 
-    parser.add_argument('--critic_replay_type', default='bc', type=str, choices=['orl', 'bc', 'er', 'prefect_memory', 'lwf', 'ewc', 'gem', 'agem', 'rwalk', 'si', 'none'])
+    parser.add_argument('--critic_replay_type', default='bc', type=str, choices=['orl', 'bc', 'er', 'prefect_memory', 'lwf', 'ewc', 'gem', 'agem', 'rwalk', 'si', 'piggyback', 'none'])
     parser.add_argument('--critic_replay_lambda', default=100, type=float)
-    parser.add_argument('--actor_replay_type', default='orl', type=str, choices=['orl', 'bc', 'er', 'prefect_memory', 'lwf', 'lwf_orl', 'ewc', 'gem', 'agem', 'rwalk', 'si', 'none'])
+    parser.add_argument('--actor_replay_type', default='orl', type=str, choices=['orl', 'bc', 'er', 'prefect_memory', 'lwf', 'lwf_orl', 'ewc', 'gem', 'agem', 'rwalk', 'si', 'piggyback', 'none'])
     parser.add_argument('--actor_replay_lambda', default=1, type=float)
 
     parser.add_argument("--continual_type", default="ewc", type=str)

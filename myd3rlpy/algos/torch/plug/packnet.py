@@ -9,3 +9,4 @@ class PackNet(Plug):
         self._softs = nn.ModuleDict()
 
     def change_task(self, task_id):
+        pass

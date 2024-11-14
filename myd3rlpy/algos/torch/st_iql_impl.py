@@ -141,6 +141,6 @@ class STIQLImpl(STImpl, IQLImpl):
     #@torch_api(scaler_targets=["x"])
     #def _sample_action(self, x: torch.Tensor) -> torch.Tensor:
     #    action = super()._predict_best_action(x)
-    #    noise = torch.randn_like(action) * self._policy_noise
+    #    noise = torch.randn_like(action) * 0.2
     #    action = torch.clamp(action + noise, -1.0, 1.0)
     #    return action#.cpu().detach().numpy()

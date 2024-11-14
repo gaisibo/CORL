@@ -12,6 +12,7 @@ class O2OIQL(O2OBase, STIQL):
     def _update(self, policy_batch: TransitionMiniBatch, value_batch: TransitionMiniBatch, online: bool) -> Dict[int, float]:
         assert self._impl is not None, IMPL_NOT_INITIALIZED_ERROR
         metrics = {}
+        #for _ in range(10 if self._impl_name in ["iql_online", "iqle_online", "iqln_online", "iqlne_online"] else 1):
         critic_loss, replay_critic_loss = self._impl.update_critic(value_batch, None, clone_critic=self._clone_critic, online=online)
         metrics.update({"critic_loss": critic_loss})
         metrics.update({"replay_critic_loss": replay_critic_loss})
@@ -23,12 +24,22 @@ class O2OIQL(O2OBase, STIQL):
         if hasattr(self._impl, "_v_loss"):
             metrics.update({"v_loss": self._impl._v_loss.cpu().detach().numpy()})
 
-        actor_loss, replay_actor_loss = self._impl.update_actor(policy_batch, None, clone_actor=self._clone_actor, online=online)
-        # actor_loss, replay_actor_loss = self._impl.update_actor(batch, replay_batch, online=online)
-        metrics.update({"actor_loss": actor_loss})
-        metrics.update({"replay_actor_loss": replay_actor_loss})
+        if self._grad_step % 2 == 1:
+            actor_loss, replay_actor_loss = self._impl.update_actor(policy_batch, None, clone_actor=self._clone_actor, online=online)
+            # actor_loss, replay_actor_loss = self._impl.update_actor(batch, replay_batch, online=online)
+            metrics.update({"actor_loss": actor_loss})
+            metrics.update({"replay_actor_loss": replay_actor_loss})
+            if hasattr(self._impl, "_iql_loss"):
+                metrics.update({"_iql_loss": self._impl._iql_loss.cpu().detach().numpy()})
+            if hasattr(self._impl, "_td3_loss"):
+                metrics.update({"_td3_loss": self._impl._td3_loss.cpu().detach().numpy()})
+            if hasattr(self._impl, "_weight"):
+                metrics.update({"_weight": self._impl._weight.cpu().detach().numpy()})
+            if hasattr(self._impl, "_adv"):
+                metrics.update({"_adv": self._impl._adv.cpu().detach().numpy()})
 
-        self._impl.update_critic_target()
+            self._impl.update_critic_target()
+            self._impl.update_actor_target()
 
         return metrics
 
@@ -70,8 +81,13 @@ class O2OIQL(O2OBase, STIQL):
         }
         if self._impl_name in ['iql', 'iql_online']:
             from myd3rlpy.algos.torch.o2o_iql_impl import O2OIQLImpl as O2OImpl
+        elif self._impl_name in ['iqle_online']:
+            from myd3rlpy.algos.torch.o2o_iqle_impl import O2OIQLEImpl as O2OImpl
         elif self._impl_name in ['iqln', 'iqln_online']:
             from myd3rlpy.algos.torch.o2o_iqln_impl import O2OIQLNImpl as O2OImpl
+        elif self._impl_name in ['iqlne_online']:
+            from myd3rlpy.algos.torch.o2o_iqlne_impl import O2OIQLNEImpl as O2OImpl
+            impl_dict["random_choice_num"] = 2
         else:
             print(self._impl_name)
             raise NotImplementedError

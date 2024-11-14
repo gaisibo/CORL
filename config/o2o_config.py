@@ -1,7 +1,7 @@
 import d3rlpy
 
 
-online_algos = ['td3', 'sac', 'iql_online', 'iqln_online']
+online_algos = ['td3', 'sac', 'iql_online', 'iqle_online', 'iqln_online', 'iqlne_online', "test_online"]
 offline_algos = ['iql', 'iqln', 'cql', 'cal', 'td3_plus_bc']
 def get_o2o_dict(algo, quality):
     o2o_dict = dict()
@@ -34,7 +34,7 @@ def get_o2o_dict(algo, quality):
         if algo == 'td3_plus_bc':
             o2o_dict['alpha'] = 2.5
             #o2o_dict['scaler'] = 'standard'
-    elif algo in ['iql', 'iqln', 'iql_online', 'iqln_online']:
+    elif algo in ['iql', 'iqln', 'iql_online', 'iqle_online', 'iqln_online', 'iqlne_online']:
         #if algo in ['iql', 'iqln']:
         #    reward_scaler = d3rlpy.preprocessing.ReturnBasedRewardScaler(multiplier=1000.0)
         #    o2o_dict["reward_scaler"] = reward_scaler
@@ -42,7 +42,7 @@ def get_o2o_dict(algo, quality):
         o2o_dict["critic_learning_rate"] = 3e-4
         o2o_dict["weight_temp"] = 3.0
         o2o_dict["max_weight"] = 100.0
-        if algo in ['iqln', 'iqln_online']:
+        if algo in ['iqln', 'iqln_online', 'iqle_online', 'iqlne_online']:
             o2o_dict["n_ensemble"] = 10
             if algo == "iqln":
                 o2o_dict["expectile"] = 0.99
@@ -50,6 +50,13 @@ def get_o2o_dict(algo, quality):
                 o2o_dict["expectile"] = 0.99
         else:
             o2o_dict["expectile"] = 0.7
+    elif algo in ['test_online']:
+        o2o_dict["actor_learning_rate"] = 3e-4
+        o2o_dict["critic_learning_rate"] = 3e-4
+        o2o_dict["weight_temp"] = 3.0
+        o2o_dict["max_weight"] = 100.0
+        o2o_dict["n_ensemble"] = 10
+        o2o_dict["expectile"] = 1
     elif algo in ['ppo', 'bppo']:
         #reward_scaler = d3rlpy.preprocessing.ReturnBasedRewardScaler(multiplier=1000.0)
         o2o_dict["actor_learning_rate"] = 3e-4

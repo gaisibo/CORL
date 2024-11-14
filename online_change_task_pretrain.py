@@ -211,6 +211,12 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
+    if args.dataset in ['halfcheetah', 'hopper', 'walker2d', 'ant']:
+        args.dataset_kind = 'd4rl'
+    elif 'antmaze' in args.dataset:
+        args.dataset_kind = 'antmaze'
+    else:
+        raise NotImplementedError
     #if args.algorithms not in ['ppo', 'bppo']:
     #args.first_n_steps = 1000000
     #args.n_steps_per_epoch = 1000

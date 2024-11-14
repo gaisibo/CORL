@@ -23,8 +23,6 @@ from d3rlpy.dataset import TransitionMiniBatch
 from d3rlpy.models.builders import create_probabilistic_ensemble_dynamics_model
 
 from myd3rlpy.algos.torch.st_cql_impl import STImpl
-from myd3rlpy.algos.torch.gem import overwrite_grad, store_grad, project2cone2
-from myd3rlpy.algos.torch.agem import project
 from utils.utils import Struct
 
 

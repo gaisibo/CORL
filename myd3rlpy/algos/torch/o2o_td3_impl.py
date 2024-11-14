@@ -6,22 +6,22 @@ from myd3rlpy.algos.torch.st_cql_impl import STCQLImpl
 from myd3rlpy.algos.torch.o2o_impl import O2OImpl
 
 
-class O2OTD3Impl(STTD3Impl):
+class O2OTD3Impl(O2OImpl, STTD3Impl):
     # sac actor: _encoder, _mu.weight, _mu.bias, _logstd.weight, _logstd.bias
     # td3 actor: _encoder, _fc.weight, _fc.bias
     # iql actor: _logstd, _encoder, _fc.weight, _fc.bias
     # sac critic: _encoder
     # td3 critic: _encoder
     # iql critic: q._encoder, value._encoder
-    def _build_actor(self) -> None:
-        self._policy = create_squashed_normal_policy(
-            self._observation_shape,
-            self._action_size,
-            self._actor_encoder_factory,
-            min_logstd = -6,
-            max_logstd = 0,
-            use_std_parameter = True,
-        )
+    #def _build_actor(self) -> None:
+    #    self._policy = create_squashed_normal_policy(
+    #        self._observation_shape,
+    #        self._action_size,
+    #        self._actor_encoder_factory,
+    #        min_logstd = -6,
+    #        max_logstd = 0,
+    #        use_std_parameter = True,
+    #    )
 
     def copy_from_td3(self, td3_impl: STTD3Impl, copy_optim: bool):
         self._q_func.load_state_dict(td3_impl._q_func.state_dict())
@@ -38,19 +38,19 @@ class O2OTD3Impl(STTD3Impl):
         assert sac_impl._policy is not None
         assert sac_impl._targ_policy is not None
         policy_state_dict = sac_impl._policy.state_dict()
-        policy_state_dict['_fc.weight'] = policy_state_dict['_mu.weight']
-        policy_state_dict['_fc.bias'] = policy_state_dict['_mu.bias']
-        del policy_state_dict['_mu.weight']
-        del policy_state_dict['_mu.bias']
-        del policy_state_dict['_logstd.weight']
-        del policy_state_dict['_logstd.bias']
+        #policy_state_dict['_fc.weight'] = policy_state_dict['_mu.weight']
+        #policy_state_dict['_fc.bias'] = policy_state_dict['_mu.bias']
+        #del policy_state_dict['_mu.weight']
+        #del policy_state_dict['_mu.bias']
+        #del policy_state_dict['_logstd.weight']
+        #del policy_state_dict['_logstd.bias']
         targ_policy_state_dict = sac_impl._targ_policy.state_dict()
-        targ_policy_state_dict['_fc.weight'] = targ_policy_state_dict['_mu.weight']
-        targ_policy_state_dict['_fc.bias'] = targ_policy_state_dict['_mu.bias']
-        del targ_policy_state_dict['_mu.weight']
-        del targ_policy_state_dict['_mu.bias']
-        del targ_policy_state_dict['_logstd.weight']
-        del targ_policy_state_dict['_logstd.bias']
+        #targ_policy_state_dict['_fc.weight'] = targ_policy_state_dict['_mu.weight']
+        #targ_policy_state_dict['_fc.bias'] = targ_policy_state_dict['_mu.bias']
+        #del targ_policy_state_dict['_mu.weight']
+        #del targ_policy_state_dict['_mu.bias']
+        #del targ_policy_state_dict['_logstd.weight']
+        #del targ_policy_state_dict['_logstd.bias']
         #del targ_policy_state_dict['_logstd']
         self._q_func.load_state_dict(sac_impl._q_func.state_dict())
         self._policy.load_state_dict(policy_state_dict)

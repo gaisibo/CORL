@@ -7,7 +7,7 @@ from myd3rlpy.algos.torch.st_cql_impl import STCQLImpl
 from myd3rlpy.algos.torch.o2o_impl import O2OImpl
 
 
-class O2OIQLImpl(STIQLImpl, O2OImpl):
+class O2OIQLImpl(O2OImpl, STIQLImpl):
     # sac actor: _encoder, _mu.weight, _mu.bias, _logstd.weight, _logstd.bias
     # td3 actor: _encoder, _fc.weight, _fc.bias
     # iql actor: _logstd, _encoder, _fc.weight, _fc.bias
@@ -15,20 +15,12 @@ class O2OIQLImpl(STIQLImpl, O2OImpl):
     # td3 critic: _encoder
     # iql critic: q._encoder, value._encoder
     # According to AWAC, use the same modules as SAC
-    def _build_actor(self) -> None:
-        self._policy = create_squashed_normal_policy(
-            self._observation_shape,
-            self._action_size,
-            self._actor_encoder_factory,
-            min_logstd = -6,
-            max_logstd = 0,
-            use_std_parameter = True,
-        )
 
     def copy_from_iql(self, iql_impl: STIQLImpl, copy_optim: bool):
         self._q_func.load_state_dict(iql_impl._q_func.state_dict())
-        self._policy.load_state_dict(iql_impl._policy.state_dict())
         self._targ_q_func.load_state_dict(iql_impl._targ_q_func.state_dict())
+        self._policy.load_state_dict(iql_impl._policy.state_dict())
+        self._targ_policy.load_state_dict(iql_impl._targ_policy.state_dict())
         if copy_optim:
             self._actor_optim.load_state_dict(self._actor_optim.state_dict())
             self._critic_optim.load_state_dict(self._critic_optim.state_dict())

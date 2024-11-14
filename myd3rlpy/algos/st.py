@@ -93,15 +93,13 @@ class STBase():
         assert self._impl is not None, IMPL_NOT_INITIALIZED_ERROR
         self._impl.change_task(task_id)
 
-    def load_task(self, task_id):
+    def load_task(self):
         assert self._impl is not None, IMPL_NOT_INITIALIZED_ERROR
-        self._impl.load_task(task_id)
-        self.after_evaluation()
+        self._impl.load_task()
 
-    def save_task(self, task_id):
+    def save_task(self):
         assert self._impl is not None, IMPL_NOT_INITIALIZED_ERROR
-        self._impl.save_task(task_id)
-        self.before_evaluation()
+        self._impl.save_task()
 
     def before_evaluation(self):
         pass

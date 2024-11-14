@@ -6,6 +6,7 @@ from tqdm.auto import tqdm
 from tqdm.auto import trange
 import numpy as np
 import torch
+import copy
 
 from d3rlpy.metrics.scorer import evaluate_on_environment
 from d3rlpy.online.buffers import Buffer, ReplayBuffer
@@ -335,7 +336,6 @@ class O2OBase(STBase):
         )
 
         if buffer is None:
-            assert False
             buffer = ReplayBuffer(n_steps, env)
 
         if self._impl is None:
@@ -350,8 +350,8 @@ class O2OBase(STBase):
         else:
             # self._impl.rebuild_critic()
             #self._impl._impl_id = 0
-            if not hasattr(self, "critic_plug") and not hasattr(self, "actor_plug"):
-                self._impl._continual_build()
+            #if not hasattr(self, "critic_plug") and not hasattr(self, "actor_plug"):
+            #    self._impl._continual_build()
             LOG.warning("Skip building models since they're already built.")
 
         # save hyperparameters
@@ -375,15 +375,19 @@ class O2OBase(STBase):
         total_step = 1
 
         while total_step < n_steps + 1:
-            if total_step > 2000 and test:
+            if total_step > 1000 and test:
                 break
             with logger.measure_time("step"):
                 #observation = observation.astype("f4")
                 #fed_observation = observation
 
-                this_epoch_sample_step = min(sample_step_per_epoch, n_steps + 1 - total_step)
+                #this_epoch_sample_step = min(sample_step_per_epoch, n_steps + 1 - total_step)
+                this_epoch_sample_step = 0
                 episode_length = 0
-                for sample_step in range(this_epoch_sample_step + 1):
+                #for sample_step in range(this_epoch_sample_step + 1):
+                observation, _ = env.reset()
+                rollout_return = 0.0
+                while True:
                     # sample exploration action
                     with logger.measure_time("inference"):
                         if total_step < random_step and not test:
@@ -415,7 +419,8 @@ class O2OBase(STBase):
                     #    else:
                     #        clip_episode = False
                     #        print(3)
-                    if (sample_step + 1) % 1001 == 0 or sample_step == this_epoch_sample_step:
+                    #if truncated or (sample_step + 1) % 1001 == 0 or sample_step == this_epoch_sample_step:
+                    if truncated:
                         clip_episode = True
                     else:
                         clip_episode = False
@@ -429,12 +434,14 @@ class O2OBase(STBase):
                         clip_episode=clip_episode,
                     )
 
-                    if (sample_step + 1) % 1001 == 0 or sample_step == this_epoch_sample_step:
-                        observation, _ = env.reset()
+                    #if truncated or (sample_step + 1) % 1001 == 0 or sample_step == this_epoch_sample_step:
+                    if truncated:
+                        #observation, _ = env.reset()
                         logger.add_metric("rollout_return", rollout_return)
-                        rollout_return = 0.0
+                        break
                     else:
                         observation = next_observation
+                        this_epoch_sample_step += 1
                 total_step += this_epoch_sample_step
 
                 # psuedo epoch count
@@ -480,7 +487,8 @@ class O2OBase(STBase):
 
                         # update parameters
                         with logger.measure_time("algorithm_update"):
-                            loss = self.update(policy_batch, value_batch, online=True)
+                            # The online of update is unusable, do not set!
+                            loss = self.update(policy_batch, value_batch)
 
                         # record metrics
                         for name, val in loss.items():
@@ -519,32 +527,34 @@ class O2OBase(STBase):
         logger.close()
 
     def before_learn(self, iterator, test):
+        if (self._impl.critic_plug is None and self._critic_replay_type != "none") or (self._impl.actor_plug is None and self._actor_replay_type != "none"):
+            self._impl._continual_build()
         if self._critic_replay_type in ['piggyback']:
-            self._impl._critic_plug._pre_piggyback_task()
+            self._impl.critic_plug._pre_piggyback_task()
         if self._actor_replay_type in ['piggyback']:
-            self._impl._actor_plug._pre_piggyback_task()
+            self._impl.actor_plug._pre_piggyback_task()
 
     def after_learn(self, iterator, test):
         if self._critic_replay_type in ['rwalk', 'ewc']:
             self._impl.critic_ewc_rwalk_post_train_process(iterator, self._batch_size, self._n_frames, self._n_steps, self._gamma, test=test)
         elif self._critic_replay_type in ['piggyback']:
-            self._impl._critic_plug._post_piggyback_task()
+            self._impl.critic_plug._post_piggyback_task()
         if self._actor_replay_type in ['rwalk', 'ewc']:
             self._impl.actor_ewc_rwalk_post_train_process(iterator, self._batch_size, self._n_frames, self._n_steps, self._gamma, test=test)
         elif self._actor_replay_type in ['piggyback']:
-            self._impl._actor_plug._post_piggyback_task()
+            self._impl.actor_plug._post_piggyback_task()
 
     def before_evaluation(self):
         if self._critic_replay_type in ['piggyback']:
-            self._impl._critic_plug._pre_piggyback_evaluation()
+            self._impl.critic_plug._pre_piggyback_evaluation()
         if self._actor_replay_type in ['piggyback']:
-            self._impl._actor_plug._pre_piggyback_evaluation()
+            self._impl.actor_plug._pre_piggyback_evaluation()
 
     def after_evaluation(self):
         if self._critic_replay_type in ['piggyback']:
-            self._impl._critic_plug._post_piggyback_evaluation()
+            self._impl.critic_plug._post_piggyback_evaluation()
         if self._actor_replay_type in ['piggyback']:
-            self._impl._actor_plug._post_piggyback_evaluation()
+            self._impl.actor_plug._post_piggyback_evaluation()
 
     def copy_from_past(self, arg0: str, impl: STImpl, copy_optim: bool):
         assert self._impl is not None
@@ -558,6 +568,10 @@ class O2OBase(STBase):
             self._impl.copy_from_cql(impl, copy_optim)
         else:
             raise NotImplementedError
+        if hasattr(impl, "critic_plug") and impl.critic_plug is not None:
+            self._impl.critic_plug = copy.deepcopy(impl.critic_plug)
+        if hasattr(impl, "actor_plug") and impl.actor_plug is not None:
+            self._impl.actor_plug = copy.deepcopy(impl.actor_plug)
 
     def _evaluate(
         self,
