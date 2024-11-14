@@ -2,10 +2,11 @@ import os
 import argparse
 import random
 import numpy as np
-import gym
 
 import torch
-from torch.optim.lr_scheduler import CosineAnnealingLR
+from d4rl.locomotion import ant
+from d3rl.locomotion.wrappers import NormalizedBoxEnv
+
 from d3rlpy.online.buffers import ReplayBuffer
 from myd3rlpy.datasets import get_d4rl
 from d3rlpy.metrics import evaluate_on_environment
@@ -17,6 +18,7 @@ from myd3rlpy.algos.o2o_cql import O2OCQL
 from myd3rlpy.algos.o2o_test import O2OTEST
 from mygym.envs.online_offline_wrapper import online_offline_wrapper
 from config.o2o_config import get_o2o_dict, online_algos, offline_algos
+from dataset.expand_maze import maze_maps
 
 from myd3rlpy.dataset import MDPDataset
 from d3rlpy.dataset import MDPDataset as OldMDPDataset
@@ -35,9 +37,27 @@ replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'termi
 def main(args, use_gpu):
     print("Start")
     np.set_printoptions(precision=1, suppress=True)
-    print(args.dataset + '-' + args.qualities[0].replace("_", "-") + '-v0')
-    dataset0, env = get_d4rl(args.dataset + '-' + args.qualities[0].replace("_", "-") + '-v0')
-    dataset1, eval_env = get_d4rl(args.dataset + '-' + args.qualities[1].replace("_", "-") + '-v0')
+    if args.dataset_kind == "d4rl":
+        #print(args.dataset + '-' + args.qualities[0].replace("_", "-") + '-v0')
+        dataset0, env = get_d4rl(args.dataset + '-' + args.qualities[0].replace("_", "-") + '-v0')
+        _, eval_env = get_d4rl(args.dataset + '-' + args.qualities[1].replace("_", "-") + '-v0')
+    elif args.dataset_kind == "antmaze":
+        assert "expand" not in args.qualities[0]
+        #print(args.dataset + '-' + args.qualities[0].replace("_", "-") + '-v0')
+        if "expand" not in args.qualities[0]:
+            dataset0, env = get_d4rl(args.dataset + '-' + args.qualities[0].replace("_", "-") + '-v0')
+            _, eval_env = get_d4rl(args.dataset + '-' + args.qualities[1].replace("_", "-") + '-v0')
+        else:
+            assert args.algorithms[1] in online_algos
+            # qualities 应该为类似expand_medium_play这样的。
+            maze_map = args.qualities[1].split("_")
+            # maze_map 就像是expand-medium这样。
+            maze_map = maze_map[0] + "-" + maze_map[1]
+            maze_map = maze_maps[maze_map]
+            env = NormalizedBoxEnv(ant.AntMazeEnv(maze_map=maze_map, maze_size_scaling=4.0, non_zero_reset=False))
+            eval_env = NormalizedBoxEnv(ant.AntMazeEnv(maze_map=maze_map, maze_size_scaling=4.0, non_zero_reset=False))
+    else:
+        raise NotImplementedError
 
     # prepare algorithm
     # st_dict, online_st_dict, step_dict = get_st_dict(args, args.dataset_kind, args.algo)
