@@ -6,9 +6,9 @@ import time
 from functools import partial
 import numpy as np
 import gym
-from dataset.continual_world import get_split_cl_env
+from dataset.continual_world import get_continual_world_env
 from dataset.continual_atari import get_atari_envs
-from mygym.envs.halfcheetah_block import HalfCheetahBlockEnv
+from dataset.continual_mujoco import get_mujoco_envs
 
 import torch
 from torch.optim.lr_scheduler import CosineAnnealingLR
@@ -43,6 +43,7 @@ TASK_SEQS = {
 TASK_SEQS["CW20"] = TASK_SEQS["CW10"] + TASK_SEQS["CW10"]
 continual_world_datasets = ["CW10", "CW20"]
 atari_datasets = ["ASI6", "ASI12"]
+mujoco_datasets = ["cheetah_dir", "cheetah_vel", "ant_dir", "walker_dir", "mix"]
 
 def read_dict(state_dict, prename):
     for key, value in state_dict.items():
@@ -59,8 +60,8 @@ def main(args, device):
     ask_indexes = False
     if args.dataset_kind == 'continual_world':
         tasks = TASK_SEQS[args.dataset]
-        envs = get_split_cl_env(tasks, args.randomization)
-        eval_envs = get_split_cl_env(tasks, args.randomization)
+        envs = get_continual_world_env(tasks, args.randomization)
+        eval_envs = get_continual_world_env(tasks, args.randomization)
         if args.dataset == 'CW20':
             env_ids = list(range(10)) + list(range(10))
         else:
@@ -73,6 +74,12 @@ def main(args, device):
             env_ids = list(range(10)) + list(range(10))
         else:
             raise NotImplementedError
+    elif args.dataset_kind == "mujoco":
+        if 'mix' not in args.dataset:
+            env_paths = ['dataset/macaw/' + args.env_path.replace('num', str(i)).replace('dataset', args.dataset) for i in range(args.task_nums)]
+        else:
+            env_paths = ['dataset/macaw/' + args.env_path.replace('num', str(i)).replace('dataset', args.dataset) for i in range(args.task_nums) for dataset in ['cheetah_dir', 'walker_dir', 'cheetah_vel']]
+        envs = get_mujoco_envs(args.dataset, env_paths)
     else:
         raise NotImplementedError
 
@@ -142,12 +149,12 @@ def main(args, device):
                     scorers_env = dict()
                     scorers_env["environment_" + str(old_id) + '-critic_diff_' + str(old_id) + "-actor_diff_" + str(old_id)] = critic_actor_diff(envs[old_id], old_id)
                     scorers_list.append(scorers_env)
-                    eval_episodes_list.append(old_algos[old_id])
-                for old_id in learned_env_id[:-1]:
-                    scorers_env = dict()
-                    scorers_env['old_critic_diff_' + str(old_id) + "-old_actor_diff_" + str(old_id)] = old_critic_actor_diff(envs[old_id], old_id)
-                    scorers_list.append(scorers_env)
-                    eval_episodes_list.append(old_algos[old_id])
+                    eval_episodes_list.append(algo)
+                #for old_id in learned_env_id[:-1]:
+                #    scorers_env = dict()
+                #    scorers_env['old_critic_diff_' + str(old_id) + "-old_actor_diff_" + str(old_id)] = old_critic_actor_diff(envs[old_id], old_id)
+                #    scorers_list.append(scorers_env)
+                #    eval_episodes_list.append(old_algos[old_id])
             else:
                 raise NotImplementedError
 
@@ -207,6 +214,8 @@ if __name__ == '__main__':
     parser.add_argument('--add_name', default='', type=str)
     parser.add_argument('--epoch', default='500', type=int)
     parser.add_argument("--dataset", default='CW20', type=str)
+    parser.add_argument("--quality", default='medium', choices=['random', 'medium', 'medium_random', 'medium_replay', 'expert', 'expert_random'], type=str)
+    parser.add_argument("--task_nums", default=50, type=int)
     parser.add_argument('--inner_path', default='', type=str)
     parser.add_argument('--env_path', default=None, type=str)
     parser.add_argument('--inner_buffer_size', default=-1, type=int)
@@ -278,10 +287,16 @@ if __name__ == '__main__':
     args.algo_kind = args.algo
     if args.algo_kind in ['cql', 'mrcql', 'mgcql']:
         args.algo_kind = 'cql'
+
     if args.dataset in continual_world_datasets:
         args.dataset_kind = "continual_world"
     elif args.dataset in atari_datasets:
         args.dataset_kind = "atari"
+    elif args.dataset in mujoco_datasets:
+        args.dataset_kind = "mujoco"
+        args.env_path = f"dataset/env_dataset_train_tasknum.pkl"
+    else:
+        raise NotImplementedError
 
     args.model_path = 'd3rlpy' + '_' + args.dataset
     if not os.path.exists(args.model_path):

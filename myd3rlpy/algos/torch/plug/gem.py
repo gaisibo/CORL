@@ -76,13 +76,14 @@ class GEM(Plug):
         self.grads_da = [torch.zeros(np.sum(grad_dims)).to(self._networks[0].device) for grad_dims in self.grad_dims]
         #self.grads_cs = [{task_id: torch.zeros(np.sum(grad_dims)).to(self._networks[0].device) for task_id in algo.learned_id} for grad_dims in self.grad_dims]
 
-    def _pre_gem_loss(self):
+    def pre_loss(self, batch):
+        self._update(batch)
         for network_id, (network, grads_cs, grad_dim) in enumerate(zip(self._networks, self.grads_cs, self.grad_dims)):
             if self._algo._impl_id not in grads_cs.keys():
                 self.grads_cs[network_id][self._algo._impl_id] = torch.zeros(np.sum(grad_dim)).to(self._networks[0].device)
             store_grad(network.parameters(), grads_cs[self._algo._impl_id], grad_dim)
 
-    def _pos_gem_loss(self):
+    def post_loss(self):
         for network, grads_da, grad_dim, grads_cs in zip(self._networks, self.grads_da, self.grad_dims, self.grads_cs):
             # copy gradient
             store_grad(network.parameters(), grads_da, grad_dim)

@@ -66,6 +66,10 @@ class STImpl():
         self._actor_plug = None
 
     def change_task(self, new_id):
+        if len(self._learned_id) == 0:
+            self._first_task = True
+        else:
+            self._first_task = False
         self._impl_id = new_id
         if new_id not in self._learned_id:
             self._learned_id.append(new_id)
@@ -89,10 +93,17 @@ class STImpl():
         self._critic_networks = [self._q_func]
         self._actor_networks = [self._policy]
         assert self._q_func is not None
-        if self._critic_replay_type == "ewc":
-            self.critic_plug = EWC(self, self._critic_networks)
-        elif self._critic_replay_type == "rwalk":
-            self.critic_plug = RWalk(self, self._critic_networks)
+        if self._critic_replay_type in ['ewc', 'rwalk']:
+            @train_api
+            @torch_api()
+            def update(self, batch, retain_graph=False):
+                q_tpn = self._algo.compute_target(batch)
+                loss = self._algo.compute_critic_loss(batch, q_tpn)
+                loss.backward(retain_graph=retain_graph)
+            if self._critic_replay_type == "ewc":
+                self.critic_plug = EWC(self, self._critic_networks, update, self._critic_optim)
+            elif self._critic_replay_type == "rwalk":
+                self.critic_plug = RWalk(self, self._critic_networks, update, self._critic_optim)
         elif self._critic_replay_type == 'si':
             self.critic_plug = SI(self, self._critic_networks)
         elif self._critic_replay_type == 'gem':
@@ -106,10 +117,16 @@ class STImpl():
         if self.critic_plug != None:
             self.critic_plug.build()
 
-        if self._actor_replay_type == "ewc":
-            self.actor_plug = EWC(self, self._actor_networks)
-        elif self._actor_replay_type == "rwalk":
-            self.actor_plug = RWalk(self, self._actor_networks)
+        if self._actor_replay_type in ['ewc', 'rwalk']:
+            @train_api
+            @torch_api()
+            def update(self, batch):
+                loss = self._algo.compute_actor_loss(batch)
+                loss.backward()
+            if self._actor_replay_type == "ewc":
+                self.actor_plug = EWC(self, self._actor_networks, update, self._actor_optim)
+            elif self._actor_replay_type == "rwalk":
+                self.actor_plug = RWalk(self, self._actor_networks, update, self._actor_optim)
         elif self._actor_replay_type == 'si':
             self.actor_plug = SI(self, self._actor_networks)
         elif self._actor_replay_type == 'gem':
@@ -133,6 +150,9 @@ class STImpl():
         unreg_grads = None
         curr_feat_ext = None
 
+        if self._critic_replay_type == "piggyback":
+            self.critic_plug._pre_loss()
+
         replay_loss = 0
         if self._impl_id != 0 and not online:
             replay_loss = 0
@@ -151,31 +171,24 @@ class STImpl():
                     replay_bc_loss += F.mse_loss(clone_value, value)
                 replay_loss = replay_loss + replay_bc_loss
             elif self._critic_replay_type == "ewc":
-                replay_ewc_loss = self.critic_plug._add_ewc_loss(self._critic_networks, self.critic_plug.fisher, self._critic_plug.older_params)
+                replay_ewc_loss = self.critic_plug.pre_loss()
                 replay_loss = replay_loss + replay_ewc_loss
             elif self._critic_replay_type == 'rwalk':
-                curr_feat_ext = [{n: p.clone().detach() for n, p in network.named_parameters() if p.requires_grad} for network in self._critic_networks]
-                # store gradients without regularization term
-                self._critic_optim.zero_grad()
-                q_tpn = self.compute_target(batch)
-                loss = self.compute_critic_loss(batch, q_tpn, clone_critic=clone_critic, online=online, first_time=replay_batch==None)
-                loss.backward(retain_graph=True)
-
-                unreg_grads, replay_rwalk_loss = self.critic_plug._pre_rwalk_loss(self._critic_networks, self.critic_plug.fisher, self._critic_plug.scorers, self._critic_plug.older_params)
+                replay_rwalk_loss = self.critic_plug.pre_loss(batch)
                 replay_loss = replay_loss + replay_rwalk_loss
             elif self._critic_replay_type == 'si':
-                replay_si_loss = self._add_si_loss(self._critic_networks)
+                replay_si_loss = self.critic_plug.pre_loss(self._critic_networks)
                 replay_loss = replay_loss + replay_si_loss
             elif self._critic_replay_type == 'gem':
-                q_tpn = self.compute_target(replay_batch)
-                replay_loss = self.compute_critic_loss(replay_batch, q_tpn, clone_critic=clone_critic)
-                replay_loss.backward()
-                self._pre_gem_loss(self._critic_networks)
+                self.critic_plug.pre_loss(replay_batch)
             elif self._critic_replay_type == "agem":
-                self._pre_agem_loss(self._critic_networks)
+                self.critic_plug.pre_loss(self._critic_networks)
                 q_tpn = self.compute_target(replay_batch)
                 replay_agem_loss += self.compute_critic_loss(replay_batch, q_tpn, clone_critic=clone_critic)
                 replay_loss = replay_loss + replay_agem_loss
+                self.critic_plug.replay_loss = replay_loss
+            elif self._critic_replay_loss == 'piggyback':
+                self.critic_plug.pre_loss()
 
         self._critic_optim.zero_grad()
         q_tpn = self.compute_target(batch)
@@ -183,22 +196,18 @@ class STImpl():
         if self._critic_replay_type in ['orl', 'ewc', 'rwalk', 'si', 'bc', 'generate', 'lwf']:
             loss = loss + self._critic_replay_lambda * replay_loss
         loss.backward()
-        if replay_batch is not None:
-            if self._critic_replay_type == 'agem':
-                self._critic_optim.zero_grad()
-                replay_loss.backward()
-                self._pos_agem_loss(self._critic_networks)
-            elif self._critic_replay_type == 'gem':
-                self._pos_gem_loss(self._critic_networks)
+        if not self._first_task:
+            if self._critic_replay_type in ['agem', 'gem']:
+                self.critic_plug.post_loss()
         if update:
             self._critic_optim.step()
 
-        if replay_batch is not None and not online:
+        if not self._first_task:
             if self._critic_replay_type == 'rwalk':
-                assert unreg_grads is not None
-                assert curr_feat_ext is not None
                 with torch.no_grad():
-                    self.critic_plug._pos_rwalk_loss(self._critic_networks, unreg_grads, self.critic_plug.W, curr_feat_ext)
+                    self.critic_plug.pos_step(curr_feat_ext)
+        if self._critic_replay_type == 'piggyback':
+            self.critic_plug.post_step()
 
         loss = loss.cpu().detach().numpy()
         if not isinstance(replay_loss, int):
@@ -258,8 +267,8 @@ class STImpl():
         self._q_func.eval()
         self._policy.train()
 
-        unreg_grads = None
-        curr_feat_ext = None
+        if self._actor_replay_type == "piggyback":
+            self.actor_plug._pre_loss()
 
         loss = self.compute_actor_loss(batch, clone_actor=clone_actor, online=online)
         replay_loss = 0
@@ -280,51 +289,46 @@ class STImpl():
                 replay_loss_ = -q_t.mean()
                 replay_loss = replay_loss + replay_loss_
             elif self._actor_replay_type == "ewc":
-                replay_ewc_loss = self.actor_plug._add_ewc_loss(self._actor_networks, self.actor_plug.fisher, self.actor_plug.older_params)
+                replay_ewc_loss = self.actor_plug.pre_loss()
                 replay_loss = replay_loss + replay_ewc_loss
             elif self._actor_replay_type == 'rwalk':
-                curr_feat_ext = {n: p.clone().detach() for n, p in self._policy.named_parameters() if p.requires_grad}
-                self._actor_optim.zero_grad()
-                loss = self.compute_actor_loss(batch, clone_actor=clone_actor)
-                loss.backward(retain_graph=True)
-                # Eq. 3: elastic weight consolidation quadratic penalty
-                unreg_grads, replay_rwalk_loss = self._pre_rwalk_loss(self._actor_networks, self.actor_plug.fisher, self.critic_plug.scorers, self._critic_plug.older_params)
+                unreg_grads, replay_rwalk_loss = self.actor_plug.pre_loss(batch)
                 replay_loss = replay_loss + replay_rwalk_loss
             elif self._actor_replay_type == 'si':
-                replay_si_loss = self._add_si_loss(self._actor_networks)
+                replay_si_loss = self.actor_plug.pre_loss(self._actor_networks)
                 replay_loss = replay_loss + replay_si_loss
             elif self._actor_replay_type == 'gem':
-                replay_loss_ = self.compute_actor_loss(replay_batch, clone_actor=clone_actor)
-                replay_loss = replay_loss_
-                replay_loss.backward()
-                self._pre_gem_loss(self._actor_networks)
+                self.actor_plug.pre_loss(self._actor_networks)
             elif self._actor_replay_type == "agem":
-                self._pre_agem_loss(self._actor_networks)
+                self.actor_plug.pre_loss(self._actor_networks)
                 replay_loss_ = self.compute_actor_loss(replay_batch, clone_actor=clone_actor)
                 replay_loss = replay_loss + replay_loss_
+                self.actor_plug.replay_loss = replay_loss
+            elif self._actor_replay_loss == 'piggyback':
+                self.actor_plug.pre_loss()
 
         self._actor_optim.zero_grad()
         if self._actor_replay_type in ['orl', 'ewc', 'rwalk', 'si', 'bc', 'generate', 'generate_orl', 'lwf', 'lwf_orl']:
             loss = loss + self._actor_replay_lambda * replay_loss
         if not isinstance(loss, int):
             loss.backward()
+        self.actor_plug._post_loss()
 
         if replay_batch is not None and not online:
-            if self._actor_replay_type == 'agem':
-                self._actor_optim.zero_grad()
-                replay_loss.backward()
-                self._pos_agem_loss(self._actor_networks)
-            elif self._actor_replay_type == 'gem':
-                self._pos_gem_loss(self._actor_networks)
+            if self._actor_replay_type in ['agem', 'gem']:
+                self.actor_plug.post_loss()
         if update:
             self._actor_optim.step()
+        self.actor_plug._post_step()
 
         if replay_batch is not None and not online:
             if self._actor_replay_type == 'rwalk':
                 assert unreg_grads is not None
                 assert curr_feat_ext is not None
                 with torch.no_grad():
-                    self.actor_plug._pos_rwalk_loss(self._actor_networks, unreg_grads, self.actor_plug.W, curr_feat_ext)
+                    self.actor_plug.post_step(unreg_grads, curr_feat_ext)
+        if self._actor_replay_type == 'piggyback':
+            self.actor_plug.post_step()
 
         if not isinstance(loss, int):
             loss = loss.cpu().detach().numpy()
@@ -333,23 +337,6 @@ class STImpl():
 
         return loss, replay_loss
 
-    def critic_ewc_rwalk_post_train_process(self, iterator, batch_size, n_frames, n_steps, gamma, test=False):
-        # calculate Fisher information
-        @train_api
-        @torch_api()
-        def update(self, batch):
-            q_tpn = self._algo.compute_target(batch)
-            loss = self._algo.compute_critic_loss(batch, q_tpn)
-            loss.backward()
-        self.critic_plug._ewc_rwalk_post_train_process(iterator, self._critic_optim, update, batch_size=batch_size, n_frames=n_frames, n_steps=n_steps, gamma=gamma, test=test)
-
-    def actor_ewc_rwalk_post_train_process(self, iterator, batch_size, n_frames, n_steps, gamma, test=False):
-        @train_api
-        @torch_api()
-        def update(self, batch):
-            loss = self._algo.compute_actor_loss(batch)
-            loss.backward()
-        self.actor_plug._ewc_rwalk_post_train_process(iterator, self._actor_optim, update, batch_size=batch_size, n_frames=n_frames, n_steps=n_steps, gamma=gamma, test=test)
     def fine_tuned_action(self, observation):
         assert self._policy is not None
         assert self._q_func is not None

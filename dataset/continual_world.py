@@ -155,7 +155,6 @@ def get_mt50_idx(env: gym.Env) -> int:
     assert len(idx) == 1
     return idx[0]
 
-
 def get_single_env(
     task: Union[int, str],
     one_hot_idx: int = 0,
@@ -187,7 +186,6 @@ def get_single_env(
     env.name = task_name
     env.num_envs = 1
     return env
-
 
 def assert_equal_excluding_goal_dimensions(os1: gym.spaces.Box, os2: gym.spaces.Box) -> None:
     assert np.array_equal(os1.low[:9], os2.low[:9])
@@ -258,7 +256,7 @@ class ContinualLearningEnv(gym.Env):
         self._check_steps_bound()
         return self.envs[self.cur_seq_idx].reset()
 
-def get_split_cl_env(tasks: List[Union[int, str]], randomization: str = "random_init_all") -> List[gym.Env]:
+def get_continual_world_env(tasks: List[Union[int, str]], randomization: str = "random_init_all") -> List[gym.Env]:
     """Returns continual learning environment.
 
     Args:

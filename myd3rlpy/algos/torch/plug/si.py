@@ -13,7 +13,7 @@ class SI(Plug):
         self.W = [{n: p.clone().detach().zero_() for n, p in network.named_parameters() if p.requires_grad} for network in self._networks]
         self.omega = [{n: p.clone().detach().zero_() for n, p in network.named_parameters() if p.requires_grad} for network in self._networks]
 
-    def _add_si_loss(self):
+    def pre_loss(self):
         for network, older_param, W, omega in zip(self._networks, self.older_params, self.Ws, self.omegas):
             for n, p in network.named_parameters():
                 if p.grad is not None and n in W.keys():

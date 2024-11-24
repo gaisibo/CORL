@@ -1,6 +1,6 @@
 import numpy as np
 
-from mygym.envs.half_cheetah import HalfCheetahEnv
+from gym.envs.mujoco.half_cheetah import HalfCheetahEnv
 from . import register_env
 
 

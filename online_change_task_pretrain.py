@@ -4,10 +4,11 @@ import random
 import numpy as np
 import gym
 
+from gymnasium_robotics.envs.maze.ant_maze_v5 import AntMazeEnv
 import torch
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from d3rlpy.online.buffers import ReplayBuffer
-from myd3rlpy.datasets import get_d4rl
+from myd3rlpy.datasets import get_d4rl, get_minari
 from d3rlpy.metrics import evaluate_on_environment
 
 from myd3rlpy.algos.o2o_td3 import O2OTD3
@@ -31,8 +32,16 @@ replay_name = ['observations', 'actions', 'rewards', 'next_observations', 'termi
 def main(args, use_gpu):
     print("Start")
     np.set_printoptions(precision=1, suppress=True)
-    dataset0, env = get_d4rl(args.dataset + '-' + args.qualities[0].replace("_", "-") + '-v0')
-    _, eval_env = get_d4rl(args.dataset + '-' + args.qualities[0].replace("_", "-") + '-v0')
+    print(f"Getting env {args.dataset + '-' + args.qualities[0].replace('_', '-') + '-v2'}")
+    if args.dataset_kind == "d4rl":
+        dataset0, env = get_d4rl(args.dataset + '-' + args.qualities[0].replace("_", "-") + '-v5')
+        _, eval_env = get_d4rl(args.dataset + '-' + args.qualities[0].replace("_", "-") + '-v5')
+    elif args.dataset_kind == "antmaze":
+        #print(args.dataset + '-' + args.qualities[0].replace("_", "-") + '-v0')
+        dataset0, env = get_minari(args.dataset + '-' + args.qualities[0].replace("_", "-") + '-v5')
+        _, eval_env = get_minari(args.dataset + '-' + args.qualities[1].replace("_", "-") + '-v5')
+    else:
+        raise NotImplementedError
 
     # prepare algorithm
     # st_dict, online_st_dict, step_dict = get_st_dict(args, args.dataset_kind, args.algo)
@@ -236,8 +245,12 @@ if __name__ == '__main__':
     if args.qualities is not None:
         args.qualities_str = args.qualities
         args.qualities = args.qualities.split('-')
-        assert len(args.qualities) == 1
-        assert args.qualities[0] in ['medium', 'expert', 'medium_replay', 'medium_expert', 'random']
+        if args.dataset_kind == "d4rl":
+            for quality in args.qualities:
+                assert quality in ['medium', 'expert', 'medium_replay', 'medium_expert', 'random']
+        elif args.dataset_kind == "antmaze":
+            for quality in args.qualities:
+                assert quality in ["umaze", "medium_dense", "large_dense", "umaze_play", "medium_play", "large_play", "expand_umaze", "expand_medium_dense", "expand_large_dense", "expand_umaze_play", "expand_medium_play", "expand_large_play"]
 
     args.save_steps = [300000, 100000]
 

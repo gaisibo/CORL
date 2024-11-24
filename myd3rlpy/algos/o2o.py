@@ -536,25 +536,21 @@ class O2OBase(STBase):
 
     def after_learn(self, iterator, test):
         if self._critic_replay_type in ['rwalk', 'ewc']:
-            self._impl.critic_ewc_rwalk_post_train_process(iterator, self._batch_size, self._n_frames, self._n_steps, self._gamma, test=test)
+            self._impl.critic_plug.post_task(iterator, self._batch_size, self._n_frames, self._n_steps, self._gamma, test=test)
         elif self._critic_replay_type in ['piggyback']:
-            self._impl.critic_plug._post_piggyback_task()
+            self._impl.critic_plug.post_task()
         if self._actor_replay_type in ['rwalk', 'ewc']:
-            self._impl.actor_ewc_rwalk_post_train_process(iterator, self._batch_size, self._n_frames, self._n_steps, self._gamma, test=test)
+            self._impl.actor_plug.post_task(iterator, self._batch_size, self._n_frames, self._n_steps, self._gamma, test=test)
         elif self._actor_replay_type in ['piggyback']:
-            self._impl.actor_plug._post_piggyback_task()
+            self._impl.actor_plug.post_task()
 
     def before_evaluation(self):
-        if self._critic_replay_type in ['piggyback']:
-            self._impl.critic_plug._pre_piggyback_evaluation()
-        if self._actor_replay_type in ['piggyback']:
-            self._impl.actor_plug._pre_piggyback_evaluation()
+        self._impl.critic_plug.pre_evaluation()
+        self._impl.actor_plug.pre_evaluation()
 
     def after_evaluation(self):
-        if self._critic_replay_type in ['piggyback']:
-            self._impl.critic_plug._post_piggyback_evaluation()
-        if self._actor_replay_type in ['piggyback']:
-            self._impl.actor_plug._post_piggyback_evaluation()
+        self._impl.critic_plug.post_evaluation()
+        self._impl.actor_plug.post_evaluation()
 
     def copy_from_past(self, arg0: str, impl: STImpl, copy_optim: bool):
         assert self._impl is not None

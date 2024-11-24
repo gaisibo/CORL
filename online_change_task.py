@@ -4,11 +4,10 @@ import random
 import numpy as np
 
 import torch
-from d4rl.locomotion import ant
-from d3rl.locomotion.wrappers import NormalizedBoxEnv
+from gymnasium_robotics.envs.maze.ant_maze_v5 import AntMazeEnv
 
 from d3rlpy.online.buffers import ReplayBuffer
-from myd3rlpy.datasets import get_d4rl
+from myd3rlpy.datasets import get_d4rl, get_minari
 from d3rlpy.metrics import evaluate_on_environment
 
 from myd3rlpy.algos.o2o_td3 import O2OTD3
@@ -45,8 +44,8 @@ def main(args, use_gpu):
         assert "expand" not in args.qualities[0]
         #print(args.dataset + '-' + args.qualities[0].replace("_", "-") + '-v0')
         if "expand" not in args.qualities[0]:
-            dataset0, env = get_d4rl(args.dataset + '-' + args.qualities[0].replace("_", "-") + '-v0')
-            _, eval_env = get_d4rl(args.dataset + '-' + args.qualities[1].replace("_", "-") + '-v0')
+            dataset0, env = get_minari(args.dataset + '-' + args.qualities[0].replace("_", "-") + '-v0')
+            _, eval_env = get_minari(args.dataset + '-' + args.qualities[1].replace("_", "-") + '-v0')
         else:
             assert args.algorithms[1] in online_algos
             # qualities 应该为类似expand_medium_play这样的。
@@ -54,8 +53,8 @@ def main(args, use_gpu):
             # maze_map 就像是expand-medium这样。
             maze_map = maze_map[0] + "-" + maze_map[1]
             maze_map = maze_maps[maze_map]
-            env = NormalizedBoxEnv(ant.AntMazeEnv(maze_map=maze_map, maze_size_scaling=4.0, non_zero_reset=False))
-            eval_env = NormalizedBoxEnv(ant.AntMazeEnv(maze_map=maze_map, maze_size_scaling=4.0, non_zero_reset=False))
+            env = AntMazeEnv(maze_map=maze_map)#, maze_size_scaling=4.0, non_zero_reset=False)
+            eval_env = AntMazeEnv(maze_map=maze_map)#, maze_size_scaling=4.0, non_zero_reset=False)
     else:
         raise NotImplementedError
 
@@ -330,8 +329,12 @@ if __name__ == '__main__':
         args.qualities_str = args.qualities
         args.qualities = args.qualities.split('-')
         assert len(args.qualities) == 2
-        for quality in args.qualities:
-            assert quality in ['medium', 'expert', 'medium_replay', 'medium_expert', 'random']
+        if args.dataset_kind == "d4rl":
+            for quality in args.qualities:
+                assert quality in ['medium', 'expert', 'medium_replay', 'medium_expert', 'random']
+        elif args.dataset_kind == "antmaze":
+            for quality in args.qualities:
+                assert quality in ["umaze", "medium_dense", "large_dense", "umaze_play", "medium_play", "large_play", "expand_umaze", "expand_medium_dense", "expand_large_dense", "expand_umaze_play", "expand_medium_play", "expand_large_play"]
 
     #if args.algorithms[1] not in ['ppo', 'bppo']:
     #    args.second_n_steps = 1000000

@@ -3,8 +3,8 @@ from mygym.envs.base import RandomEnv
 from gym import utils
 
 class Walker2DRandParamsEnv(RandomEnv, utils.EzPickle):
-    def __init__(self, log_scale_limit=3.0):
-        RandomEnv.__init__(self, log_scale_limit, 'walker2d.xml', 5)
+    def __init__(self, observation_shape, log_scale_limit=3.0):
+        RandomEnv.__init__(self, observation_shape, log_scale_limit, 'walker2d.xml', 5)
         utils.EzPickle.__init__(self)
 
     def _step(self, a):
