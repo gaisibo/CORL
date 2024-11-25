@@ -530,9 +530,9 @@ class O2OBase(STBase):
         if (self._impl.critic_plug is None and self._critic_replay_type != "none") or (self._impl.actor_plug is None and self._actor_replay_type != "none"):
             self._impl._continual_build()
         if self._critic_replay_type in ['piggyback']:
-            self._impl.critic_plug._pre_piggyback_task()
+            self._impl.critic_plug.pre_task()
         if self._actor_replay_type in ['piggyback']:
-            self._impl.actor_plug._pre_piggyback_task()
+            self._impl.actor_plug.pre_task()
 
     def after_learn(self, iterator, test):
         if self._critic_replay_type in ['rwalk', 'ewc']:

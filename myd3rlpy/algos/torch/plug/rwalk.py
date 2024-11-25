@@ -1,4 +1,4 @@
-mmport torch
+import torch
 from myd3rlpy.algos.torch.plug.plug import Plug
 from myd3rlpy.algos.torch.plug.ewc import EWC
 

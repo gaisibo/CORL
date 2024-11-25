@@ -4,8 +4,8 @@ from myd3rlpy.iterators.base import TransitionIterator
 
 
 class EWC(Plug):
-    def __init__(self, algo, networks):
-        super().__init__(algo, networks)
+    def __init__(self, *args):
+        super().__init__(*args)
         self._ewc_rwalk_alpha = algo._ewc_rwalk_alpha
     def build(self):
         # Store current parameters for the next task

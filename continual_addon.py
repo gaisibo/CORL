@@ -80,6 +80,8 @@ def main(args, device):
         else:
             env_paths = ['dataset/macaw/' + args.env_path.replace('num', str(i)).replace('dataset', args.dataset) for i in range(args.task_nums) for dataset in ['cheetah_dir', 'walker_dir', 'cheetah_vel']]
         envs = get_mujoco_envs(args.dataset, env_paths)
+        eval_envs = get_mujoco_envs(args.dataset, env_paths)
+        env_ids = range(len(envs))
     else:
         raise NotImplementedError
 

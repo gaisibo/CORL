@@ -4,8 +4,8 @@ from myd3rlpy.algos.torch.plug.plug import Plug
 
 
 class Piggyback(Plug):
-    def __init__(self, algo, networks, ratio: float = 0.1, smallest_threshold: int = 10) -> None:
-        super().__init__(algo, networks)
+    def __init__(self, algo, networks, update, optim, ratio: float = 0.1, smallest_threshold: int = 10) -> None:
+        super().__init__(algo, networks, update, optim)
         self._ratio = ratio
         self._smallest_threshold = smallest_threshold
 
@@ -18,17 +18,20 @@ class Piggyback(Plug):
                     self._piggyback_params[-1].append(pp)
         self.piggyback_dims = [[pp.data.numel() for pp in piggyback_params] for piggyback_params in self._piggyback_params]
         self.soft_networks = torch.nn.ParameterList()
+        for network_id, (network, piggyback_dim) in enumerate(zip(self._networks, self.piggyback_dims)):
+            soft_param = torch.zeros(np.sum(piggyback_dim))
+            soft_param = soft_param.to(self.device)
+            torch.nn.init.normal_(soft_param)
+            soft_param = torch.nn.Parameter(soft_param)
+            #soft_param.grad = torch.zeros_like(soft_param.data)
+            self.soft_networks.append(soft_param)
+            self._algo._critic_optim.add_param_group({"params": self.soft_networks[network_id], "lr": 0.001})
         with torch.no_grad():
             self.copy_networks = torch.nn.ParameterList()
             self.usable_networks = torch.nn.ParameterList()
             for network_id, (network, piggyback_dim) in enumerate(zip(self._networks, self.piggyback_dims)):
-                soft_param = torch.zeros(np.sum(piggyback_dim))
                 copy_param = torch.zeros(np.sum(piggyback_dim)).to(self.device)
                 usable_param = torch.ones(np.sum(piggyback_dim)).to(self.device)
-                torch.nn.init.normal_(soft_param)
-                soft_param = torch.nn.Parameter(soft_param)
-                self.soft_networks.append(soft_param.to(self.device))
-                self._algo._critic_optim.add_param_group({"params": self.soft_networks[network_id], "lr": 0.001})
                 self.copy_networks.append(copy_param)
                 self.usable_networks.append(usable_param)
             self.masks = torch.nn.ModuleList()
@@ -78,6 +81,7 @@ class Piggyback(Plug):
     # Change the mask * param into param, and assign the grad for masks and params
     def _post_soft_mask_networks(self, network, piggyback_dim, soft_param, usable_param, copy_param, mask):
         count = 0
+        soft_param.grad = torch.zeros_like(soft_param.data)
         for pp in network.parameters():
             if pp.numel() > self._smallest_threshold:
                 begin = 0 if count == 0 else sum(piggyback_dim[:count])
@@ -86,13 +90,28 @@ class Piggyback(Plug):
                 assert pp_num == end - begin
                 time_grad = pp.grad
                 pp.data.copy_(copy_param[begin: end].reshape(pp.shape))
-                pp.grad.copy_((time_grad * mask[begin: end]).reshape(pp.shape))
+                pp.grad.copy_(time_grad * mask[begin: end].reshape(pp.shape))
                 mask_usable = mask[begin: end] * torch.where(usable_param[begin: end] == 0, 1, 0)
                 assert torch.sum(mask_usable) == 0
                 if self._new_task:
-                    soft_param.grad[begin: end].copy_(time_grad * pp.data * usable_param[begin: end])
+                    soft_param.grad[begin: end].copy_((time_grad * pp.data).reshape(-1) * usable_param[begin: end])
                 else:
                     soft_param.grad[begin: end].zeros_()
+                count += 1
+
+    # Change the mask * param into param, and assign the grad for masks and params
+    def _post_soft_mask_networks(self, network, piggyback_dim, soft_param, usable_param, copy_param, mask):
+        count = 0
+        soft_param.grad = torch.zeros_like(soft_param.data)
+        for pp in network.parameters():
+            if pp.numel() > self._smallest_threshold:
+                begin = 0 if count == 0 else sum(piggyback_dim[:count])
+                end = np.sum(piggyback_dim[:count + 1])
+                pp_num = pp.numel()
+                assert pp_num == end - begin
+                time_grad = pp.grad
+                pp.data.copy_(copy_param[begin: end].reshape(pp.shape))
+                pp.data = torch.where(usable_param[begin: end].reshape(pp.shape) == 1, pp.data, copy_param[begin:end].reshape(pp.shape))
                 count += 1
 
     # Change the param into mask * param
@@ -140,17 +159,19 @@ class Piggyback(Plug):
                 count += 1
 
     def pre_loss(self):
-        assert False
         if self._new_task:
-            for _, (network, soft_param, usable_param, copy_param, piggyback_dim) in enumerate(zip(self._networks, self.soft_networks, self.usable_networks, self.copy_networks, self.piggyback_dims)):
-                self.masks[network_id][str(self._algo._impl_id)] = self._pre_soft_mask_networks(network, piggyback_dim, soft_param, self.copy_networks[network_id][self._algo._impl_id])
+            for network_id, (network, soft_param, usable_param, copy_param, piggyback_dim) in enumerate(zip(self._networks, self.soft_networks, self.usable_networks, self.copy_networks, self.piggyback_dims)):
+                self.masks[network_id][str(self._algo._impl_id)] = self._pre_soft_mask_networks(network, piggyback_dim, soft_param, usable_param, copy_param)
                 #self._pre_soft_mask_networks(network, piggyback_dim, soft_param, usable_param, copy_param)
         else:
             for _, (network, masks, copy_param, piggyback_dim) in enumerate(zip(self._networks, self.masks, self.copy_networks, self.piggyback_dims)):
                 self._pre_mask_networks(network, piggyback_dim, copy_param, masks[str(self._algo._impl_id)])
 
+    def post_loss(self):
+        for _, (network, soft_param, usable_param, copy_param, masks, piggyback_dim) in enumerate(zip(self._networks, self.soft_networks, self.usable_networks, self.copy_networks, self.masks, self.piggyback_dims)):
+            self._post_soft_mask_networks(network, piggyback_dim, soft_param, usable_param, copy_param, masks[str(self._algo._impl_id)])
+
     def post_step(self):
-        assert False
         for _, (network, soft_param, usable_param, copy_param, masks, piggyback_dim) in enumerate(zip(self._networks, self.soft_networks, self.usable_networks, self.copy_networks, self.masks, self.piggyback_dims)):
             self._post_soft_mask_networks(network, piggyback_dim, soft_param, usable_param, copy_param, masks[str(self._algo._impl_id)])
 

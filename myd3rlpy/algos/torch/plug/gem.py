@@ -64,8 +64,8 @@ def project2cone2(gradient, memories, margin=0.5, eps=1e-3):
     gradient.copy_(torch.from_numpy(x).view(-1, 1))
 
 class GEM(Plug):
-    def __init__(self, algo, networks):
-        super().__init__(algo, networks)
+    def __init__(self, *args):
+        super().__init__(*args)
         self._gem_alpha = algo._gem_alpha
 
     def build(self):

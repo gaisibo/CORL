@@ -13,15 +13,14 @@ class AGEM(Plug):
         self.grad_xy = [torch.zeros(np.sum(critic_grad_dims)).to(self.device) for self.grad_dims in self.grad_dims]
         self.grad_er = [torch.zeros(np.sum(critic_grad_dims)).to(self.device) for self.grad_dims in self.grad_dims]
 
-    def pre_loss(self):
-        for network, grad_xy, grad_dim in zip(self._networks, self.grad_xys, self.grad_dims):
-            store_grad(network.parameters(), grad_xy, grad_dim)
+    def pre_loss(self, batch):
+        self._update(batch)
+        for network, grad_er, grad_dim in zip(self._networks, self.grad_ers, self.grad_dims):
+            store_grad(network.parameters(), grad_er, grad_dim)
 
     def post_loss(self):
-        self._optim.zero_grad()
-        replay_loss.backward()
         for network, grad_er, grad_dim, grad_xy in zip(self._networks, self.grad_ers, self.grad_dims, self.grad_xys):
-            store_grad(network.parameters(), grad_er, grad_dim)
+            store_grad(network.parameters(), grad_xy, grad_dim)
             dot_prod = torch.dot(grad_xy, grad_er)
             if dot_prod.item() < 0:
                 g_tilde = project(gxy=grad_xy, ger=grad_er)

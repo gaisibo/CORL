@@ -3,8 +3,8 @@ from myd3rlpy.algos.torch.plug.plug import Plug
 
 
 class SI(Plug):
-    def __init__(self, algo, networks):
-        super().__init__(algo, networks)
+    def __init__(self, *args):
+        super().__init__(*args)
         self._epsilon = algo._epsilon
 
     def build(self):
