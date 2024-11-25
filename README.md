@@ -1,0 +1,1 @@
+This is a project based on D3RLPY v1.1.1 for continual reinforcement learning. It is the implementation of OER: Offline Experience Replay for _Continual Offline Reinforcement Learning_ and _Single Task Continual Offline Reinforcement Learning_.
